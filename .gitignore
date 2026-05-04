@@ -1,0 +1,25 @@
+# Flutter / Dart tool state
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Build outputs
+build/
+
+# Platform-specific generated files
+**/ephemeral/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# OS / logs
+.DS_Store
+Thumbs.db
+*.log
+
+# MSIX local signing certificates
+# Keep private keys out of Git. The .cer file is public and safe to share with testers.
+certs/*.pfx
