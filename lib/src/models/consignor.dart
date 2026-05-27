@@ -142,10 +142,14 @@ class Consignor {
 
     final hasRemoteReference = systemReferenceConsignor > 0;
 
-    final rawPhoneNumber = _toString(json['phoneNumber'] ?? json['PhoneNumber']);
+    final rawPhoneNumber =
+        _toString(json['phoneNumber'] ?? json['PhoneNumber']);
     final parsedPhone = PhoneNumberParser.parse(rawPhoneNumber);
     final explicitPhonePrefix = _toString(
-      json['phonePrefix'] ?? json['PhonePrefix'] ?? json['phoneCountryPrefix'] ?? json['PhoneCountryPrefix'],
+      json['phonePrefix'] ??
+          json['PhonePrefix'] ??
+          json['phoneCountryPrefix'] ??
+          json['PhoneCountryPrefix'],
     );
     final explicitPhonePrefixOriginId = _toInt(
       json['phonePrefixOriginId'] ??
@@ -199,24 +203,26 @@ class Consignor {
             {},
       ),
       bankingDetails: BankingDetails.fromJson(
-        ((json['bankingDetails'] ?? json['BankingDetails']) as Map?)
+        ((json['bankingDetails'] ??
+                    json['BankingDetails'] ??
+                    json['bankingDetailsDto'] ??
+                    json['BankingDetailsDto']) as Map?)
                 ?.cast<String, dynamic>() ??
             {},
       ),
-      paymentOption: PaymentOptionX.fromAny(json['paymentOption'] ?? json['PaymentOption']),
+      paymentOption: PaymentOptionX.fromAny(
+          json['paymentOption'] ?? json['PaymentOption']),
       checkedByLeu:
           (json['checkedByLeu'] ?? json['CheckedByLeu']) as bool? ?? true,
       ancientCoinsSubscribed: (json['ancientCoinsSubscribed'] ??
-                  json['AncientCoinsSubscribed']) as bool? ??
-              false,
-      worldCoinsSubscribed:
-          (json['worldCoinsSubscribed'] ?? json['WorldCoinsSubscribed'])
-                  as bool? ??
-              false,
-      newsletterSubscribed:
-          (json['newsletterSubscribed'] ?? json['NewsletterSubscribed'])
-                  as bool? ??
-              true,
+              json['AncientCoinsSubscribed']) as bool? ??
+          false,
+      worldCoinsSubscribed: (json['worldCoinsSubscribed'] ??
+              json['WorldCoinsSubscribed']) as bool? ??
+          false,
+      newsletterSubscribed: (json['newsletterSubscribed'] ??
+              json['NewsletterSubscribed']) as bool? ??
+          true,
       collectingArea:
           _toString(json['collectingArea'] ?? json['CollectingArea']),
       correspondence: _normalizeCorrespondence(
@@ -276,6 +282,7 @@ class Consignor {
         'emailAddress': emailAddress.trim(),
         'consignorAddress': consignorAddress.toJson(),
         'bankingDetails': bankingDetails.toJson(),
+        'bankingDetailsDto': bankingDetails.toJson(),
         'paymentOption': paymentOption.apiName,
         'checkedByLeu': checkedByLeu,
         'ancientCoinsSubscribed': ancientCoinsSubscribed,
@@ -384,7 +391,8 @@ class Consignor {
     return double.tryParse(value.toString());
   }
 
-  static String _stripExplicitPrefix(String rawPhoneNumber, String explicitPrefix) {
+  static String _stripExplicitPrefix(
+      String rawPhoneNumber, String explicitPrefix) {
     final trimmedRaw = rawPhoneNumber.trim();
     final trimmedPrefix = explicitPrefix.trim();
     if (trimmedRaw.isEmpty || trimmedPrefix.isEmpty) {

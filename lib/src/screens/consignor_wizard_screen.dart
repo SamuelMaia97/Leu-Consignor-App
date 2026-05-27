@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:iban_to_bic/iban_to_bic.dart';
 import 'package:provider/provider.dart';
 
 import '../models/auction_option.dart';
@@ -66,6 +67,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   final _fileService = FileService();
   final _pdfService = ContractPdfService();
   final _wizardDraftRepo = WizardDraftRepository();
+  final _ibanToBic = IbanToBic();
   final _detailsFormKey = GlobalKey<FormState>();
   final _representativeFormKey = GlobalKey<FormState>();
   final _auctionFormKey = GlobalKey<FormState>();
@@ -81,6 +83,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   String? _generatedPdfPath;
   bool _generatedPdfIncludesSignatures = false;
   List<CustomerLookupResult> _matches = const [];
+  String _activeIbanLookup = '';
 
   bool get _isContractOnly => _resumeContractOnly ?? widget.contractOnly;
 
@@ -189,7 +192,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   void _restoreFromSavedWizardState(
     Map<String, dynamic> savedState,
   ) {
-    _resumeContractOnly = _asBool(savedState['contractOnly']) ?? _isContractOnly;
+    _resumeContractOnly =
+        _asBool(savedState['contractOnly']) ?? _isContractOnly;
     final savedContractId = savedState['contractId']?.toString().trim();
     _activeContractId = savedContractId == null || savedContractId.isEmpty
         ? null
@@ -232,7 +236,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }) {
     final consignor =
         consignorId == null ? null : appState.consignorById(consignorId);
-    final contract = contractId == null ? null : appState.contractById(contractId);
+    final contract =
+        contractId == null ? null : appState.contractById(contractId);
 
     if (consignor != null) {
       _draft.applyPrefill(consignor);
@@ -250,13 +255,16 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _draft.uploads
         ..clear()
         ..addAll(contract.uploads.map((upload) => upload.copyWith()));
-      _generatedPdfPath = contract.pdfPath.trim().isEmpty ? null : contract.pdfPath;
+      _generatedPdfPath =
+          contract.pdfPath.trim().isEmpty ? null : contract.pdfPath;
       _generatedPdfIncludesSignatures = false;
       final reviewStep = _steps.indexOf(_WizardStep.fullReview);
       _step = reviewStep >= 0 ? reviewStep : _steps.length - 1;
     } else if (consignor != null) {
-      final detailsStep = _steps.indexOf(_WizardStep.details);
-      _step = detailsStep >= 0 ? detailsStep : 0;
+      final startStep = _isContractOnly
+          ? _steps.indexOf(_WizardStep.auctions)
+          : _steps.indexOf(_WizardStep.details);
+      _step = startStep >= 0 ? startStep : 0;
     }
   }
 
@@ -469,14 +477,15 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         _matches = const [];
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Microsoft login is required for lookup.')),
+        const SnackBar(
+            content: Text('Microsoft login is required for lookup.')),
       );
       return;
     }
 
     try {
-      final matches =
-          await ApiService(state.settings, state.token).searchExistingCustomers(query);
+      final matches = await ApiService(state.settings, state.token)
+          .searchExistingCustomers(query);
       if (!mounted) return;
       setState(() {
         _matches = matches;
@@ -492,6 +501,117 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         SnackBar(content: Text('Customer lookup failed: $e')),
       );
     }
+  }
+
+  Future<String?> _tryAutoFillBankingFromIban(
+    _WizardDraft targetDraft,
+    String rawIban,
+  ) async {
+    final normalized = rawIban.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    targetDraft.iban = rawIban;
+    if (normalized.isEmpty) {
+      return 'Enter an IBAN first.';
+    }
+
+    _activeIbanLookup = normalized;
+    final result = await _ibanToBic.lookup(normalized);
+
+    if (!mounted) return null;
+    if (_activeIbanLookup != normalized) return null;
+
+    switch (result) {
+      case BicFound(:final bic):
+        final countryCode2 = normalized.substring(0, 2);
+        final matchedCountry = context
+            .read<AppState>()
+            .countries
+            .where((item) => item.matchesCode(countryCode2))
+            .firstOrNull;
+
+        setState(() {
+          targetDraft.isIban = true;
+          targetDraft.bicSwift = bic.value;
+          targetDraft.bankName = bic.bankName;
+          if (matchedCountry != null) {
+            targetDraft.bankCountryIso3 = matchedCountry.iso3;
+            targetDraft.bankCountryName = matchedCountry.name;
+          }
+        });
+        return null;
+      case InvalidIban():
+        return 'Please enter a valid IBAN first.';
+      case UnsupportedCountry(:final countryCode):
+        return 'IBAN country "$countryCode" is not supported for auto-fill.';
+      case UnknownBank():
+        return 'No bank mapping found for this IBAN.';
+      default:
+        return 'Could not resolve bank details from this IBAN.';
+    }
+  }
+
+  Future<void> _handleIbanLookupPressed(_WizardDraft targetDraft) async {
+    final beforeBankName = targetDraft.bankName.trim();
+    final beforeBic = targetDraft.bicSwift.trim();
+    final beforeBankCountry = targetDraft.bankCountryIso3.trim();
+    final message =
+        await _tryAutoFillBankingFromIban(targetDraft, targetDraft.iban);
+    if (!mounted) return;
+
+    if (message != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+
+    final afterBankName = targetDraft.bankName.trim();
+    final afterBic = targetDraft.bicSwift.trim();
+    final afterBankCountry = targetDraft.bankCountryIso3.trim();
+    final changed = beforeBankName != afterBankName ||
+        beforeBic != afterBic ||
+        beforeBankCountry != afterBankCountry;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          changed
+              ? 'Bank data auto-filled from IBAN.'
+              : 'Lookup completed, no additional bank data found.',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openConsignorReviewEditor() async {
+    final originalState = _draft.toResumeJson();
+
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _ConsignorReviewEditDialog(
+        draft: _draft,
+        titleOptions: _titleOptions,
+        salutationOptions: _salutationOptions,
+        correspondenceOptions: _correspondenceOptions,
+        phonePrefixes: context.read<AppState>().phonePrefixes,
+        onChanged: () => setState(() {}),
+        onLookupIbanPressed: () => _handleIbanLookupPressed(_draft),
+      ),
+    );
+
+    if (!mounted) return;
+
+    if (saved == true) {
+      setState(() {
+        _generatedPdfPath = null;
+        _generatedPdfIncludesSignatures = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _draft.restoreFromResumeJson(originalState);
+    });
   }
 
   Future<void> _addFiles(UploadType type, {bool fromCamera = false}) async {
@@ -523,7 +643,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   void _removeFile(ContractUpload upload) {
     setState(
-      () => _draft.uploads.removeWhere((item) => item.localId == upload.localId),
+      () =>
+          _draft.uploads.removeWhere((item) => item.localId == upload.localId),
     );
   }
 
@@ -680,7 +801,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
 
     final picture = recorder.endRecording();
-    final image = await picture.toImage(outputWidth.toInt(), outputHeight.toInt());
+    final image =
+        await picture.toImage(outputWidth.toInt(), outputHeight.toInt());
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     picture.dispose();
     image.dispose();
@@ -697,10 +819,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     final consignor = _draft.toConsignor();
     final record = _buildContract(consignor.id);
-    final authorizedRepresentative =
-        _draft.coinsOwnedByConsignor ? null : _representativeDraft.toConsignor();
+    final authorizedRepresentative = _draft.coinsOwnedByConsignor
+        ? null
+        : _representativeDraft.toConsignor();
 
-    final signatureData = includeSignatures ? await _buildSignatureData() : null;
+    final signatureData =
+        includeSignatures ? await _buildSignatureData() : null;
 
     if (includeSignatures && signatureData == null) {
       throw Exception(
@@ -727,7 +851,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     setState(() => _saving = true);
     try {
-      final file = await _createContractPdf(includeSignatures: includeSignatures);
+      final file =
+          await _createContractPdf(includeSignatures: includeSignatures);
       if (!mounted) return true;
       setState(() {
         _generatedPdfPath = file.path;
@@ -828,10 +953,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       await state.saveContract(contract);
 
       if (state.hasValidToken && contract.auctionId != null) {
-        final synced = await state.syncContract(savedConsignor.id, contract.auctionId!);
+        final synced =
+            await state.syncContract(savedConsignor.id, contract.auctionId!);
         final error = synced?.syncErrorMessage;
         if (synced == null || (error != null && error.trim().isNotEmpty)) {
-          throw Exception(error ?? state.lastMessage ?? 'Contract sync failed.');
+          throw Exception(
+              error ?? state.lastMessage ?? 'Contract sync failed.');
         }
       }
 
@@ -875,7 +1002,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             ElevatedButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_CreationExitAction.addToDraft),
-              child: const Text('Add to draft'),
+              child: const Text('Save as draft'),
             ),
           ],
         );
@@ -984,6 +1111,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             correspondenceOptions: _correspondenceOptions,
             phonePrefixes: state.phonePrefixes,
             onChanged: () => setState(() {}),
+            onLookupIbanPressed: () => _handleIbanLookupPressed(_draft),
             onBack: _back,
             onNext: _next,
           ),
@@ -1016,6 +1144,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             correspondenceOptions: _correspondenceOptions,
             phonePrefixes: state.phonePrefixes,
             onChanged: () => setState(() {}),
+            onLookupIbanPressed: () =>
+                _handleIbanLookupPressed(_representativeDraft),
             onBack: _back,
             onNext: _next,
           ),
@@ -1042,9 +1172,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         ),
       _WizardStep.fullReview => _FullReviewStep(
           draft: _draft,
-          representative: _draft.coinsOwnedByConsignor ? null : _representativeDraft,
+          representative:
+              _draft.coinsOwnedByConsignor ? null : _representativeDraft,
           saving: _saving,
           generatedPdfPath: _generatedPdfPath,
+          onEditConsignor: _openConsignorReviewEditor,
           onBack: _back,
           onGeneratePdf: () => _generatePdf(),
           onOpenPdf: _generatedPdfPath == null
@@ -1062,9 +1194,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           onSignatureChanged: _updateCustomerSignature,
           onClearSignature: _clearCustomerSignature,
           onGeneratePdf: () => _generatePdf(includeSignatures: true),
-          onOpenPdf: _generatedPdfPath == null || !_generatedPdfIncludesSignatures
-              ? null
-              : () => _fileService.open(_generatedPdfPath!),
+          onOpenPdf:
+              _generatedPdfPath == null || !_generatedPdfIncludesSignatures
+                  ? null
+                  : () => _fileService.open(_generatedPdfPath!),
           onSubmit: _saveFullFlow,
         ),
     };
@@ -1143,6 +1276,30 @@ class _WizardDraft {
   String countryName = '';
   String bankName = '';
   String iban = '';
+  bool isIban = true;
+  String bicSwift = '';
+  String clearingNumber = '';
+  String routingNumber = '';
+  String bankCountryIso3 = '';
+  String bankCountryName = '';
+  String bankAddressStreet = '';
+  String bankAddressStreetNumber = '';
+  String bankAddressStreetAddressOptional = '';
+  String bankAddressPostalCode = '';
+  String bankAddressCity = '';
+  String bankAddressAdminRegion = '';
+  String bankAddressCountryIso3 = '';
+  String bankAddressCountryName = '';
+  String beneficiaryFirstName = '';
+  String beneficiaryLastName = '';
+  String beneficiaryAddressStreet = '';
+  String beneficiaryAddressStreetNumber = '';
+  String beneficiaryAddressStreetAddressOptional = '';
+  String beneficiaryAddressPostalCode = '';
+  String beneficiaryAddressCity = '';
+  String beneficiaryAddressAdminRegion = '';
+  String beneficiaryAddressCountryIso3 = '';
+  String beneficiaryAddressCountryName = '';
   String? correspondence = 'en';
   bool checkedByLeu = true;
   bool newsletterSubscribed = true;
@@ -1225,6 +1382,31 @@ class _WizardDraft {
         'countryName': countryName,
         'bankName': bankName,
         'iban': iban,
+        'isIban': isIban,
+        'bicSwift': bicSwift,
+        'clearingNumber': clearingNumber,
+        'routingNumber': routingNumber,
+        'bankCountryIso3': bankCountryIso3,
+        'bankCountryName': bankCountryName,
+        'bankAddressStreet': bankAddressStreet,
+        'bankAddressStreetNumber': bankAddressStreetNumber,
+        'bankAddressStreetAddressOptional': bankAddressStreetAddressOptional,
+        'bankAddressPostalCode': bankAddressPostalCode,
+        'bankAddressCity': bankAddressCity,
+        'bankAddressAdminRegion': bankAddressAdminRegion,
+        'bankAddressCountryIso3': bankAddressCountryIso3,
+        'bankAddressCountryName': bankAddressCountryName,
+        'beneficiaryFirstName': beneficiaryFirstName,
+        'beneficiaryLastName': beneficiaryLastName,
+        'beneficiaryAddressStreet': beneficiaryAddressStreet,
+        'beneficiaryAddressStreetNumber': beneficiaryAddressStreetNumber,
+        'beneficiaryAddressStreetAddressOptional':
+            beneficiaryAddressStreetAddressOptional,
+        'beneficiaryAddressPostalCode': beneficiaryAddressPostalCode,
+        'beneficiaryAddressCity': beneficiaryAddressCity,
+        'beneficiaryAddressAdminRegion': beneficiaryAddressAdminRegion,
+        'beneficiaryAddressCountryIso3': beneficiaryAddressCountryIso3,
+        'beneficiaryAddressCountryName': beneficiaryAddressCountryName,
         'correspondence': correspondence,
         'checkedByLeu': checkedByLeu,
         'newsletterSubscribed': newsletterSubscribed,
@@ -1296,6 +1478,37 @@ class _WizardDraft {
     countryName = _toString(json['countryName']);
     bankName = _toString(json['bankName']);
     iban = _toString(json['iban']);
+    isIban = _toBool(json['isIban']) ?? true;
+    bicSwift = _toString(json['bicSwift']);
+    clearingNumber = _toString(json['clearingNumber']);
+    routingNumber = _toString(json['routingNumber']);
+    bankCountryIso3 = _toString(json['bankCountryIso3']);
+    bankCountryName = _toString(json['bankCountryName']);
+    bankAddressStreet = _toString(json['bankAddressStreet']);
+    bankAddressStreetNumber = _toString(json['bankAddressStreetNumber']);
+    bankAddressStreetAddressOptional =
+        _toString(json['bankAddressStreetAddressOptional']);
+    bankAddressPostalCode = _toString(json['bankAddressPostalCode']);
+    bankAddressCity = _toString(json['bankAddressCity']);
+    bankAddressAdminRegion = _toString(json['bankAddressAdminRegion']);
+    bankAddressCountryIso3 = _toString(json['bankAddressCountryIso3']);
+    bankAddressCountryName = _toString(json['bankAddressCountryName']);
+    beneficiaryFirstName = _toString(json['beneficiaryFirstName']);
+    beneficiaryLastName = _toString(json['beneficiaryLastName']);
+    beneficiaryAddressStreet = _toString(json['beneficiaryAddressStreet']);
+    beneficiaryAddressStreetNumber =
+        _toString(json['beneficiaryAddressStreetNumber']);
+    beneficiaryAddressStreetAddressOptional =
+        _toString(json['beneficiaryAddressStreetAddressOptional']);
+    beneficiaryAddressPostalCode =
+        _toString(json['beneficiaryAddressPostalCode']);
+    beneficiaryAddressCity = _toString(json['beneficiaryAddressCity']);
+    beneficiaryAddressAdminRegion =
+        _toString(json['beneficiaryAddressAdminRegion']);
+    beneficiaryAddressCountryIso3 =
+        _toString(json['beneficiaryAddressCountryIso3']);
+    beneficiaryAddressCountryName =
+        _toString(json['beneficiaryAddressCountryName']);
     correspondence = _stringOrNull(json['correspondence']) ?? 'en';
     checkedByLeu = _toBool(json['checkedByLeu']) ?? true;
     newsletterSubscribed = _toBool(json['newsletterSubscribed']) ?? true;
@@ -1314,9 +1527,8 @@ class _WizardDraft {
 
     uploads
       ..clear()
-      ..addAll((((json['uploads'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((item) => ContractUpload.fromJson(item.cast<String, dynamic>()))));
+      ..addAll((((json['uploads'] as List?) ?? const []).whereType<Map>().map(
+          (item) => ContractUpload.fromJson(item.cast<String, dynamic>()))));
 
     leuSigner = _leuSignerFromName(_stringOrNull(json['leuSigner']));
 
@@ -1330,21 +1542,22 @@ class _WizardDraft {
       customerSignatureCanvasSize = Size.zero;
     }
 
-    customerSignatureStrokes = (((json['customerSignatureStrokes'] as List?) ?? const [])
-        .whereType<List>()
-        .map(
-          (stroke) => stroke
-              .whereType<Map>()
-              .map(
-                (point) => Offset(
-                  _toDouble(point['dx']) ?? 0,
-                  _toDouble(point['dy']) ?? 0,
-                ),
-              )
-              .toList(),
-        )
-        .where((stroke) => stroke.isNotEmpty)
-        .toList());
+    customerSignatureStrokes =
+        (((json['customerSignatureStrokes'] as List?) ?? const [])
+            .whereType<List>()
+            .map(
+              (stroke) => stroke
+                  .whereType<Map>()
+                  .map(
+                    (point) => Offset(
+                      _toDouble(point['dx']) ?? 0,
+                      _toDouble(point['dy']) ?? 0,
+                    ),
+                  )
+                  .toList(),
+            )
+            .where((stroke) => stroke.isNotEmpty)
+            .toList());
   }
 
   static _LeuSigner? _leuSignerFromName(String? name) {
@@ -1388,8 +1601,10 @@ class _WizardDraft {
         (prefill.systemReferenceCustomer > 0
             ? prefill.systemReferenceCustomer
             : existingCustomerId);
-    existingCustomerLabel = prefill.existingCustomerLabel ?? existingCustomerLabel;
-    isLegalEntity = prefill.isLegalEntity || prefill.tradingName.trim().isNotEmpty;
+    existingCustomerLabel =
+        prefill.existingCustomerLabel ?? existingCustomerLabel;
+    isLegalEntity =
+        prefill.isLegalEntity || prefill.tradingName.trim().isNotEmpty;
     tradingName = prefill.tradingName;
     title = prefill.consignorInfo.title;
     salutation = prefill.consignorInfo.salutation;
@@ -1416,6 +1631,38 @@ class _WizardDraft {
     countryName = prefill.consignorAddress.countryName;
     bankName = prefill.bankingDetails.bankName;
     iban = prefill.bankingDetails.accountNumber;
+    isIban = prefill.bankingDetails.isIban;
+    bicSwift = prefill.bankingDetails.bicSwift;
+    clearingNumber = prefill.bankingDetails.clearingNumber;
+    routingNumber = prefill.bankingDetails.routingNumber;
+    bankCountryIso3 = prefill.bankingDetails.bankCountryIso3;
+    bankCountryName = prefill.bankingDetails.bankCountryName;
+    bankAddressStreet = prefill.bankingDetails.bankAddress.streetAddress;
+    bankAddressStreetNumber = prefill.bankingDetails.bankAddress.streetNumber;
+    bankAddressStreetAddressOptional =
+        prefill.bankingDetails.bankAddress.streetAddressOptional;
+    bankAddressPostalCode = prefill.bankingDetails.bankAddress.postalCode;
+    bankAddressCity = prefill.bankingDetails.bankAddress.city;
+    bankAddressAdminRegion = prefill.bankingDetails.bankAddress.adminRegion;
+    bankAddressCountryIso3 = prefill.bankingDetails.bankAddress.countryIso3;
+    bankAddressCountryName = prefill.bankingDetails.bankAddress.countryName;
+    beneficiaryFirstName = prefill.bankingDetails.beneficiary.firstName;
+    beneficiaryLastName = prefill.bankingDetails.beneficiary.lastName;
+    beneficiaryAddressStreet =
+        prefill.bankingDetails.beneficiaryAddress.streetAddress;
+    beneficiaryAddressStreetNumber =
+        prefill.bankingDetails.beneficiaryAddress.streetNumber;
+    beneficiaryAddressStreetAddressOptional =
+        prefill.bankingDetails.beneficiaryAddress.streetAddressOptional;
+    beneficiaryAddressPostalCode =
+        prefill.bankingDetails.beneficiaryAddress.postalCode;
+    beneficiaryAddressCity = prefill.bankingDetails.beneficiaryAddress.city;
+    beneficiaryAddressAdminRegion =
+        prefill.bankingDetails.beneficiaryAddress.adminRegion;
+    beneficiaryAddressCountryIso3 =
+        prefill.bankingDetails.beneficiaryAddress.countryIso3;
+    beneficiaryAddressCountryName =
+        prefill.bankingDetails.beneficiaryAddress.countryName;
     correspondence = prefill.correspondence ?? correspondence;
     checkedByLeu = prefill.checkedByLeu;
     newsletterSubscribed = prefill.newsletterSubscribed;
@@ -1440,7 +1687,8 @@ class _WizardDraft {
       }
       uploads.add(
         ContractUpload(
-          localId: '${type.name}_${now.microsecondsSinceEpoch}_${path.hashCode}',
+          localId:
+              '${type.name}_${now.microsecondsSinceEpoch}_${path.hashCode}',
           fileName: fileName,
           fileType: type,
           path: path,
@@ -1480,7 +1728,8 @@ class _WizardDraft {
     consignor.emailAddress = email.trim();
     consignor.consignorAddress.streetAddress = street.trim();
     consignor.consignorAddress.streetNumber = streetNumber.trim();
-    consignor.consignorAddress.streetAddressOptional = streetAddressOptional.trim();
+    consignor.consignorAddress.streetAddressOptional =
+        streetAddressOptional.trim();
     consignor.consignorAddress.postalCode = postalCode.trim();
     consignor.consignorAddress.city = city.trim();
     consignor.consignorAddress.adminRegion = adminRegion.trim();
@@ -1489,8 +1738,43 @@ class _WizardDraft {
     consignor.bankingDetails.bankName = bankName.trim();
     consignor.bankingDetails.accountNumber = iban.trim();
     consignor.bankingDetails.isIban = true;
-    consignor.bankingDetails.clearingNumber = '';
-    consignor.bankingDetails.bicSwift = '';
+    consignor.bankingDetails.bicSwift = bicSwift.trim();
+    consignor.bankingDetails.clearingNumber = clearingNumber.trim();
+    consignor.bankingDetails.routingNumber = routingNumber.trim();
+    consignor.bankingDetails.bankCountryIso3 = bankCountryIso3;
+    consignor.bankingDetails.bankCountryName = bankCountryName;
+    consignor.bankingDetails.bankAddress.streetAddress =
+        bankAddressStreet.trim();
+    consignor.bankingDetails.bankAddress.streetNumber =
+        bankAddressStreetNumber.trim();
+    consignor.bankingDetails.bankAddress.streetAddressOptional =
+        bankAddressStreetAddressOptional.trim();
+    consignor.bankingDetails.bankAddress.postalCode =
+        bankAddressPostalCode.trim();
+    consignor.bankingDetails.bankAddress.city = bankAddressCity.trim();
+    consignor.bankingDetails.bankAddress.adminRegion =
+        bankAddressAdminRegion.trim();
+    consignor.bankingDetails.bankAddress.countryIso3 = bankAddressCountryIso3;
+    consignor.bankingDetails.bankAddress.countryName = bankAddressCountryName;
+    consignor.bankingDetails.beneficiary.firstName =
+        beneficiaryFirstName.trim();
+    consignor.bankingDetails.beneficiary.lastName = beneficiaryLastName.trim();
+    consignor.bankingDetails.beneficiaryAddress.streetAddress =
+        beneficiaryAddressStreet.trim();
+    consignor.bankingDetails.beneficiaryAddress.streetNumber =
+        beneficiaryAddressStreetNumber.trim();
+    consignor.bankingDetails.beneficiaryAddress.streetAddressOptional =
+        beneficiaryAddressStreetAddressOptional.trim();
+    consignor.bankingDetails.beneficiaryAddress.postalCode =
+        beneficiaryAddressPostalCode.trim();
+    consignor.bankingDetails.beneficiaryAddress.city =
+        beneficiaryAddressCity.trim();
+    consignor.bankingDetails.beneficiaryAddress.adminRegion =
+        beneficiaryAddressAdminRegion.trim();
+    consignor.bankingDetails.beneficiaryAddress.countryIso3 =
+        beneficiaryAddressCountryIso3;
+    consignor.bankingDetails.beneficiaryAddress.countryName =
+        beneficiaryAddressCountryName;
     consignor.correspondence = correspondence;
     consignor.checkedByLeu = checkedByLeu;
     consignor.newsletterSubscribed = newsletterSubscribed;
@@ -1521,7 +1805,8 @@ class _StepIndicator extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Step $businessStep', style: Theme.of(context).textTheme.titleSmall),
+        Text('Step $businessStep',
+            style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 8),
         LinearProgressIndicator(value: current / total),
       ],
@@ -1553,7 +1838,8 @@ class _OptionCard extends StatelessWidget {
               Icon(icon, size: 32),
               const SizedBox(width: 16),
               Expanded(
-                child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+                child:
+                    Text(title, style: Theme.of(context).textTheme.titleLarge),
               ),
             ],
           ),
@@ -1589,7 +1875,9 @@ class _ExistingCustomerStep extends StatelessWidget {
     return ListView(
       children: [
         Text(
-          contractOnly ? 'Select an existing consignor' : 'Existing or new consignor?',
+          contractOnly
+              ? 'Select an existing consignor'
+              : 'Existing or new consignor?',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
@@ -1662,7 +1950,8 @@ class _ConsignorTypeStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text('Legal entity or individual?', style: Theme.of(context).textTheme.headlineSmall),
+        Text('Legal entity or individual?',
+            style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
         _OptionCard(
           title: 'Individual (person)',
@@ -1694,6 +1983,7 @@ class _DetailsStep extends StatelessWidget {
     required this.correspondenceOptions,
     required this.phonePrefixes,
     required this.onChanged,
+    required this.onLookupIbanPressed,
     required this.onBack,
     required this.onNext,
   });
@@ -1705,6 +1995,7 @@ class _DetailsStep extends StatelessWidget {
   final List<_LookupOption<String>> correspondenceOptions;
   final List<PhonePrefix> phonePrefixes;
   final VoidCallback onChanged;
+  final VoidCallback onLookupIbanPressed;
   final VoidCallback onBack;
   final VoidCallback onNext;
 
@@ -1726,6 +2017,7 @@ class _DetailsStep extends StatelessWidget {
             correspondenceOptions: correspondenceOptions,
             phonePrefixes: phonePrefixes,
             onChanged: onChanged,
+            onLookupIbanPressed: onLookupIbanPressed,
           ),
           const SizedBox(height: 20),
           _WizardButtons(onBack: onBack, onNext: onNext),
@@ -1745,6 +2037,7 @@ class _RepresentativeStep extends StatelessWidget {
     required this.correspondenceOptions,
     required this.phonePrefixes,
     required this.onChanged,
+    required this.onLookupIbanPressed,
     required this.onBack,
     required this.onNext,
   });
@@ -1757,6 +2050,7 @@ class _RepresentativeStep extends StatelessWidget {
   final List<_LookupOption<String>> correspondenceOptions;
   final List<PhonePrefix> phonePrefixes;
   final VoidCallback onChanged;
+  final VoidCallback onLookupIbanPressed;
   final VoidCallback onBack;
   final VoidCallback onNext;
 
@@ -1766,13 +2060,14 @@ class _RepresentativeStep extends StatelessWidget {
       key: formKey,
       child: ListView(
         children: [
-          Text('Authorized representative', style: Theme.of(context).textTheme.headlineSmall),
+          Text('Authorized representative',
+              style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
           SectionCard(
             title: 'Ownership',
             child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('The consignor owns the coins'),
+              title: const Text('The consignor is also the (beneficial) owner'),
               value: ownerDraft.coinsOwnedByConsignor,
               onChanged: (value) {
                 ownerDraft.coinsOwnedByConsignor = value;
@@ -1789,6 +2084,7 @@ class _RepresentativeStep extends StatelessWidget {
               correspondenceOptions: correspondenceOptions,
               phonePrefixes: phonePrefixes,
               onChanged: onChanged,
+              onLookupIbanPressed: onLookupIbanPressed,
             ),
           ],
           const SizedBox(height: 20),
@@ -1807,6 +2103,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
     required this.correspondenceOptions,
     required this.phonePrefixes,
     required this.onChanged,
+    required this.onLookupIbanPressed,
   });
 
   final _WizardDraft draft;
@@ -1815,8 +2112,10 @@ class _ConsignorDetailsForm extends StatelessWidget {
   final List<_LookupOption<String>> correspondenceOptions;
   final List<PhonePrefix> phonePrefixes;
   final VoidCallback onChanged;
+  final VoidCallback onLookupIbanPressed;
 
-  String get _keyPrefix => draft.representativeMode ? 'representative' : 'owner';
+  String get _keyPrefix =>
+      draft.representativeMode ? 'representative' : 'owner';
 
   PhonePrefix? _selectedPhonePrefix() {
     final byOrigin = draft.phonePrefixOriginId == null
@@ -1825,7 +2124,9 @@ class _ConsignorDetailsForm extends StatelessWidget {
             .where((item) => item.originId == draft.phonePrefixOriginId)
             .firstOrNull;
     if (byOrigin != null) return byOrigin;
-    return phonePrefixes.where((item) => item.dialCode == draft.phonePrefix).firstOrNull;
+    return phonePrefixes
+        .where((item) => item.dialCode == draft.phonePrefix)
+        .firstOrNull;
   }
 
   @override
@@ -1834,7 +2135,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
     return Column(
       children: [
         SectionCard(
-          title: draft.isLegalEntity ? 'Company / person' : 'Person',
+          title: draft.isLegalEntity ? 'Company / person' : 'Authorized representative',
           child: _ResponsiveFormGrid(
             children: [
               if (!draft.representativeMode)
@@ -1876,14 +2177,16 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 key: ValueKey('$_keyPrefix-field-first-name'),
                 initialValue: draft.firstName,
                 decoration: const InputDecoration(labelText: 'First name *'),
-                validator: (value) => FormValidators.requiredText(value, 'First name'),
+                validator: (value) =>
+                    FormValidators.requiredText(value, 'First name'),
                 onChanged: (value) => draft.firstName = value,
               ),
               TextFormField(
                 key: ValueKey('$_keyPrefix-field-last-name'),
                 initialValue: draft.lastName,
                 decoration: const InputDecoration(labelText: 'Last name *'),
-                validator: (value) => FormValidators.requiredText(value, 'Last name'),
+                validator: (value) =>
+                    FormValidators.requiredText(value, 'Last name'),
                 onChanged: (value) => draft.lastName = value,
               ),
               if (draft.isLegalEntity)
@@ -1911,7 +2214,8 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 ),
                 label: 'Date of birth *',
                 value: draft.dateOfBirth,
-                validator: (value) => value == null ? 'Date of birth is required' : null,
+                validator: (value) =>
+                    value == null ? 'Date of birth is required' : null,
                 onChanged: (value) {
                   draft.dateOfBirth = value;
                   onChanged();
@@ -1922,7 +2226,8 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 label: 'Nationality *',
                 value: draft.nationalityIso3,
                 countries: countries,
-                validator: (value) => value == null ? 'Nationality is required' : null,
+                validator: (value) =>
+                    value == null ? 'Nationality is required' : null,
                 onChanged: (country) {
                   draft.nationalityIso3 = country?.iso3 ?? '';
                   draft.nationalityName = country?.name ?? '';
@@ -1937,7 +2242,8 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 items: phonePrefixes,
                 itemLabel: (item) => item.label,
                 initialValue: _selectedPhonePrefix(),
-                validator: (value) => FormValidators.phonePrefix(value?.dialCode),
+                validator: (value) =>
+                    FormValidators.phonePrefix(value?.dialCode),
                 onChanged: (value) {
                   draft.phonePrefix = value?.dialCode ?? '';
                   draft.phonePrefixOriginId = value?.originId;
@@ -1968,7 +2274,8 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   key: ValueKey('$_keyPrefix-field-eori'),
                   initialValue: draft.eori,
                   decoration: const InputDecoration(labelText: 'EORI *'),
-                  validator: (value) => FormValidators.requiredText(value, 'EORI'),
+                  validator: (value) =>
+                      FormValidators.requiredText(value, 'EORI'),
                   onChanged: (value) => draft.eori = value,
                 ),
             ],
@@ -1983,14 +2290,16 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 key: ValueKey('$_keyPrefix-field-street'),
                 initialValue: draft.street,
                 decoration: const InputDecoration(labelText: 'Street *'),
-                validator: (value) => FormValidators.requiredText(value, 'Street'),
+                validator: (value) =>
+                    FormValidators.requiredText(value, 'Street'),
                 onChanged: (value) => draft.street = value,
               ),
               TextFormField(
                 key: ValueKey('$_keyPrefix-field-street-number'),
                 initialValue: draft.streetNumber,
                 decoration: const InputDecoration(labelText: 'House number *'),
-                validator: (value) => FormValidators.requiredText(value, 'House number'),
+                validator: (value) =>
+                    FormValidators.requiredText(value, 'House number'),
                 onChanged: (value) => draft.streetNumber = value,
               ),
               TextFormField(
@@ -2003,14 +2312,16 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 key: ValueKey('$_keyPrefix-field-postal-code'),
                 initialValue: draft.postalCode,
                 decoration: const InputDecoration(labelText: 'Postal code *'),
-                validator: (value) => FormValidators.requiredText(value, 'Postal code'),
+                validator: (value) =>
+                    FormValidators.requiredText(value, 'Postal code'),
                 onChanged: (value) => draft.postalCode = value,
               ),
               TextFormField(
                 key: ValueKey('$_keyPrefix-field-city'),
                 initialValue: draft.city,
                 decoration: const InputDecoration(labelText: 'City *'),
-                validator: (value) => FormValidators.requiredText(value, 'City'),
+                validator: (value) =>
+                    FormValidators.requiredText(value, 'City'),
                 onChanged: (value) => draft.city = value,
               ),
               TextFormField(
@@ -2024,7 +2335,8 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 label: 'Country *',
                 value: draft.countryIso3,
                 countries: countries,
-                validator: (value) => value == null ? 'Country is required' : null,
+                validator: (value) =>
+                    value == null ? 'Country is required' : null,
                 onChanged: (country) {
                   draft.countryIso3 = country?.iso3 ?? '';
                   draft.countryName = country?.name ?? '';
@@ -2050,15 +2362,17 @@ class _ConsignorDetailsForm extends StatelessWidget {
                       onChanged();
                     },
                   ),
-                  TextFormField(
-                    key: ValueKey('$_keyPrefix-field-vat-number'),
-                    initialValue: draft.vatNumber,
-                    decoration: const InputDecoration(labelText: 'VAT number'),
-                    validator: (value) => draft.vatLiability
-                        ? FormValidators.requiredText(value, 'VAT number')
-                        : null,
-                    onChanged: (value) => draft.vatNumber = value,
-                  ),
+                  if (draft.isLegalEntity)
+                    TextFormField(
+                      key: ValueKey('$_keyPrefix-field-vat-number'),
+                      initialValue: draft.vatNumber,
+                      decoration:
+                          const InputDecoration(labelText: 'VAT number'),
+                      validator: (value) => draft.vatLiability
+                          ? FormValidators.requiredText(value, 'VAT number')
+                          : null,
+                      onChanged: (value) => draft.vatNumber = value,
+                    ),
                   SearchableSelectFormField<_LookupOption<String>>(
                     key: ValueKey('$_keyPrefix-field-correspondence'),
                     label: 'Correspondence *',
@@ -2118,17 +2432,59 @@ class _ConsignorDetailsForm extends StatelessWidget {
           child: _ResponsiveFormGrid(
             children: [
               TextFormField(
-                key: ValueKey('$_keyPrefix-field-bank-name'),
+                key: ValueKey('$_keyPrefix-field-iban'),
+                initialValue: draft.iban,
+                decoration: InputDecoration(
+                  labelText: 'IBAN *',
+                  suffixIcon: IconButton(
+                    tooltip: 'Auto-fill bank data',
+                    onPressed: onLookupIbanPressed,
+                    icon: const Icon(Icons.travel_explore_rounded),
+                  ),
+                ),
+                validator: FormValidators.iban,
+                onChanged: (value) => draft.iban = value,
+              ),
+              TextFormField(
+                key: ValueKey(
+                  '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
+                ),
                 initialValue: draft.bankName,
                 decoration: const InputDecoration(labelText: 'Bank name'),
                 onChanged: (value) => draft.bankName = value,
               ),
               TextFormField(
-                key: ValueKey('$_keyPrefix-field-iban'),
-                initialValue: draft.iban,
-                decoration: const InputDecoration(labelText: 'IBAN *'),
-                validator: FormValidators.iban,
-                onChanged: (value) => draft.iban = value,
+                key: ValueKey(
+                  '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
+                ),
+                initialValue: draft.bicSwift,
+                decoration: const InputDecoration(labelText: 'BIC / SWIFT'),
+                onChanged: (value) => draft.bicSwift = value,
+              ),
+              TextFormField(
+                key: ValueKey('$_keyPrefix-field-clearing-number'),
+                initialValue: draft.clearingNumber,
+                decoration: const InputDecoration(labelText: 'Clearing number'),
+                onChanged: (value) => draft.clearingNumber = value,
+              ),
+              TextFormField(
+                key: ValueKey('$_keyPrefix-field-routing-number'),
+                initialValue: draft.routingNumber,
+                decoration: const InputDecoration(labelText: 'Routing number'),
+                onChanged: (value) => draft.routingNumber = value,
+              ),
+              CountryDropdown(
+                key: ValueKey(
+                  '$_keyPrefix-field-bank-country-${draft.bankCountryIso3}',
+                ),
+                label: 'Bank country',
+                value: draft.bankCountryIso3,
+                countries: countries,
+                onChanged: (country) {
+                  draft.bankCountryIso3 = country?.iso3 ?? '';
+                  draft.bankCountryName = country?.name ?? '';
+                  onChanged();
+                },
               ),
             ],
           ),
@@ -2157,11 +2513,13 @@ class _ContractDecisionStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text('Create a contract too?', style: Theme.of(context).textTheme.headlineSmall),
+        Text('Create a contract too?',
+            style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
         _ConsignorReview(draft: draft),
         const SizedBox(height: 20),
-        OutlinedButton(onPressed: saving ? null : onBack, child: const Text('Back')),
+        OutlinedButton(
+            onPressed: saving ? null : onBack, child: const Text('Back')),
         const SizedBox(height: 12),
         ElevatedButton.icon(
           onPressed: saving ? null : onCreateContract,
@@ -2208,7 +2566,8 @@ class _AuctionStep extends StatelessWidget {
       key: formKey,
       child: ListView(
         children: [
-          Text('Choose auctions', style: Theme.of(context).textTheme.headlineSmall),
+          Text('Choose auctions',
+              style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
           MultiAuctionSelectField(
             label: 'Auctions *',
@@ -2281,7 +2640,8 @@ class _FileStep extends StatelessWidget {
                 ...files.map(
                   (file) => Padding(
                     padding: const EdgeInsets.only(bottom: 8),
-                    child: _FileTile(upload: file, onOpen: onOpen, onRemove: onRemove),
+                    child: _FileTile(
+                        upload: file, onOpen: onOpen, onRemove: onRemove),
                   ),
                 ),
             ],
@@ -2301,6 +2661,7 @@ class _FullReviewStep extends StatelessWidget {
     required this.representative,
     required this.saving,
     required this.generatedPdfPath,
+    required this.onEditConsignor,
     required this.onBack,
     required this.onGeneratePdf,
     required this.onOpenPdf,
@@ -2312,6 +2673,7 @@ class _FullReviewStep extends StatelessWidget {
   final _WizardDraft? representative;
   final bool saving;
   final String? generatedPdfPath;
+  final VoidCallback onEditConsignor;
   final VoidCallback onBack;
   final VoidCallback onGeneratePdf;
   final VoidCallback? onOpenPdf;
@@ -2324,7 +2686,7 @@ class _FullReviewStep extends StatelessWidget {
       children: [
         Text('Full review', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
-        _ConsignorReview(draft: draft),
+        _ConsignorReview(draft: draft, onEdit: onEditConsignor),
         if (representative != null) ...[
           const SizedBox(height: 12),
           SectionCard(
@@ -2335,7 +2697,8 @@ class _FullReviewStep extends StatelessWidget {
         const SizedBox(height: 12),
         SectionCard(
           title: 'Auctions',
-          child: Text(draft.selectedAuctions.map((e) => e.displayName).join(', ')),
+          child:
+              Text(draft.selectedAuctions.map((e) => e.displayName).join(', ')),
         ),
         const SizedBox(height: 12),
         SectionCard(
@@ -2383,7 +2746,8 @@ class _FullReviewStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-        OutlinedButton(onPressed: saving ? null : onBack, child: const Text('Back')),
+        OutlinedButton(
+            onPressed: saving ? null : onBack, child: const Text('Back')),
         const SizedBox(height: 12),
         ElevatedButton.icon(
           onPressed: saving ? null : onContinue,
@@ -2391,6 +2755,132 @@ class _FullReviewStep extends StatelessWidget {
           label: const Text('Continue to signatures'),
         ),
       ],
+    );
+  }
+}
+
+class _ConsignorReviewEditDialog extends StatefulWidget {
+  const _ConsignorReviewEditDialog({
+    required this.draft,
+    required this.titleOptions,
+    required this.salutationOptions,
+    required this.correspondenceOptions,
+    required this.phonePrefixes,
+    required this.onChanged,
+    required this.onLookupIbanPressed,
+  });
+
+  final _WizardDraft draft;
+  final List<_LookupOption<int>> titleOptions;
+  final List<_LookupOption<int>> salutationOptions;
+  final List<_LookupOption<String>> correspondenceOptions;
+  final List<PhonePrefix> phonePrefixes;
+  final VoidCallback onChanged;
+  final VoidCallback onLookupIbanPressed;
+
+  @override
+  State<_ConsignorReviewEditDialog> createState() =>
+      _ConsignorReviewEditDialogState();
+}
+
+class _ConsignorReviewEditDialogState
+    extends State<_ConsignorReviewEditDialog> {
+  final _formKey = GlobalKey<FormState>();
+  AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
+
+  void _handleChanged() {
+    setState(() {});
+    widget.onChanged();
+  }
+
+  void _saveAndContinue() {
+    setState(() {
+      _autovalidateMode = AutovalidateMode.onUserInteraction;
+    });
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please fix the validation errors before continuing.'),
+        ),
+      );
+      return;
+    }
+
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.of(context).size.height * 0.9;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 1040, maxHeight: maxHeight),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 16, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.draft.isLegalEntity
+                          ? 'Edit company details'
+                          : 'Edit consignor details',
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(context).pop(false),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Form(
+                key: _formKey,
+                autovalidateMode: _autovalidateMode,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: _ConsignorDetailsForm(
+                    draft: widget.draft,
+                    titleOptions: widget.titleOptions,
+                    salutationOptions: widget.salutationOptions,
+                    correspondenceOptions: widget.correspondenceOptions,
+                    phonePrefixes: widget.phonePrefixes,
+                    onChanged: _handleChanged,
+                    onLookupIbanPressed: widget.onLookupIbanPressed,
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: _saveAndContinue,
+                    icon: const Icon(Icons.save_rounded),
+                    label: const Text('Save and continue'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2427,7 +2917,9 @@ class _SignerChoiceTile extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
               color: selected ? palette.brand : palette.textMuted,
             ),
             const SizedBox(width: 12),
@@ -2531,7 +3023,8 @@ class _SignatureStep extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               OutlinedButton.icon(
-                onPressed: saving || !draft.signatureReady ? null : onGeneratePdf,
+                onPressed:
+                    saving || !draft.signatureReady ? null : onGeneratePdf,
                 icon: const Icon(Icons.picture_as_pdf_outlined),
                 label: const Text('Generate signed PDF'),
               ),
@@ -2545,7 +3038,8 @@ class _SignatureStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-        OutlinedButton(onPressed: saving ? null : onBack, child: const Text('Back')),
+        OutlinedButton(
+            onPressed: saving ? null : onBack, child: const Text('Back')),
         const SizedBox(height: 12),
         ElevatedButton.icon(
           onPressed: saving || !draft.signatureReady ? null : onSubmit,
@@ -2597,7 +3091,9 @@ class _SignaturePadState extends State<_SignaturePad> {
 
   void _notify(Size size) {
     widget.onChanged(
-      _strokes.map((stroke) => List<Offset>.from(stroke)).toList(growable: false),
+      _strokes
+          .map((stroke) => List<Offset>.from(stroke))
+          .toList(growable: false),
       size,
     );
   }
@@ -2619,7 +3115,8 @@ class _SignaturePadState extends State<_SignaturePad> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth.isFinite ? constraints.maxWidth : 600.0;
+        final width =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 600.0;
         const height = 220.0;
         final size = Size(width, height);
 
@@ -2675,14 +3172,22 @@ class _SignaturePainter extends CustomPainter {
 }
 
 class _ConsignorReview extends StatelessWidget {
-  const _ConsignorReview({required this.draft});
+  const _ConsignorReview({required this.draft, this.onEdit});
 
   final _WizardDraft draft;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
     return SectionCard(
       title: 'Consignor',
+      trailing: onEdit == null
+          ? null
+          : OutlinedButton.icon(
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit'),
+            ),
       child: _ReviewLines(lines: draft.reviewLines),
     );
   }
@@ -2711,7 +3216,8 @@ class _ReviewLines extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-                Expanded(child: Text(line.value.trim().isEmpty ? '-' : line.value)),
+                Expanded(
+                    child: Text(line.value.trim().isEmpty ? '-' : line.value)),
               ],
             ),
           ),
@@ -2744,8 +3250,10 @@ extension _WizardDraftReview on _WizardDraft {
       };
 
   List<_ReviewLine> get reviewLines => [
-        _ReviewLine('Type', isLegalEntity ? 'Company or legal entity' : 'Individual'),
-        _ReviewLine('Name', isLegalEntity ? tradingName : '$firstName $lastName'),
+        _ReviewLine(
+            'Type', isLegalEntity ? 'Company or legal entity' : 'Individual'),
+        _ReviewLine(
+            'Name', isLegalEntity ? tradingName : '$firstName $lastName'),
         _ReviewLine('Title', _titleLabel),
         _ReviewLine('Salutation', _salutationLabel),
         _ReviewLine(
@@ -2770,7 +3278,10 @@ extension _WizardDraftReview on _WizardDraft {
         ),
         _ReviewLine('VAT number', vatNumber),
         _ReviewLine('EORI', eori),
-        _ReviewLine('IBAN', iban),
+        _ReviewLine(isIban ? 'IBAN' : 'Account number', iban),
+        _ReviewLine('BIC / SWIFT', bicSwift),
+        _ReviewLine('Clearing number', clearingNumber),
+        _ReviewLine('Routing number', routingNumber),
         _ReviewLine('Correspondence', _correspondenceLabel),
       ];
 }
@@ -2805,7 +3316,8 @@ class _FileTile extends StatelessWidget {
               width: 72,
               height: 72,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _FallbackPreview(icon: preview.icon),
+              errorBuilder: (_, __, ___) =>
+                  _FallbackPreview(icon: preview.icon),
             ),
           )
         : _FallbackPreview(icon: preview.icon);
@@ -3030,7 +3542,9 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
   int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
 
   List<int> get _availableYears => [
-        for (var year = widget.lastDate.year; year >= widget.firstDate.year; year--)
+        for (var year = widget.lastDate.year;
+            year >= widget.firstDate.year;
+            year--)
           year,
       ];
 
@@ -3097,9 +3611,10 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
     if (!validMonths.contains(_selectedMonth)) {
       setState(() {
         _selectedMonth = validMonths.first;
-        _selectedDay = _selectedDay > _daysInMonth(_selectedYear, _selectedMonth)
-            ? _daysInMonth(_selectedYear, _selectedMonth)
-            : _selectedDay;
+        _selectedDay =
+            _selectedDay > _daysInMonth(_selectedYear, _selectedMonth)
+                ? _daysInMonth(_selectedYear, _selectedMonth)
+                : _selectedDay;
       });
     }
 
@@ -3181,7 +3696,8 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
                 onPressed: () async {
                   final picked = await showDatePicker(
                     context: context,
-                    initialDate: DateTime(_selectedYear, _selectedMonth, _selectedDay),
+                    initialDate:
+                        DateTime(_selectedYear, _selectedMonth, _selectedDay),
                     firstDate: widget.firstDate,
                     lastDate: widget.lastDate,
                     initialDatePickerMode: DatePickerMode.year,

@@ -541,7 +541,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
             OutlinedButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_UnsavedChangesAction.addToDraft),
-              child: const Text('Add to draft'),
+              child: const Text('Save as draft'),
             ),
             ElevatedButton(
               onPressed: () =>
@@ -677,12 +677,12 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       OutlinedButton.icon(
         onPressed: _addToDraftAndStay,
         icon: const Icon(Icons.edit_note_outlined),
-        label: const Text('Add to draft'),
+        label: const Text('Save as draft'),
       ),
       ElevatedButton.icon(
         onPressed: _saveAndContinue,
         icon: const Icon(Icons.save_rounded),
-        label: const Text('Save and continue'),
+        label: const Text('Save as draft'),
       ),
       OutlinedButton(
         onPressed: () => _attemptLeaveTo('/consignors'),
@@ -778,7 +778,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                     OutlinedButton.icon(
                       onPressed: _addToDraftAndStay,
                       icon: const Icon(Icons.edit_note_outlined),
-                      label: const Text('Add to draft'),
+                      label: const Text('Save as draft'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white,
                         side: BorderSide(
@@ -827,7 +827,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                 ],
                 if (!_isNew && _model.hasRemoteReference) ...[
                   SectionCard(
-                    title: 'Assigned identifiers',
+                    title: 'Consignor identification',
                     subtitle: 'These identifiers are assigned by backend sync.',
                     icon: Icons.tag_outlined,
                     child: _ResponsiveFormGrid(

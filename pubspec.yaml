@@ -28,6 +28,7 @@ dependencies:
   collection: ^1.19.1
   crypto: ^3.0.6
   url_launcher: ^6.3.2
+  iban_to_bic: ^2.2.0
 
 dev_dependencies:
   flutter_test:

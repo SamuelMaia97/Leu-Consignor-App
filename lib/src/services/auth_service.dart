@@ -195,7 +195,14 @@ class AuthService {
       }
 
       request.response.write(
-        '<html><body><h2>Sign-in complete</h2><p>You can return to the app.</p></body></html>',
+        '<!doctype html><html><head><meta charset="utf-8"><title>Sign-in complete</title></head>'
+        '<body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;line-height:1.45;">'
+        '<h2>Sign-in complete</h2>'
+        '<p>You can close this browser tab and return to the Leu Consignor App.</p>'
+        '<script>'
+        'setTimeout(function(){window.close();}, 750);'
+        '</script>'
+        '</body></html>',
       );
       await request.response.close();
 

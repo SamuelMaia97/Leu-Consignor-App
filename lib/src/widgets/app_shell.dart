@@ -123,7 +123,8 @@ class AppShell extends StatelessWidget {
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: palette.brandStrong.withValues(alpha: 0.06),
+                              color:
+                                  palette.brandStrong.withValues(alpha: 0.06),
                               blurRadius: 34,
                               offset: const Offset(0, 18),
                             ),
@@ -194,9 +195,8 @@ class AppShell extends StatelessWidget {
     final currentLocation = GoRouterState.of(context).uri.toString();
     if (currentLocation == targetLocation) return;
 
-    final canLeave = await context
-        .read<AppState>()
-        .canLeaveCurrentRoute(consume: true);
+    final canLeave =
+        await context.read<AppState>().canLeaveCurrentRoute(consume: true);
 
     if (!context.mounted || !canLeave) return;
 
@@ -230,9 +230,8 @@ class _ShellSyncProgress extends StatelessWidget {
     final hasKnownTotal = state.syncingNow && state.syncProgressTotal > 0;
     final progressValue = hasKnownTotal ? state.syncProgressValue : null;
 
-    final current = state.syncProgressCurrent < 0
-        ? 0
-        : state.syncProgressCurrent;
+    final current =
+        state.syncProgressCurrent < 0 ? 0 : state.syncProgressCurrent;
     final total = state.syncProgressTotal;
 
     return AnimatedContainer(
@@ -391,21 +390,38 @@ class _TopBar extends StatelessWidget {
                   children: [
                     if (!showMenu)
                       StatusBadge(
-                        label: state.hasValidToken
-                            ? 'Microsoft connected'
-                            : 'Microsoft login needed',
+                        label: state.signingIn
+                            ? 'Microsoft sign-in…'
+                            : state.hasValidToken
+                                ? 'Microsoft connected'
+                                : 'Microsoft login needed',
                         tone: state.hasValidToken
                             ? StatusBadgeTone.success
                             : StatusBadgeTone.warning,
                         icon: state.hasValidToken
                             ? Icons.verified_user_outlined
                             : Icons.lock_outline_rounded,
-                        onTap: () => context.go('/settings'),
+                        onTap: state.signingIn
+                            ? null
+                            : () async {
+                                if (state.hasValidToken) {
+                                  context.go('/settings');
+                                  return;
+                                }
+
+                                await state.signInWithMicrosoft();
+                                if (!context.mounted ||
+                                    state.lastMessage == null) {
+                                  return;
+                                }
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(state.lastMessage!)),
+                                );
+                              },
                       ),
                     StatusBadge(
-                      label: syncing
-                          ? 'Syncing'
-                          : 'Workspace ready',
+                      label: syncing ? 'Syncing' : 'Workspace ready',
                       tone: syncing
                           ? StatusBadgeTone.info
                           : StatusBadgeTone.neutral,

@@ -431,10 +431,12 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
                         onSync: item.needsSync ? () => _syncDraft(item) : null,
                         localAction: _localDraftActionFor(item),
                         onDeleteDraft: () => _deleteLocalDraft(item),
-                        onViewError: item.syncStatus == RecordSyncStatus.syncFailed &&
-                                (item.syncErrorMessage?.trim().isNotEmpty ?? false)
-                            ? () => _showSyncError(item)
-                            : null,
+                        onViewError:
+                            item.syncStatus == RecordSyncStatus.syncFailed &&
+                                    (item.syncErrorMessage?.trim().isNotEmpty ??
+                                        false)
+                                ? () => _showSyncError(item)
+                                : null,
                         onSendEmail: _sendEmail,
                         onCallNumber: _callNumber,
                         onOpenAddress: _openAddress,
@@ -638,8 +640,9 @@ class _ConsignorRow extends StatelessWidget {
     final email = item.emailAddress.trim();
     final phone = item.fullPhoneNumber.trim();
     final address = item.consignorAddress.toSingleLine().trim();
-    final initials =
-        displayName.isNotEmpty ? displayName.substring(0, 1).toUpperCase() : '#';
+    final initials = displayName.isNotEmpty
+        ? displayName.substring(0, 1).toUpperCase()
+        : '#';
 
     return Container(
       decoration: BoxDecoration(
@@ -682,9 +685,24 @@ class _ConsignorRow extends StatelessWidget {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Text(
-                        displayName.isEmpty ? 'Unnamed consignor' : displayName,
-                        style: Theme.of(context).textTheme.titleLarge,
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: () => context.go('/consignors/${item.id}'),
+                          child: Text(
+                            displayName.isEmpty
+                                ? 'Unnamed consignor'
+                                : displayName,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  color: palette.brand,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: palette.brand,
+                                ),
+                          ),
+                        ),
                       ),
                       StatusBadge(
                         label: _statusLabel(item.syncStatus),
@@ -706,8 +724,7 @@ class _ConsignorRow extends StatelessWidget {
                       _MetaText(
                         icon: Icons.phone_outlined,
                         text: phone.isEmpty ? 'No phone' : phone,
-                        onTap:
-                            phone.isEmpty ? null : () => onCallNumber(phone),
+                        onTap: phone.isEmpty ? null : () => onCallNumber(phone),
                       ),
                     ],
                   ),
@@ -715,9 +732,8 @@ class _ConsignorRow extends StatelessWidget {
                   _MetaText(
                     icon: Icons.location_on_outlined,
                     text: address.isEmpty ? 'No address stored' : address,
-                    onTap: address.isEmpty
-                        ? null
-                        : () => onOpenAddress(address),
+                    onTap:
+                        address.isEmpty ? null : () => onOpenAddress(address),
                   ),
                   if (item.syncStatus == RecordSyncStatus.syncFailed &&
                       (item.syncErrorMessage?.trim().isNotEmpty ?? false)) ...[
@@ -782,7 +798,7 @@ class _ConsignorRow extends StatelessWidget {
                   icon: const Icon(Icons.edit_outlined),
                 ),
                 IconButton(
-                  tooltip: 'Contract',
+                  tooltip: 'Go to contracts',
                   onPressed: () => context.go('/contracts/${item.id}'),
                   icon: const Icon(Icons.description_outlined),
                 ),
@@ -913,8 +929,9 @@ class _MetaText extends StatelessWidget {
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: clickable ? palette.brand : palette.text,
                     fontWeight: clickable ? FontWeight.w600 : FontWeight.w400,
-                    decoration:
-                        clickable ? TextDecoration.underline : TextDecoration.none,
+                    decoration: clickable
+                        ? TextDecoration.underline
+                        : TextDecoration.none,
                     decorationColor: clickable ? palette.brand : null,
                   ),
             ),

@@ -161,7 +161,8 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
           if (consignor == null) {
             return AppEmptyState(
               title: 'Consignor not found',
-              message: 'Return to the consignor list and choose a valid record.',
+              message:
+                  'Return to the consignor list and choose a valid record.',
               icon: Icons.description_outlined,
               action: OutlinedButton.icon(
                 onPressed: () => context.go('/consignors'),
@@ -174,7 +175,8 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
           final consignorContracts = state.contractsForConsignor(
             widget.consignorId,
           );
-          final auctionOptions = _buildAuctionOptions(consignorContracts, state);
+          final auctionOptions =
+              _buildAuctionOptions(consignorContracts, state);
 
           final summary = _ContractsOverviewSummary.from(
             contracts: consignorContracts,
@@ -357,15 +359,15 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                                 label: 'Synced',
                                 selected:
                                     _quickFilter == _ContractQuickFilter.synced,
-                                onSelected: () =>
-                                    _setQuickFilter(_ContractQuickFilter.synced),
+                                onSelected: () => _setQuickFilter(
+                                    _ContractQuickFilter.synced),
                               ),
                               _QuickFilterChip(
                                 label: 'Failed',
                                 selected:
                                     _quickFilter == _ContractQuickFilter.failed,
-                                onSelected: () =>
-                                    _setQuickFilter(_ContractQuickFilter.failed),
+                                onSelected: () => _setQuickFilter(
+                                    _ContractQuickFilter.failed),
                               ),
                             ],
                           ),
@@ -415,8 +417,7 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                 SliverList(
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final contract = summary.visibleItems[index];
-                    final isSyncing =
-                        contract.auctionId != null &&
+                    final isSyncing = contract.auctionId != null &&
                         state.isSyncingContract(
                           contract.consignorId,
                           contract.auctionId!,
@@ -431,6 +432,9 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                         contract: contract,
                         isSyncing: isSyncing,
                         onOpen: () => _openContract(contract),
+                        onOpenWizard: () => context.go(
+                          '/contracts/${contract.consignorId}/record/${contract.id}/resume',
+                        ),
                         onSync: contract.auctionId == null
                             ? null
                             : () => _syncContract(contract),
@@ -557,7 +561,8 @@ class _ContractsOverviewSummary {
     final normalizedQuery = query.trim().toLowerCase();
 
     final all = contracts.where((contract) {
-      if (selectedAuctionId != null && contract.auctionId != selectedAuctionId) {
+      if (selectedAuctionId != null &&
+          contract.auctionId != selectedAuctionId) {
         return false;
       }
       return true;
@@ -687,12 +692,14 @@ class _ContractOverviewRow extends StatelessWidget {
     required this.contract,
     required this.isSyncing,
     required this.onOpen,
+    required this.onOpenWizard,
     this.onSync,
   });
 
   final ContractRecord contract;
   final bool isSyncing;
   final VoidCallback onOpen;
+  final VoidCallback onOpenWizard;
   final Future<void> Function()? onSync;
 
   @override
@@ -739,9 +746,22 @@ class _ContractOverviewRow extends StatelessWidget {
                     runSpacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Text(
-                        displayName,
-                        style: Theme.of(context).textTheme.titleLarge,
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: GestureDetector(
+                          onTap: onOpenWizard,
+                          child: Text(
+                            displayName,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  color: palette.brand,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: palette.brand,
+                                ),
+                          ),
+                        ),
                       ),
                       StatusBadge(
                         label: _statusLabel(status),
