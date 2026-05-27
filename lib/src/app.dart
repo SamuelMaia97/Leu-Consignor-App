@@ -25,9 +25,11 @@ class LeuApp extends StatefulWidget {
 class _LeuAppState extends State<LeuApp> {
   late final GoRouter _router = GoRouter(
     initialLocation: '/',
+    errorBuilder: (_, __) => const HomeScreen(),
     routes: [
       GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
-      GoRoute(path: '/consignors', builder: (_, __) => const ConsignorListScreen()),
+      GoRoute(
+          path: '/consignors', builder: (_, __) => const ConsignorListScreen()),
       GoRoute(
         path: '/consignors/new',
         builder: (_, __) => const ConsignorWizardScreen(),
@@ -43,7 +45,8 @@ class _LeuAppState extends State<LeuApp> {
         builder: (_, state) =>
             ConsignorEditorScreen(consignorId: state.pathParameters['id']),
       ),
-      GoRoute(path: '/contracts', builder: (_, __) => const ContractListScreen()),
+      GoRoute(
+          path: '/contracts', builder: (_, __) => const ContractListScreen()),
       GoRoute(
         path: '/contracts/new',
         builder: (_, __) => const ConsignorWizardScreen(contractOnly: true),
@@ -56,8 +59,10 @@ class _LeuAppState extends State<LeuApp> {
       ),
       GoRoute(
         path: '/contracts/:id/new',
-        builder: (_, state) =>
-            ContractEditorScreen(consignorId: state.pathParameters['id']!),
+        builder: (_, state) => ConsignorWizardScreen(
+          contractOnly: true,
+          resumeConsignorId: state.pathParameters['id'],
+        ),
       ),
       GoRoute(
         path: '/contracts/:id/:auctionId',

@@ -577,7 +577,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
             OutlinedButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_UnsavedChangesAction.addToDraft),
-              child: const Text('Add to draft'),
+              child: const Text('Save as draft'),
             ),
             ElevatedButton(
               onPressed: () =>
@@ -704,7 +704,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                   style: _headerSecondaryButtonStyle(),
                   onPressed: _busy ? null : _saveAsDraft,
                   icon: const Icon(Icons.edit_note_outlined),
-                  label: const Text('Add to draft'),
+                  label: const Text('Save as draft'),
                 ),
                 ElevatedButton.icon(
                   style: _headerPrimaryButtonStyle(),

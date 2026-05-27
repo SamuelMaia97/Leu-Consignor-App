@@ -8,7 +8,6 @@ import '../theme/app_theme.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/page_header.dart';
-import '../widgets/responsive.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_badge.dart';
 
@@ -115,6 +114,123 @@ class HomeScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: state.signingIn
+                                ? null
+                                : () async {
+                                    await state.signInWithMicrosoft();
+                                    if (context.mounted &&
+                                        state.lastMessage != null) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(state.lastMessage!),
+                                        ),
+                                      );
+                                    }
+                                  },
+                            icon: state.signingIn
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.login_rounded),
+                            label: Text(
+                              state.signingIn
+                                  ? 'Signing in…'
+                                  : state.hasValidToken
+                                      ? 'Refresh Microsoft login'
+                                      : 'Microsoft login required',
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.16),
+                              ),
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.08),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: state.syncingAllDrafts
+                                ? null
+                                : () async {
+                                    await state.syncAllDraftConsignors();
+                                    if (context.mounted &&
+                                        state.lastMessage != null) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text(state.lastMessage!),
+                                        ),
+                                      );
+                                    }
+                                  },
+                            icon: state.syncingAllDrafts
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.cloud_upload_outlined),
+                            label: Text(
+                              state.syncingAllDrafts
+                                  ? 'Syncing…'
+                                  : 'Sync pending',
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.16),
+                              ),
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.08),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => context.go('/settings'),
+                            icon: const Icon(Icons.settings_outlined),
+                            label: const Text('Configuration'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.16),
+                              ),
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.08),
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await state.testConnection();
+                              if (context.mounted &&
+                                  state.lastMessage != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(state.lastMessage!)),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.wifi_tethering_outlined),
+                            label: const Text('Connection check'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: Colors.white.withValues(alpha: 0.16),
+                              ),
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.08),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -140,80 +256,6 @@ class HomeScreen extends StatelessWidget {
                     },
                     icon: const Icon(Icons.sync_rounded),
                     label: const Text('Run sync'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: state.signingIn
-                        ? null
-                        : () async {
-                            await state.signInWithMicrosoft();
-                            if (context.mounted && state.lastMessage != null) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(state.lastMessage!)),
-                              );
-                            }
-                          },
-                    icon: state.signingIn
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.login_rounded),
-                    label: Text(
-                      state.signingIn
-                          ? 'Signing in…'
-                          : state.hasValidToken
-                              ? 'Refresh Microsoft login'
-                              : 'Microsoft login required',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.16),
-                      ),
-                      backgroundColor: Colors.white.withValues(alpha: 0.08),
-                    ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: state.syncingAllDrafts
-                        ? null
-                        : () async {
-                            await state.syncAllDraftConsignors();
-                            if (context.mounted && state.lastMessage != null) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(state.lastMessage!)),
-                              );
-                            }
-                          },
-                    icon: state.syncingAllDrafts
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cloud_upload_outlined),
-                    label: Text(
-                      state.syncingAllDrafts ? 'Syncing…' : 'Sync pending',
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.16),
-                      ),
-                      backgroundColor: Colors.white.withValues(alpha: 0.08),
-                    ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () => context.go('/settings'),
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('Configuration'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.16),
-                      ),
-                      backgroundColor: Colors.white.withValues(alpha: 0.08),
-                    ),
                   ),
                 ],
               ),
@@ -275,192 +317,39 @@ class HomeScreen extends StatelessWidget {
                 },
               ),
               const SizedBox(height: 24),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final split = constraints.maxWidth >= 1100;
-                  return split
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              flex: 7,
-                              child: SectionCard(
-                                title: 'Operational actions',
-                                icon: Icons.flash_on_outlined,
-                                child: Wrap(
-                                  spacing: 16,
-                                  runSpacing: 16,
-                                  children: [
-                                    _ActionTile(
-                                      title: 'Create consignor',
-                                      icon: Icons.person_add_alt_1_outlined,
-                                      onTap: () =>
-                                          context.go('/consignors/new'),
-                                    ),
-                                    _ActionTile(
-                                      title: 'Create contract',
-                                      icon: Icons.post_add_outlined,
-                                      onTap: () => context.go('/contracts/new'),
-                                    ),
-                                    _ActionTile(
-                                      title: 'Open list',
-                                      icon:
-                                          Icons.format_list_bulleted_rounded,
-                                      onTap: () => context.go('/consignors'),
-                                    ),
-                                    _ActionTile(
-                                      title: 'Connection check',
-                                      icon: Icons.wifi_tethering_outlined,
-                                      onTap: () async {
-                                        await state.testConnection();
-                                        if (context.mounted &&
-                                            state.lastMessage != null) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                              content:
-                                                  Text(state.lastMessage!),
-                                            ),
-                                          );
-                                        }
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              flex: 5,
-                              child: SectionCard(
-                                title: 'Workspace status',
-                                icon: Icons.monitor_heart_outlined,
-                                child: Column(
-                                  children: [
-                                    _StatusRow(
-                                      label: 'Sync ready',
-                                      value: state.hasValidToken
-                                          ? 'Yes'
-                                          : 'Sign-in required',
-                                    ),
-                                    const Divider(height: 24),
-                                    _StatusRow(
-                                      label: 'Microsoft session',
-                                      value: _authDetailLabel(state),
-                                    ),
-                                    const Divider(height: 24),
-                                    _StatusRow(
-                                      label: 'Token expiry',
-                                      value:
-                                          _formatExpiry(state.tokenExpiresAtLocal),
-                                    ),
-                                    const Divider(height: 24),
-                                    _StatusRow(
-                                      label: 'Latest feedback',
-                                      value: state.lastMessage ??
-                                          'No recent system message',
-                                    ),
-                                    const Divider(height: 24),
-                                    _StatusRow(
-                                      label: 'Local workspace',
-                                      value: draftCount > 0
-                                          ? '$draftCount draft${draftCount == 1 ? '' : 's'} waiting locally'
-                                          : 'All current consignors marked synced',
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Column(
-                          children: [
-                            SectionCard(
-                              title: 'Operational actions',
-                              icon: Icons.flash_on_outlined,
-                              child: Wrap(
-                                spacing: 16,
-                                runSpacing: 16,
-                                children: [
-                                  _ActionTile(
-                                    title: 'Create consignor',
-                                    icon: Icons.person_add_alt_1_outlined,
-                                    onTap: () =>
-                                        context.go('/consignors/new'),
-                                  ),
-                                  _ActionTile(
-                                    title: 'Create contract',
-                                    icon: Icons.post_add_outlined,
-                                    onTap: () => context.go('/contracts/new'),
-                                  ),
-                                  _ActionTile(
-                                    title: 'Open list',
-                                    icon:
-                                        Icons.format_list_bulleted_rounded,
-                                    onTap: () => context.go('/consignors'),
-                                  ),
-                                  _ActionTile(
-                                    title: 'Connection check',
-                                    icon: Icons.wifi_tethering_outlined,
-                                    onTap: () async {
-                                      await state.testConnection();
-                                      if (context.mounted &&
-                                          state.lastMessage != null) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content:
-                                                Text(state.lastMessage!),
-                                          ),
-                                        );
-                                      }
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            SectionCard(
-                              title: 'Workspace status',
-                              icon: Icons.monitor_heart_outlined,
-                              child: Column(
-                                children: [
-                                  _StatusRow(
-                                    label: 'Sync ready',
-                                    value: state.hasValidToken
-                                        ? 'Yes'
-                                        : 'Sign-in required',
-                                  ),
-                                  const Divider(height: 24),
-                                  _StatusRow(
-                                    label: 'Microsoft session',
-                                    value: _authDetailLabel(state),
-                                  ),
-                                  const Divider(height: 24),
-                                  _StatusRow(
-                                    label: 'Token expiry',
-                                    value:
-                                        _formatExpiry(state.tokenExpiresAtLocal),
-                                  ),
-                                  const Divider(height: 24),
-                                  _StatusRow(
-                                    label: 'Latest feedback',
-                                    value: state.lastMessage ??
-                                        'No recent system message',
-                                  ),
-                                  const Divider(height: 24),
-                                  _StatusRow(
-                                    label: 'Local workspace',
-                                    value: draftCount > 0
-                                        ? '$draftCount draft${draftCount == 1 ? '' : 's'} waiting locally'
-                                        : 'All current consignors marked synced',
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        );
-                },
+              SectionCard(
+                title: 'Workspace status',
+                icon: Icons.monitor_heart_outlined,
+                child: Column(
+                  children: [
+                    _StatusRow(
+                      label: 'Sync ready',
+                      value: state.hasValidToken ? 'Yes' : 'Sign-in required',
+                    ),
+                    const Divider(height: 24),
+                    _StatusRow(
+                      label: 'Microsoft session',
+                      value: _authDetailLabel(state),
+                    ),
+                    const Divider(height: 24),
+                    _StatusRow(
+                      label: 'Token expiry',
+                      value: _formatExpiry(state.tokenExpiresAtLocal),
+                    ),
+                    const Divider(height: 24),
+                    _StatusRow(
+                      label: 'Latest feedback',
+                      value: state.lastMessage ?? 'No recent system message',
+                    ),
+                    const Divider(height: 24),
+                    _StatusRow(
+                      label: 'Local workspace',
+                      value: draftCount > 0
+                          ? '$draftCount draft${draftCount == 1 ? '' : 's'} waiting locally'
+                          : 'All current consignors marked synced',
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 24),
               SectionCard(
@@ -494,8 +383,7 @@ class HomeScreen extends StatelessWidget {
                                   padding: const EdgeInsets.all(16),
                                   decoration: BoxDecoration(
                                     color: Colors.white,
-                                    borderRadius:
-                                        BorderRadius.circular(20),
+                                    borderRadius: BorderRadius.circular(20),
                                     border: Border.all(
                                       color: palette.border,
                                     ),
@@ -504,8 +392,7 @@ class HomeScreen extends StatelessWidget {
                                     children: [
                                       CircleAvatar(
                                         radius: 24,
-                                        backgroundColor:
-                                            palette.brandSoft,
+                                        backgroundColor: palette.brandSoft,
                                         child: Text(
                                           consignor.displayName.isNotEmpty
                                               ? consignor.displayName
@@ -515,8 +402,7 @@ class HomeScreen extends StatelessWidget {
                                               : '#',
                                           style: TextStyle(
                                             color: palette.brand,
-                                            fontWeight:
-                                                FontWeight.w800,
+                                            fontWeight: FontWeight.w800,
                                           ),
                                         ),
                                       ),
@@ -527,8 +413,7 @@ class HomeScreen extends StatelessWidget {
                                               CrossAxisAlignment.start,
                                           children: [
                                             Text(
-                                              consignor.displayName
-                                                      .isEmpty
+                                              consignor.displayName.isEmpty
                                                   ? 'Unnamed consignor'
                                                   : consignor.displayName,
                                               style: Theme.of(context)
@@ -537,8 +422,7 @@ class HomeScreen extends StatelessWidget {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              consignor.emailAddress
-                                                      .isEmpty
+                                              consignor.emailAddress.isEmpty
                                                   ? 'No email stored'
                                                   : consignor.emailAddress,
                                               style: Theme.of(context)
@@ -756,70 +640,6 @@ class _MetricCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(24),
         child: content,
-      ),
-    );
-  }
-}
-
-class _ActionTile extends StatelessWidget {
-  const _ActionTile({
-    required this.title,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String title;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    return SizedBox(
-      width: isMobileWidth(context) ? double.infinity : 270,
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(24),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: palette.border),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white,
-                  palette.brandSoft.withValues(alpha: 0.44),
-                ],
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: palette.brand,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Icon(icon, color: Colors.white),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: palette.brand),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

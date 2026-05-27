@@ -400,6 +400,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
+  iban_to_bic:
+    dependency: "direct main"
+    description:
+      name: iban_to_bic
+      sha256: "7bd95160fe82b78212352d8d80f7f2ee98d37bcfed54cb15a8d77b3171b6e2c6"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.2.0"
   image:
     dependency: transitive
     description:

@@ -4,10 +4,7 @@ project(leu_consignor_app LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "LeuConsignorApp")
-# TODO(store-compliance): Configure Authenticode signing for CI/release builds.
-# Branded metadata reduces false-positive reputation prompts, but signing is
-# still required for strong SmartScreen/AV reputation on Windows.
+set(BINARY_NAME "leu_consignor_app")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
