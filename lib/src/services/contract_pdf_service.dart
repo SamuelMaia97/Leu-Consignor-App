@@ -132,7 +132,7 @@ class ContractPdfPayloadBuilder {
           upload.kind == 'RepresentativeId',
     );
 
-    final auctionName = _auctionName(record);
+    final auctionName = _auctionName(record, consignor.correspondence);
     final scenario = _ContractRenderScenario.from(
       consignor: consignor,
       authorizedRepresentative: authorizedRepresentative,
@@ -165,7 +165,7 @@ class ContractPdfPayloadBuilder {
         representative?.fullPhoneNumber ?? consignor.fullPhoneNumber;
     final legalRepresentativeEmail =
         representative?.emailAddress ?? consignor.emailAddress;
-    final owner = representative;
+    final owner = representative == null ? null : consignor;
     final ownerIsLegal = owner?.usesTradingName ?? false;
     final leuRepresentativeName = signatureData?.leuRepresentativeName ?? '';
     final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
@@ -174,6 +174,7 @@ class ContractPdfPayloadBuilder {
       consignor: consignor,
       owner: owner,
       ownerIsLegal: ownerIsLegal,
+      representedByAnotherParty: authorizedRepresentative != null,
       record: record,
       scenario: scenario,
       paragraphVisibility: paragraphVisibility,
@@ -214,7 +215,8 @@ class ContractPdfPayloadBuilder {
       },
       'consignor': consignor.toJson(),
       'authorizedRepresentative': authorizedRepresentative?.toJson(),
-      'beneficialOwner': authorizedRepresentative?.toJson(),
+      'beneficialOwner':
+          authorizedRepresentative == null ? null : consignor.toJson(),
       'consignorType': consignor.consignorType.apiName,
       'contractScenario': scenario.apiName,
       'contractScenarioColumn': scenario.excelColumnKey,
@@ -250,6 +252,7 @@ class ContractPdfPayloadBuilder {
     required Consignor consignor,
     required Consignor? owner,
     required bool ownerIsLegal,
+    required bool representedByAnotherParty,
     required ContractRecord record,
     required _ContractRenderScenario scenario,
     required Map<String, bool> paragraphVisibility,
@@ -292,6 +295,8 @@ class ContractPdfPayloadBuilder {
       'consignor_email': consignor.emailAddress,
       'consignor_place_date': _formatDate(record.signedAt),
       'consignor_signature_image': customerSignatureBase64,
+      'consignor_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
+      'consignor_signature_name': consignor.displayName,
       'consignor_signer_name_function': consignor.displayName,
       'legal_entity_name': scenario.consignorType == ConsignorType.legalEntity
           ? consignor.tradingName
@@ -349,6 +354,8 @@ class ContractPdfPayloadBuilder {
       'annex_a_auction_date': _formatDate(auctionDate),
       'annex_a_place_date': _formatDate(record.signedAt),
       'annex_a_signature_image': customerSignatureBase64,
+      'annex_a_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
+      'annex_a_signature_name': consignor.displayName,
       'annex_a_signer_name': consignor.displayName,
       'annex_a_owner_full_name':
           ownerIsLegal ? '' : ownerOrEmpty?.displayName ?? '',
@@ -392,6 +399,8 @@ class ContractPdfPayloadBuilder {
           ownerIsLegal ? ownerOrEmpty?.emailAddress ?? '' : '',
       'annex_c_place_date': _formatDate(record.signedAt),
       'annex_c_signature_image': customerSignatureBase64,
+      'annex_c_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
+      'annex_c_signature_name': consignor.displayName,
       'annex_c_signer_name': consignor.displayName,
       'attachment_id_natural_images': '',
       'attachment_commercial_register_images': '',
@@ -489,15 +498,15 @@ class ContractPdfPayloadBuilder {
       'Paragraf10': [false, true, false, false, false, false, true, false],
       'Paragraf11': [false, false, true, true, false, true, false, false],
       'Paragraf12': [false, false, false, false, true, false, false, true],
-      'Paragraf13': [true, true, true, true, true, true, true, true],
+      'Paragraf13': [true, true, true, false, false, true, true, true],
       'Paragraf14': [false, false, false, true, true, true, true, true],
-      'Paragraf15': [false, true, true, true, true, false, true, true],
+      'Paragraf15': [false, true, false, true, false, false, true, false],
       'Paragraf16': [false, false, true, false, true, false, false, true],
       'Paragraf17': [true, false, false, false, false, true, false, false],
-      'Paragraf18': [false, true, false, false, false, false, true, false],
-      'Paragraf19': [false, false, false, false, true, false, false, true],
-      'Paragraf20': [false, false, true, false, false, false, false, false],
-      'Paragraf21': [false, false, false, true, true, true, true, true],
+      'Paragraf18': [false, true, true, false, false, false, true, true],
+      'Paragraf19': [false, false, false, true, true, false, false, false],
+      'Paragraf20': [false, false, false, false, false, false, false, false],
+      'Paragraf21': [false, false, true, true, true, false, false, true],
       'Paragraf22': [true, false, false, false, false, true, false, false],
       'Paragraf23': [false, true, true, true, true, false, true, true],
     };
@@ -587,14 +596,43 @@ class ContractPdfPayloadBuilder {
     return normalized.substring(slash + 1);
   }
 
-  String _auctionName(ContractRecord record) {
+  String _auctionName(ContractRecord record, String? correspondence) {
     if (record.auctionDisplayNames.isNotEmpty) {
       return record.auctionDisplayNames
           .map((value) => value.trim())
           .where((value) => value.isNotEmpty)
+          .map((value) => _localizedAuctionName(value, correspondence))
           .join(', ');
     }
-    return record.auctionDisplayName.trim();
+    return _localizedAuctionName(record.auctionDisplayName.trim(), correspondence);
+  }
+
+  String _localizedAuctionName(String value, String? correspondence) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+
+    final isGerman = correspondence?.trim().toLowerCase() == 'de';
+    if (isGerman) {
+      return trimmed
+          .replaceAll(
+            RegExp(r'\bWeb\s+Auction\b', caseSensitive: false),
+            'Web Auktion',
+          )
+          .replaceAll(
+            RegExp(r'\bAuction\b', caseSensitive: false),
+            'Auktion',
+          );
+    }
+
+    return trimmed
+        .replaceAll(
+          RegExp(r'\bWeb\s+Auktion\b', caseSensitive: false),
+          'Web Auction',
+        )
+        .replaceAll(
+          RegExp(r'\bAuktion\b', caseSensitive: false),
+          'Auction',
+        );
   }
 
   int? _parseInt(String value) => int.tryParse(value.trim());

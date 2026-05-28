@@ -164,7 +164,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _WizardStep.details => 'Details',
       _WizardStep.contractDecision => 'Contract',
       _WizardStep.auctions => 'Consignment',
-      _WizardStep.representative => 'Delivery',
+      _WizardStep.representative => 'Representative',
       _WizardStep.identityFiles => 'Picture ID',
       _WizardStep.registrationFiles => 'Register',
       _WizardStep.productFiles => 'Pictures',
@@ -847,7 +847,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         .toList(growable: false);
 
     final auctionNames = _draft.selectedAuctions
-        .map((item) => item.displayName)
+        .map((item) => _localizedAuctionDisplayName(
+              item.displayName,
+              _draft.correspondence,
+            ))
         .toList(growable: false);
 
     final firstAuctionId = auctionIds.isEmpty ? null : auctionIds.first;
@@ -1519,7 +1522,6 @@ class _WizardDraft {
   bool showExistingSearch = false;
   bool createContract = false;
   bool coinsOwnedByConsignor = true;
-  bool consignorPersonallyDeliversLots = true;
   int systemReferenceConsignor = 0;
   int systemReferenceCustomer = 0;
   int? existingCustomerId;
@@ -1653,7 +1655,6 @@ class _WizardDraft {
         'showExistingSearch': showExistingSearch,
         'createContract': createContract,
         'coinsOwnedByConsignor': coinsOwnedByConsignor,
-        'consignorPersonallyDeliversLots': consignorPersonallyDeliversLots,
         'systemReferenceConsignor': systemReferenceConsignor,
         'systemReferenceCustomer': systemReferenceCustomer,
         'existingCustomerId': existingCustomerId,
@@ -1755,8 +1756,6 @@ class _WizardDraft {
     showExistingSearch = _toBool(json['showExistingSearch']) ?? false;
     createContract = _toBool(json['createContract']) ?? false;
     coinsOwnedByConsignor = _toBool(json['coinsOwnedByConsignor']) ?? true;
-    consignorPersonallyDeliversLots =
-        _toBool(json['consignorPersonallyDeliversLots']) ?? true;
     systemReferenceConsignor = _toInt(json['systemReferenceConsignor']) ?? 0;
     systemReferenceCustomer = _toInt(json['systemReferenceCustomer']) ?? 0;
     existingCustomerId = _toInt(json['existingCustomerId']);
@@ -2599,21 +2598,6 @@ class _RepresentativeStep extends StatelessWidget {
                     },
             ),
           ),
-          const SizedBox(height: 16),
-          SectionCard(
-            title: 'Delivery',
-            child: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'The consignor personally delivers the lots to Leu Numismatik AG',
-              ),
-              value: ownerDraft.consignorPersonallyDeliversLots,
-              onChanged: (value) {
-                ownerDraft.consignorPersonallyDeliversLots = value;
-                onChanged();
-              },
-            ),
-          ),
           if (requiresRepresentativeDetails) ...[
             const SizedBox(height: 16),
             SectionCard(
@@ -3001,7 +2985,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-world-coins-subscribed'),
-                    title: 'World coins subscribed',
+                    title: 'Medieval and Modern Coins',
                     value: draft.worldCoinsSubscribed,
                     onChanged: (value) {
                       draft.worldCoinsSubscribed = value;
@@ -3167,6 +3151,10 @@ class _AuctionStep extends StatelessWidget {
               label: 'Auctions *',
               items: auctions,
               selected: draft.selectedAuctions,
+              itemLabel: (auction) => _localizedAuctionDisplayName(
+                auction.displayName,
+                draft.correspondence,
+              ),
               validator: MultiAuctionSelectField.requireSelection,
               onChanged: onAuctionsChanged,
             ),
@@ -3193,12 +3181,12 @@ class _AuctionStep extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           SectionCard(
-            title: 'Consignment Country',
+            title: 'Country of Consignment',
             child: CountryDropdown(
-              label: 'Consignment Country',
+              label: 'Country of Consignment',
               value: draft.consignmentCountryIso3,
               countries: countries,
-              hintText: 'Search Consignment Country',
+              hintText: 'Search Country of Consignment',
               onChanged: onConsignmentCountryChanged,
             ),
           ),
@@ -3423,7 +3411,10 @@ class _FullReviewStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final missingFields = draft.missingRequiredFields;
     final selectedAuctions = draft.selectedAuctions
-        .map((auction) => auction.displayName)
+        .map((auction) => _localizedAuctionDisplayName(
+              auction.displayName,
+              draft.correspondence,
+            ))
         .where((name) => name.trim().isNotEmpty)
         .join(', ');
     final commissionRate = draft.commissionRate.trim();
@@ -3471,7 +3462,7 @@ class _FullReviewStep extends StatelessWidget {
               ),
               _ReviewLine('Commission rate', commissionDisplay),
               _ReviewLine(
-                'Consignment country',
+                'Country of Consignment',
                 consignmentCountry.isEmpty
                     ? 'Not selected'
                     : consignmentCountry,
@@ -3536,6 +3527,34 @@ class _FullReviewStep extends StatelessWidget {
       ],
     );
   }
+}
+
+String _localizedAuctionDisplayName(String value, String? correspondence) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return '';
+
+  final isGerman = correspondence?.trim().toLowerCase() == 'de';
+  if (isGerman) {
+    return trimmed
+        .replaceAll(
+          RegExp(r'\bWeb\s+Auction\b', caseSensitive: false),
+          'Web Auktion',
+        )
+        .replaceAll(
+          RegExp(r'\bAuction\b', caseSensitive: false),
+          'Auktion',
+        );
+  }
+
+  return trimmed
+      .replaceAll(
+        RegExp(r'\bWeb\s+Auktion\b', caseSensitive: false),
+        'Web Auction',
+      )
+      .replaceAll(
+        RegExp(r'\bAuktion\b', caseSensitive: false),
+        'Auction',
+      );
 }
 
 class _ConsignorReviewEditDialog extends StatefulWidget {
