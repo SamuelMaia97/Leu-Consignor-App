@@ -53,10 +53,24 @@ class ContractRenderPayloadBuilder {
     ContractSignatureData? signatureData,
   }) async {
     final attachmentPayloads = await _buildAttachments(record);
+    final hasOrdererIdAttachment = record.uploads.any(
+      (upload) =>
+          !upload.isDeleted &&
+          upload.fileType == UploadType.passport &&
+          upload.kind != 'RepresentativeId',
+    );
+    final hasRepresentativeIdAttachment = record.uploads.any(
+      (upload) =>
+          !upload.isDeleted &&
+          upload.fileType == UploadType.passport &&
+          upload.kind == 'RepresentativeId',
+    );
     final consignorIsOwner = authorizedRepresentative == null;
-    final consignorType = consignor.isLegalEntity ? ConsignorType.legalEntity : ConsignorType.naturalPerson;
-    final includeAnnexA = !consignorIsOwner || consignorType == ConsignorType.legalEntity;
-    final leuSignature = await _readAssetAsBase64(signatureData?.leuRepresentativeSignatureAsset);
+    final consignorType = consignor.consignorType;
+    final includeAnnexA =
+        !consignorIsOwner || consignorType == ConsignorType.legalEntity;
+    final leuSignature = await _readAssetAsBase64(
+        signatureData?.leuRepresentativeSignatureAsset);
     final customerSignature = _encodeBytes(signatureData?.customerSignaturePng);
     final auctionDate = record.signedAt;
 
@@ -71,10 +85,13 @@ class ContractRenderPayloadBuilder {
       'consignorPhone': consignor.fullPhoneNumber,
       'consignorEmail': consignor.emailAddress,
       'consignorIsOwner': consignorIsOwner,
-      'legalEntityName': consignor.isLegalEntity ? consignor.tradingName : '',
+      'legalEntityName': consignorType == ConsignorType.legalEntity
+          ? consignor.tradingName
+          : '',
       'representativeName': authorizedRepresentative?.displayName ??
           consignor.consignorInfo.fullName,
-      'consignorFunction': consignor.isLegalEntity ? 'Vertreter' : '',
+      'consignorFunction':
+          consignorType == ConsignorType.legalEntity ? 'Vertreter' : '',
       'ownerFullName':
           authorizedRepresentative?.displayName ?? consignor.displayName,
       'ownerDateOfBirth':
@@ -127,13 +144,13 @@ class ContractRenderPayloadBuilder {
       'leuSignatureBase64Png': leuSignature,
       'annexConsignorSignatureBase64Png': customerSignature,
       'hasNaturalPersonIdAttachment':
-          record.passportFiles.isNotEmpty && !consignor.isLegalEntity,
-      'hasCommercialRegisterAttachment':
-          record.registrationFiles.isNotEmpty && consignor.isLegalEntity,
+          hasOrdererIdAttachment && consignorType != ConsignorType.legalEntity,
+      'hasCommercialRegisterAttachment': record.registrationFiles.isNotEmpty &&
+          consignorType != ConsignorType.naturalPerson,
       'hasRepresentativeIdAttachment':
-          authorizedRepresentative != null && record.passportFiles.isNotEmpty,
-      'hasLegalEntityRegisterAttachment':
-          record.registrationFiles.isNotEmpty && consignor.isLegalEntity,
+          authorizedRepresentative != null && hasRepresentativeIdAttachment,
+      'hasLegalEntityRegisterAttachment': record.registrationFiles.isNotEmpty &&
+          consignorType == ConsignorType.legalEntity,
       'hasAnnexAAttachment': includeAnnexA,
       'hasAnnexBAttachment': record.productFiles.isNotEmpty,
       'hasAnnexCAttachment': true,
@@ -148,7 +165,8 @@ class ContractRenderPayloadBuilder {
 
   Future<List<ContractAttachmentPayload>> _buildAttachments(
       ContractRecord record) async {
-    final attachments = AttachmentUtils.mergeUnique(const [], record.attachments);
+    final attachments =
+        AttachmentUtils.mergeUnique(const [], record.attachments);
     final payloads = <ContractAttachmentPayload>[];
 
     for (final attachment in attachments) {
@@ -165,7 +183,7 @@ class ContractRenderPayloadBuilder {
       final fileName = _fileName(attachment.path);
       payloads.add(
         ContractAttachmentPayload(
-          kind: _attachmentKind(attachment.type, fileName),
+          kind: _attachmentKind(attachment.type, fileName, attachment.kind),
           fileName: fileName,
           contentType: _contentType(fileName),
           base64Content: base64Encode(bytes),
@@ -176,7 +194,11 @@ class ContractRenderPayloadBuilder {
     return payloads;
   }
 
-  String _attachmentKind(UploadType type, String fileName) {
+  String _attachmentKind(UploadType type, String fileName, String kind) {
+    if (kind.trim().isNotEmpty) {
+      return kind.trim();
+    }
+
     final lower = fileName.toLowerCase();
     if (type == UploadType.passport) {
       return 'IdDocument';

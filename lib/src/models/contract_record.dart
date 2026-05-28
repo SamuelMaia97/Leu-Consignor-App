@@ -17,10 +17,15 @@ extension UploadTypeX on UploadType {
 }
 
 class ContractAttachment {
-  ContractAttachment({required this.path, required this.type});
+  ContractAttachment({
+    required this.path,
+    required this.type,
+    this.kind = '',
+  });
 
   final String path;
   final UploadType type;
+  final String kind;
 
   factory ContractAttachment.fromJson(Map<String, dynamic> json) {
     final typeIndex = _toInt(json['typeIndex'] ?? json['TypeIndex']) ?? -1;
@@ -33,19 +38,19 @@ class ContractAttachment {
         : UploadTypeX.fromApiValue(fileType ?? UploadType.agreement.apiValue);
 
     return ContractAttachment(
-      path: (json['path'] ??
-                  json['Path'] ??
-                  json['fileName'] ??
-                  json['FileName'])
-              ?.toString() ??
-          '',
+      path:
+          (json['path'] ?? json['Path'] ?? json['fileName'] ?? json['FileName'])
+                  ?.toString() ??
+              '',
       type: resolvedType,
+      kind: (json['kind'] ?? json['Kind'])?.toString() ?? '',
     );
   }
 
   Map<String, dynamic> toJson() => {
         'path': path,
         'typeIndex': type.index,
+        'kind': kind.trim().isEmpty ? null : kind.trim(),
       };
 
   static int? _toInt(Object? value) =>
@@ -57,6 +62,7 @@ class ContractUpload {
     required this.localId,
     required this.fileName,
     required this.fileType,
+    this.kind = '',
     this.fileId,
     this.auctionId,
     this.path = '',
@@ -65,14 +71,16 @@ class ContractUpload {
     this.signedAt,
     DateTime? localLastModifiedUtc,
     this.serverLastModifiedUtc,
-  }) : localLastModifiedUtc =
-            localLastModifiedUtc ?? serverLastModifiedUtc ?? DateTime.now().toUtc();
+  }) : localLastModifiedUtc = localLastModifiedUtc ??
+            serverLastModifiedUtc ??
+            DateTime.now().toUtc();
 
   String localId;
   int? fileId;
   int? auctionId;
   String fileName;
   UploadType fileType;
+  String kind;
   String path;
   String fileData;
   bool isDeleted;
@@ -89,7 +97,7 @@ class ContractUpload {
   }
 
   ContractAttachment toAttachment() =>
-      ContractAttachment(path: path, type: fileType);
+      ContractAttachment(path: path, type: fileType, kind: kind);
 
   factory ContractUpload.fromJson(Map<String, dynamic> json) {
     final lastModifiedUtc = DateTime.tryParse(
@@ -111,22 +119,19 @@ class ContractUpload {
           .toString(),
       fileId: _toInt(json['fileId'] ?? json['FileId']),
       auctionId: _toInt(json['auctionId'] ?? json['AuctionId']),
-      fileName: (json['fileName'] ??
-                  json['FileName'] ??
-                  json['path'] ??
-                  json['Path'])
-              ?.toString() ??
-          '',
+      fileName:
+          (json['fileName'] ?? json['FileName'] ?? json['path'] ?? json['Path'])
+                  ?.toString() ??
+              '',
       fileType: UploadTypeX.fromApiValue(
         _toInt(json['fileType'] ?? json['FileType']) ??
             UploadType.agreement.apiValue,
       ),
-      path: (json['path'] ??
-                  json['Path'] ??
-                  json['fileName'] ??
-                  json['FileName'])
-              ?.toString() ??
-          '',
+      kind: (json['kind'] ?? json['Kind'])?.toString() ?? '',
+      path:
+          (json['path'] ?? json['Path'] ?? json['fileName'] ?? json['FileName'])
+                  ?.toString() ??
+              '',
       fileData: (json['fileData'] ?? json['FileData'])?.toString() ?? '',
       isDeleted: (json['isDeleted'] ?? json['IsDeleted']) as bool? ?? false,
       signedAt: DateTime.tryParse(
@@ -143,6 +148,7 @@ class ContractUpload {
         'auctionId': auctionId,
         'fileName': fileName,
         'fileType': fileType.apiValue,
+        'kind': kind.trim().isEmpty ? null : kind.trim(),
         'path': path,
         'fileData': fileData,
         'isDeleted': isDeleted,
@@ -157,6 +163,7 @@ class ContractUpload {
     int? auctionId,
     String? fileName,
     UploadType? fileType,
+    String? kind,
     String? path,
     String? fileData,
     bool? isDeleted,
@@ -170,12 +177,12 @@ class ContractUpload {
         auctionId: auctionId ?? this.auctionId,
         fileName: fileName ?? this.fileName,
         fileType: fileType ?? this.fileType,
+        kind: kind ?? this.kind,
         path: path ?? this.path,
         fileData: fileData ?? this.fileData,
         isDeleted: isDeleted ?? this.isDeleted,
         signedAt: signedAt ?? this.signedAt,
-        localLastModifiedUtc:
-            localLastModifiedUtc ?? this.localLastModifiedUtc,
+        localLastModifiedUtc: localLastModifiedUtc ?? this.localLastModifiedUtc,
         serverLastModifiedUtc:
             serverLastModifiedUtc ?? this.serverLastModifiedUtc,
       );
@@ -241,7 +248,9 @@ class ContractRecord {
 
   bool get hasRemoteReference => uploads.any((e) => e.hasServerReference);
 
-  bool get synced => syncStatus == RecordSyncStatus.synced;
+  bool get synced =>
+      syncStatus == RecordSyncStatus.synced ||
+      syncStatus == RecordSyncStatus.finalized;
 
   bool get needsSync => uploads.any((e) => e.needsSync) || syncStatus.needsSync;
 
@@ -290,13 +299,14 @@ class ContractRecord {
   }
 
   factory ContractRecord.fromJson(Map<String, dynamic> json) {
-    final uploadsJson =
-        ((json['uploads'] ?? json['Uploads'] ?? json['list'] ?? json['List'])
-                    as List?)
-                ?.whereType<Map>()
-                .map((e) => ContractUpload.fromJson(e.cast<String, dynamic>()))
-                .toList() ??
-            <ContractUpload>[];
+    final uploadsJson = ((json['uploads'] ??
+                json['Uploads'] ??
+                json['list'] ??
+                json['List']) as List?)
+            ?.whereType<Map>()
+            .map((e) => ContractUpload.fromJson(e.cast<String, dynamic>()))
+            .toList() ??
+        <ContractUpload>[];
 
     if (uploadsJson.isEmpty) {
       final attachments = <ContractAttachment>[];
@@ -379,9 +389,9 @@ class ContractRecord {
 
     final consignorId =
         (json['consignorId'] ?? json['ConsignorId'])?.toString() ?? '';
-    final systemReferenceContract =
-        _toInt(json['systemReferenceContract'] ?? json['SystemReferenceContract']) ??
-            0;
+    final systemReferenceContract = _toInt(json['systemReferenceContract'] ??
+            json['SystemReferenceContract']) ??
+        0;
     final lastModifiedUtc = DateTime.tryParse(
       (json['lastModifiedUtc'] ?? json['LastModifiedUtc'])?.toString() ?? '',
     )?.toUtc();
@@ -389,7 +399,9 @@ class ContractRecord {
     return ContractRecord(
       id: (json['id'] ??
               json['Id'] ??
-              (auctionIds.isNotEmpty ? _buildId(consignorId, auctionIds) : null) ??
+              (auctionIds.isNotEmpty
+                  ? _buildId(consignorId, auctionIds)
+                  : null) ??
               systemReferenceContract.toString())
           .toString(),
       consignorId: consignorId,
@@ -397,11 +409,11 @@ class ContractRecord {
       auctionDisplayNames: resolvedDisplayNames,
       systemReferenceContract: systemReferenceContract,
       pdfName: ((json['pdfName'] ??
-                      json['PdfName'] ??
-                      json['fileName'] ??
-                      json['FileName'])
-                  ?.toString() ??
-              '')
+                          json['PdfName'] ??
+                          json['fileName'] ??
+                          json['FileName'])
+                      ?.toString() ??
+                  '')
               .trim()
               .isEmpty
           ? 'consignor_contract.pdf'
@@ -419,7 +431,8 @@ class ContractRecord {
       uploads: deduplicatedUploads,
       syncStatus: RecordSyncStatusX.fromAny(
         json['syncStatus'] ?? json['SyncStatus'],
-        hasRemoteReference: deduplicatedUploads.any((e) => e.hasServerReference),
+        hasRemoteReference:
+            deduplicatedUploads.any((e) => e.hasServerReference),
         legacySynced: (json['synced'] ?? json['Synced']) as bool?,
       ),
       syncErrorMessage:
@@ -456,7 +469,8 @@ class ContractRecord {
         'syncStatus': syncStatus.name,
         'syncErrorMessage': syncErrorMessage,
         'lastSyncedUtc': lastSyncedUtc?.toUtc().toIso8601String(),
-        'remoteLastModifiedUtc': remoteLastModifiedUtc?.toUtc().toIso8601String(),
+        'remoteLastModifiedUtc':
+            remoteLastModifiedUtc?.toUtc().toIso8601String(),
         'lastEditedByUsername': lastEditedByUsername,
         'lastEditedAtUtc': lastEditedAtUtc?.toUtc().toIso8601String(),
         'synced': synced,
@@ -465,8 +479,9 @@ class ContractRecord {
   void markLocalChange([String? editorUsername]) {
     _markEdited(editorUsername);
     syncErrorMessage = null;
-    syncStatus =
-        hasRemoteReference ? RecordSyncStatus.pendingSync : RecordSyncStatus.draft;
+    syncStatus = hasRemoteReference
+        ? RecordSyncStatus.pendingSync
+        : RecordSyncStatus.draft;
   }
 
   void markSynced({DateTime? remoteModifiedUtc}) {
@@ -508,8 +523,8 @@ class ContractRecord {
     String? lastEditedByUsername,
     DateTime? lastEditedAtUtc,
   }) {
-    final nextAuctionIds = auctionIds ??
-        (auctionId == null ? this.auctionIds : <int>[auctionId]);
+    final nextAuctionIds =
+        auctionIds ?? (auctionId == null ? this.auctionIds : <int>[auctionId]);
     final nextDisplayNames = auctionDisplayNames ??
         (auctionDisplayName == null
             ? this.auctionDisplayNames
@@ -534,8 +549,7 @@ class ContractRecord {
       lastSyncedUtc: lastSyncedUtc ?? this.lastSyncedUtc,
       remoteLastModifiedUtc:
           remoteLastModifiedUtc ?? this.remoteLastModifiedUtc,
-      lastEditedByUsername:
-          lastEditedByUsername ?? this.lastEditedByUsername,
+      lastEditedByUsername: lastEditedByUsername ?? this.lastEditedByUsername,
       lastEditedAtUtc: lastEditedAtUtc ?? this.lastEditedAtUtc,
     );
   }
@@ -550,13 +564,14 @@ class ContractRecord {
     }
   }
 
-  static List<ContractUpload> _deduplicateUploads(List<ContractUpload> uploads) {
+  static List<ContractUpload> _deduplicateUploads(
+      List<ContractUpload> uploads) {
     final seenKeys = <String>{};
     final result = <ContractUpload>[];
 
     for (final upload in uploads) {
       final normalizedPath = upload.path.trim();
-      final key = '${upload.fileType.index}|$normalizedPath';
+      final key = '${upload.fileType.index}|${upload.kind}|$normalizedPath';
 
       if (normalizedPath.isEmpty || seenKeys.add(key)) {
         result.add(upload);
@@ -575,10 +590,7 @@ class ContractRecord {
 
   static List<int> _parseIntList(Object? value) {
     if (value is! List) return const <int>[];
-    return value
-        .map(_toInt)
-        .whereType<int>()
-        .toList(growable: false);
+    return value.map(_toInt).whereType<int>().toList(growable: false);
   }
 
   static List<String> _parseStringList(Object? value) {

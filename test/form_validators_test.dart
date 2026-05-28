@@ -19,5 +19,13 @@ void main() {
       expect(FormValidators.iban('CH93 0076 2011 6238 5295 7'), isNull);
       expect(FormValidators.iban('123'), isNotNull);
     });
+
+    test('allows iban or international account number', () {
+      expect(FormValidators.ibanOrAccountNumber('CH93 0076 2011 6238 5295 7'),
+          isNull);
+      expect(FormValidators.ibanOrAccountNumber('US-ACCOUNT-998877'), isNull);
+      expect(FormValidators.ibanOrAccountNumber(''), isNotNull);
+      expect(FormValidators.ibanOrAccountNumber('123'), isNotNull);
+    });
   });
 }

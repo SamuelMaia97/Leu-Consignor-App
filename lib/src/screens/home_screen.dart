@@ -34,7 +34,9 @@ class HomeScreen extends StatelessWidget {
               .where((c) => c.syncStatus == RecordSyncStatus.pendingSync)
               .length;
           final syncedCount = state.consignors
-              .where((c) => c.syncStatus == RecordSyncStatus.synced)
+              .where((c) =>
+                  c.syncStatus == RecordSyncStatus.synced ||
+                  c.syncStatus == RecordSyncStatus.finalized)
               .length;
           final failedCount = state.consignors
               .where((c) => c.syncStatus == RecordSyncStatus.syncFailed)
@@ -535,6 +537,8 @@ class HomeScreen extends StatelessWidget {
         return 'Pending';
       case RecordSyncStatus.synced:
         return 'Synced';
+      case RecordSyncStatus.finalized:
+        return 'Finalized';
       case RecordSyncStatus.syncFailed:
         return 'Failed';
     }
@@ -543,6 +547,7 @@ class HomeScreen extends StatelessWidget {
   static StatusBadgeTone _statusTone(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return StatusBadgeTone.success;
       case RecordSyncStatus.pendingSync:
         return StatusBadgeTone.info;
@@ -556,6 +561,7 @@ class HomeScreen extends StatelessWidget {
   static IconData _statusIcon(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return Icons.cloud_done_outlined;
       case RecordSyncStatus.pendingSync:
         return Icons.cloud_upload_outlined;
@@ -573,6 +579,7 @@ class HomeScreen extends StatelessWidget {
       case RecordSyncStatus.pendingSync:
         return 'pending';
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return 'synced';
       case RecordSyncStatus.syncFailed:
         return 'failed';

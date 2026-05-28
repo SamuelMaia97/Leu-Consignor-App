@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import '../domain/consignor_type.dart';
 import '../utils/phone_number_parser.dart';
 import 'address.dart';
 import 'banking_details.dart';
@@ -14,7 +15,8 @@ class Consignor {
     this.systemReferenceCustomer = 0,
     this.existingCustomerId,
     this.existingCustomerLabel,
-    this.isLegalEntity = false,
+    bool isLegalEntity = false,
+    ConsignorType? consignorType,
     this.tradingName = '',
     Person? consignorInfo,
     this.vatLiability = false,
@@ -45,7 +47,11 @@ class Consignor {
     this.remoteLastModifiedUtc,
     this.lastEditedByUsername,
     this.lastEditedAtUtc,
-  })  : consignorInfo = consignorInfo ?? Person(),
+  })  : consignorType = consignorType ??
+            (isLegalEntity
+                ? ConsignorType.legalEntity
+                : ConsignorType.naturalPerson),
+        consignorInfo = consignorInfo ?? Person(),
         consignorAddress = consignorAddress ?? Address(),
         bankingDetails = bankingDetails ?? BankingDetails(),
         lastModifiedUtc = lastModifiedUtc ?? DateTime.now().toUtc();
@@ -55,7 +61,7 @@ class Consignor {
   int systemReferenceCustomer;
   int? existingCustomerId;
   String? existingCustomerLabel;
-  bool isLegalEntity;
+  ConsignorType consignorType;
   String tradingName;
   Person consignorInfo;
   bool vatLiability;
@@ -89,10 +95,28 @@ class Consignor {
 
   bool get hasRemoteReference => systemReferenceConsignor > 0;
 
+  bool get isLegalEntity => consignorType == ConsignorType.legalEntity;
+
+  set isLegalEntity(bool value) {
+    consignorType =
+        value ? ConsignorType.legalEntity : ConsignorType.naturalPerson;
+  }
+
+  bool get isSoleProprietor => consignorType == ConsignorType.soleProprietor;
+
+  set isSoleProprietor(bool value) {
+    consignorType =
+        value ? ConsignorType.soleProprietor : ConsignorType.naturalPerson;
+  }
+
+  bool get usesTradingName => isLegalEntity || isSoleProprietor;
+
   bool get linksExistingCustomer =>
       existingCustomerId != null && systemReferenceConsignor <= 0;
 
-  bool get synced => syncStatus == RecordSyncStatus.synced;
+  bool get synced =>
+      syncStatus == RecordSyncStatus.synced ||
+      syncStatus == RecordSyncStatus.finalized;
 
   bool get needsSync => syncStatus.needsSync;
 
@@ -157,6 +181,19 @@ class Consignor {
           json['phonePrefixId'] ??
           json['PhonePrefixId'],
     );
+    final legacyIsLegalEntity =
+        _toBool(json['isLegalEntity'] ?? json['IsLegalEntity']) ?? false;
+    final legacyIsSoleProprietor =
+        _toBool(json['isSoleProprietor'] ?? json['IsSoleProprietor']) ?? false;
+    final resolvedConsignorType = legacyIsSoleProprietor
+        ? ConsignorType.soleProprietor
+        : ConsignorTypeX.fromAny(
+            json['consignorType'] ??
+                json['ConsignorType'] ??
+                json['partyType'] ??
+                json['PartyType'],
+            legacyIsLegalEntity: legacyIsLegalEntity,
+          );
 
     return Consignor(
       id: (json['id'] ??
@@ -175,8 +212,7 @@ class Consignor {
       existingCustomerLabel: _toNullableString(
         json['existingCustomerLabel'] ?? json['ExistingCustomerLabel'],
       ),
-      isLegalEntity:
-          (json['isLegalEntity'] ?? json['IsLegalEntity']) as bool? ?? false,
+      consignorType: resolvedConsignorType,
       tradingName: _toString(json['tradingName'] ?? json['TradingName']),
       consignorInfo: Person.fromJson(
         ((json['consignorInfo'] ?? json['ConsignorInfo']) as Map?)
@@ -271,7 +307,8 @@ class Consignor {
         'existingCustomerId': existingCustomerId,
         'existingCustomerLabel': existingCustomerLabel,
         'isLegalEntity': isLegalEntity,
-        'consignorType': isLegalEntity ? 'LegalEntity' : 'NaturalPerson',
+        'isSoleProprietor': isSoleProprietor,
+        'consignorType': consignorType.apiName,
         'tradingName': tradingName.trim().isEmpty ? null : tradingName.trim(),
         'consignorInfo': consignorInfo.toJson(),
         'vatLiability': vatLiability,
@@ -309,7 +346,7 @@ class Consignor {
       };
 
   String get displayName {
-    if (isLegalEntity && tradingName.trim().isNotEmpty) {
+    if ((isLegalEntity || isSoleProprietor) && tradingName.trim().isNotEmpty) {
       return tradingName.trim();
     }
     return consignorInfo.fullName;
@@ -389,6 +426,14 @@ class Consignor {
     if (value == null) return null;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
+  }
+
+  static bool? _toBool(Object? value) {
+    if (value is bool) return value;
+    final text = value?.toString().toLowerCase().trim();
+    if (text == 'true') return true;
+    if (text == 'false') return false;
+    return null;
   }
 
   static String _stripExplicitPrefix(

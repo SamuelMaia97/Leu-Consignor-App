@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:leu_consignor_app/src/domain/consignor_type.dart';
 import 'package:leu_consignor_app/src/models/consignor.dart';
 import 'package:leu_consignor_app/src/models/sync_status.dart';
 
@@ -59,16 +60,34 @@ void main() {
       expect(restored.lastEditedAtUtc, consignor.lastEditedAtUtc);
     });
 
-    test('displayName returns tradingName for legal entities and fullName for individuals', () {
+    test(
+        'displayName returns tradingName for legal entities and fullName for individuals',
+        () {
       final company = Consignor.empty()
         ..isLegalEntity = true
         ..tradingName = 'Leu AG';
+      final soleProprietor = Consignor.empty()
+        ..consignorType = ConsignorType.soleProprietor
+        ..tradingName = 'Muster Coins';
       final person = Consignor.empty()
         ..consignorInfo.firstName = 'Anna'
         ..consignorInfo.lastName = 'Muster';
 
       expect(company.displayName, 'Leu AG');
+      expect(soleProprietor.displayName, 'Muster Coins');
       expect(person.displayName, 'Anna Muster');
+    });
+
+    test('consignorType round-trips sole proprietor through json', () {
+      final consignor = Consignor.empty()
+        ..consignorType = ConsignorType.soleProprietor
+        ..tradingName = 'Muster Coins';
+
+      final restored = Consignor.fromJson(consignor.toJson());
+
+      expect(restored.consignorType, ConsignorType.soleProprietor);
+      expect(restored.isSoleProprietor, isTrue);
+      expect(restored.isLegalEntity, isFalse);
     });
 
     test('markSynced sets syncStatus and updates lastSyncedUtc', () {

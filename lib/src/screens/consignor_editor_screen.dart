@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../domain/consignor_type.dart';
 import '../models/consignor.dart';
 import '../models/customer_lookup_result.dart';
 import '../models/payment_option.dart';
@@ -126,6 +127,8 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
   String _buildSnapshot() {
     final snapshot = <String, dynamic>{
       'isLegalEntity': _model.isLegalEntity,
+      'isSoleProprietor': _model.isSoleProprietor,
+      'consignorType': _model.consignorType.apiName,
       'tradingName': _model.tradingName,
       'title': _model.consignorInfo.title,
       'salutation': _model.consignorInfo.salutation,
@@ -296,9 +299,8 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     nextModel.systemReferenceCustomer = 0;
     nextModel.existingCustomerId = result.customerId;
     nextModel.existingCustomerLabel = result.displayLabel;
-    nextModel.syncStatus = _model.syncStatus == RecordSyncStatus.synced
-        ? RecordSyncStatus.pendingSync
-        : _model.syncStatus;
+    nextModel.syncStatus =
+        _model.synced ? RecordSyncStatus.pendingSync : _model.syncStatus;
     nextModel.syncErrorMessage = null;
     nextModel.lastSyncedUtc = null;
     nextModel.remoteLastModifiedUtc = null;
@@ -508,12 +510,11 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       }
     }
 
-    final message =
-        updated != null && updated.syncStatus == RecordSyncStatus.synced
-            ? (appState.lastMessage ?? 'Consignor synced successfully.')
-            : (updated?.syncErrorMessage ??
-                appState.lastMessage ??
-                'Consignor sync finished.');
+    final message = updated != null && updated.synced
+        ? (appState.lastMessage ?? 'Consignor synced successfully.')
+        : (updated?.syncErrorMessage ??
+            appState.lastMessage ??
+            'Consignor sync finished.');
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -658,16 +659,26 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     _model.consignorAddress.adminRegion =
         _model.consignorAddress.adminRegion.trim();
 
-    final normalizedIban = _normalizeIban(_model.bankingDetails.accountNumber);
-    _model.bankingDetails.accountNumber = normalizedIban;
-    _model.bankingDetails.isIban = normalizedIban.isNotEmpty;
+    final normalizedAccountNumber =
+        _normalizeBankAccountNumber(_model.bankingDetails.accountNumber);
+    _model.bankingDetails.accountNumber = normalizedAccountNumber;
+    _model.bankingDetails.isIban = _looksLikeIban(normalizedAccountNumber);
     _model.bankingDetails.bankName = _model.bankingDetails.bankName.trim();
+    _model.bankingDetails.bicSwift = _model.bankingDetails.bicSwift.trim();
     _model.bankingDetails.clearingNumber = '';
-    _model.bankingDetails.bicSwift = '';
   }
 
-  String _normalizeIban(String value) =>
-      value.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+  String _normalizeBankAccountNumber(String value) {
+    final trimmed = value.trim();
+    return _looksLikeIban(trimmed)
+        ? trimmed.replaceAll(RegExp(r'\s+'), '').toUpperCase()
+        : trimmed;
+  }
+
+  bool _looksLikeIban(String value) {
+    final compact = value.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    return RegExp(r'^[A-Z]{2}[0-9A-Z]{13,32}$').hasMatch(compact);
+  }
 
   List<Widget> _buildBottomActions({
     required bool showSyncButton,
@@ -762,7 +773,8 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.cloud_upload_outlined),
                         label: Text(syncing ? 'Syncing…' : 'Sync consignor'),
@@ -771,8 +783,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                           side: BorderSide(
                             color: Colors.white.withValues(alpha: 0.18),
                           ),
-                          backgroundColor:
-                              Colors.white.withValues(alpha: 0.08),
+                          backgroundColor: Colors.white.withValues(alpha: 0.08),
                         ),
                       ),
                     OutlinedButton.icon(
@@ -862,20 +873,34 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: context.palette.brandSoft
-                              .withValues(alpha: 0.45),
+                          color:
+                              context.palette.brandSoft.withValues(alpha: 0.45),
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(color: context.palette.border),
                         ),
-                        child: SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Legal entity'),
-                          subtitle: const Text(
-                            'Enable this when the consignor is a company or institution.',
+                        child: SegmentedButton<ConsignorType>(
+                          segments: const [
+                            ButtonSegment<ConsignorType>(
+                              value: ConsignorType.naturalPerson,
+                              icon: Icon(Icons.person_outline),
+                              label: Text('Individual'),
+                            ),
+                            ButtonSegment<ConsignorType>(
+                              value: ConsignorType.soleProprietor,
+                              icon: Icon(Icons.storefront_outlined),
+                              label: Text('Sole proprietor'),
+                            ),
+                            ButtonSegment<ConsignorType>(
+                              value: ConsignorType.legalEntity,
+                              icon: Icon(Icons.business_outlined),
+                              label: Text('Legal entity'),
+                            ),
+                          ],
+                          selected: {_model.consignorType},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (selection) => setState(
+                            () => _model.consignorType = selection.single,
                           ),
-                          value: _model.isLegalEntity,
-                          onChanged: (value) =>
-                              setState(() => _model.isLegalEntity = value),
                         ),
                       ),
                       const SizedBox(height: 18),
@@ -911,10 +936,10 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                           TextFormField(
                             key: const ValueKey('editor-field-first-name'),
                             initialValue: _model.consignorInfo.firstName,
-                            decoration:
-                                const InputDecoration(labelText: 'First name *'),
-                            validator: (value) =>
-                                FormValidators.requiredText(value, 'First name'),
+                            decoration: const InputDecoration(
+                                labelText: 'First name *'),
+                            validator: (value) => FormValidators.requiredText(
+                                value, 'First name'),
                             onChanged: (value) =>
                                 _model.consignorInfo.firstName = value,
                           ),
@@ -928,14 +953,16 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             onChanged: (value) =>
                                 _model.consignorInfo.lastName = value,
                           ),
-                          if (_model.isLegalEntity)
+                          if (_model.usesTradingName)
                             TextFormField(
                               key: const ValueKey('editor-field-trading-name'),
                               initialValue: _model.tradingName,
-                              decoration: const InputDecoration(
-                                labelText: 'Trading name *',
+                              decoration: InputDecoration(
+                                labelText: _model.isSoleProprietor
+                                    ? 'Sole proprietor / trading name *'
+                                    : 'Trading name *',
                               ),
-                              validator: (value) => _model.isLegalEntity
+                              validator: (value) => _model.usesTradingName
                                   ? FormValidators.requiredText(
                                       value,
                                       'Trading name',
@@ -962,8 +989,9 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             value: _model.consignorInfo.nationalityIso3,
                             countries: countries,
                             hintText: 'Search nationality',
-                            validator: (value) =>
-                                value == null ? 'Nationality is required' : null,
+                            validator: (value) => value == null
+                                ? 'Nationality is required'
+                                : null,
                             onChanged: (country) => setState(() {
                               _model.consignorInfo.nationalityIso3 =
                                   country?.iso3 ?? '';
@@ -1248,7 +1276,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                 SectionCard(
                   title: 'Bank transfer details',
                   subtitle:
-                      'The consignor app supports bank transfer only. A valid IBAN is required.',
+                      'The consignor app supports bank transfer only. IBAN or account number, bank name, and BIC / SWIFT are required.',
                   icon: Icons.account_balance_outlined,
                   child: _ResponsiveFormGrid(
                     children: [
@@ -1256,17 +1284,31 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                         key: const ValueKey('editor-field-bank-name'),
                         initialValue: _model.bankingDetails.bankName,
                         decoration:
-                            const InputDecoration(labelText: 'Bank name'),
+                            const InputDecoration(labelText: 'Bank name *'),
+                        validator: (value) =>
+                            FormValidators.requiredText(value, 'Bank name'),
                         onChanged: (value) =>
                             _model.bankingDetails.bankName = value,
                       ),
                       TextFormField(
                         key: const ValueKey('editor-field-iban'),
                         initialValue: _model.bankingDetails.accountNumber,
-                        decoration: const InputDecoration(labelText: 'IBAN *'),
-                        validator: FormValidators.iban,
+                        decoration: const InputDecoration(
+                          labelText: 'IBAN / Account Nr. *',
+                        ),
+                        validator: FormValidators.ibanOrAccountNumber,
                         onChanged: (value) =>
                             _model.bankingDetails.accountNumber = value,
+                      ),
+                      TextFormField(
+                        key: const ValueKey('editor-field-bic-swift'),
+                        initialValue: _model.bankingDetails.bicSwift,
+                        decoration:
+                            const InputDecoration(labelText: 'BIC / SWIFT *'),
+                        validator: (value) =>
+                            FormValidators.requiredText(value, 'BIC / SWIFT'),
+                        onChanged: (value) =>
+                            _model.bankingDetails.bicSwift = value,
                       ),
                     ],
                   ),
@@ -1357,6 +1399,7 @@ class _EditorSummary extends StatelessWidget {
       RecordSyncStatus.draft => 'Draft',
       RecordSyncStatus.pendingSync => 'Pending sync',
       RecordSyncStatus.synced => 'Synced',
+      RecordSyncStatus.finalized => 'Finalized',
       RecordSyncStatus.syncFailed => 'Sync failed',
     };
 
@@ -1611,9 +1654,10 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
     if (!validMonths.contains(_selectedMonth)) {
       setState(() {
         _selectedMonth = validMonths.first;
-        _selectedDay = _selectedDay > _daysInMonth(_selectedYear, _selectedMonth)
-            ? _daysInMonth(_selectedYear, _selectedMonth)
-            : _selectedDay;
+        _selectedDay =
+            _selectedDay > _daysInMonth(_selectedYear, _selectedMonth)
+                ? _daysInMonth(_selectedYear, _selectedMonth)
+                : _selectedDay;
       });
     }
 
