@@ -51,7 +51,8 @@ class FormValidators {
   }
 
   static String? iban(String? value) {
-    final normalized = (value ?? '').replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    final normalized =
+        (value ?? '').replaceAll(RegExp(r'\s+'), '').toUpperCase();
     if (normalized.isEmpty) return 'IBAN is required';
     if (normalized.length < 15 || normalized.length > 34) {
       return 'Enter a valid IBAN';
@@ -59,6 +60,41 @@ class FormValidators {
     if (!RegExp(r'^[A-Z]{2}[0-9A-Z]+$').hasMatch(normalized)) {
       return 'Enter a valid IBAN';
     }
+    return null;
+  }
+
+  static String? ibanOrAccountNumber(String? value) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return 'IBAN / Account Nr. is required';
+
+    final compact = trimmed.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    final looksLikeIban = RegExp(r'^[A-Z]{2}[0-9A-Z]+$').hasMatch(compact);
+
+    if (looksLikeIban) {
+      if (compact.length < 15 || compact.length > 34) {
+        return 'Enter a valid IBAN or account number';
+      }
+      return null;
+    }
+
+    final accountNumber = trimmed.replaceAll(RegExp(r'\s+'), '');
+    if (accountNumber.length < 4) {
+      return 'Enter a valid IBAN or account number';
+    }
+
+    return null;
+  }
+
+  static String? percentage(String? value, String fieldLabel) {
+    final required = requiredText(value, fieldLabel);
+    if (required != null) return required;
+
+    final normalized = value!.trim().replaceAll('%', '').replaceAll(',', '.');
+    final number = double.tryParse(normalized);
+    if (number == null || number < 0 || number > 100) {
+      return 'Enter a percentage between 0 and 100';
+    }
+
     return null;
   }
 }

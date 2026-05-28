@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leu_consignor_app/src/models/contract_record.dart';
+import 'package:leu_consignor_app/src/models/sync_status.dart';
 
 void main() {
   group('ContractRecord', () {
@@ -34,6 +35,26 @@ void main() {
       expect(passport.type, UploadType.passport);
       expect(product.type, UploadType.product);
       expect(agreement.type, UploadType.agreement);
+    });
+
+    test('preserves upload kind for split identity sections', () {
+      final upload = ContractUpload.fromJson({
+        'localId': 'rep-id',
+        'fileName': 'representative.png',
+        'fileType': 1,
+        'kind': 'RepresentativeId',
+      });
+
+      expect(upload.kind, 'RepresentativeId');
+      expect(upload.toJson()['kind'], 'RepresentativeId');
+      expect(upload.toAttachment().kind, 'RepresentativeId');
+    });
+
+    test('parses finalized sync status from backend values', () {
+      expect(
+        RecordSyncStatusX.fromAny('Finalized', hasRemoteReference: true),
+        RecordSyncStatus.finalized,
+      );
     });
   });
 }

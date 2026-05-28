@@ -7,6 +7,9 @@
 # Build outputs
 build/
 
+# Generated contract/backend handoff artifacts
+backend-generated/
+
 # Platform-specific generated files
 **/ephemeral/
 

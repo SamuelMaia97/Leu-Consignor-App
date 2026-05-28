@@ -107,12 +107,11 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
 
     if (!mounted) return;
 
-    final message =
-        updated != null && updated.syncStatus == RecordSyncStatus.synced
-            ? 'Contract synced successfully.'
-            : (updated?.syncErrorMessage ??
-                context.read<AppState>().lastMessage ??
-                'Contract sync finished.');
+    final message = updated != null && updated.synced
+        ? 'Contract synced successfully.'
+        : (updated?.syncErrorMessage ??
+            context.read<AppState>().lastMessage ??
+            'Contract sync finished.');
 
     ScaffoldMessenger.of(
       context,
@@ -435,9 +434,12 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                         onOpenWizard: () => context.go(
                           '/contracts/${contract.consignorId}/record/${contract.id}/resume',
                         ),
-                        onSync: contract.auctionId == null
-                            ? null
-                            : () => _syncContract(contract),
+                        onSync: contract.auctionId != null &&
+                                _ContractsOverviewSummary._effectiveStatus(
+                                        contract)
+                                    .needsSync
+                            ? () => _syncContract(contract)
+                            : null,
                       ),
                     );
                   }, childCount: summary.visibleItems.length),
@@ -583,6 +585,7 @@ class _ContractsOverviewSummary {
 
       switch (status) {
         case RecordSyncStatus.synced:
+        case RecordSyncStatus.finalized:
           syncedCount++;
           break;
         case RecordSyncStatus.pendingSync:
@@ -633,7 +636,8 @@ class _ContractsOverviewSummary {
       case _ContractQuickFilter.pendingSync:
         return status == RecordSyncStatus.pendingSync;
       case _ContractQuickFilter.synced:
-        return status == RecordSyncStatus.synced;
+        return status == RecordSyncStatus.synced ||
+            status == RecordSyncStatus.finalized;
       case _ContractQuickFilter.failed:
         return status == RecordSyncStatus.syncFailed;
     }
@@ -642,6 +646,12 @@ class _ContractsOverviewSummary {
   static RecordSyncStatus _effectiveStatus(ContractRecord contract) {
     if (contract.syncStatus == RecordSyncStatus.syncFailed) {
       return RecordSyncStatus.syncFailed;
+    }
+
+    if (contract.syncStatus == RecordSyncStatus.finalized &&
+        !contract.hasLocalChanges &&
+        contract.auctionId != null) {
+      return RecordSyncStatus.finalized;
     }
 
     if (contract.syncStatus == RecordSyncStatus.draft ||
@@ -681,6 +691,8 @@ class _ContractsOverviewSummary {
         return 'pending sync pending unsynced not synced';
       case RecordSyncStatus.synced:
         return 'synced';
+      case RecordSyncStatus.finalized:
+        return 'finalized final synced';
       case RecordSyncStatus.syncFailed:
         return 'sync failed failed error';
     }
@@ -828,6 +840,8 @@ class _ContractOverviewRow extends StatelessWidget {
         return 'Pending sync';
       case RecordSyncStatus.synced:
         return 'Synced';
+      case RecordSyncStatus.finalized:
+        return 'Finalized';
       case RecordSyncStatus.syncFailed:
         return 'Failed';
     }
@@ -836,6 +850,7 @@ class _ContractOverviewRow extends StatelessWidget {
   static StatusBadgeTone _statusTone(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return StatusBadgeTone.success;
       case RecordSyncStatus.pendingSync:
         return StatusBadgeTone.info;
@@ -849,6 +864,7 @@ class _ContractOverviewRow extends StatelessWidget {
   static IconData _statusIcon(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return Icons.sync_alt;
       case RecordSyncStatus.pendingSync:
         return Icons.cloud_upload_outlined;

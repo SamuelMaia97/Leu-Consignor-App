@@ -48,8 +48,7 @@ class ApiService {
 
           client.badCertificateCallback =
               (X509Certificate cert, String host, int port) {
-            return (host == '10.0.2.2' || host == 'localhost') &&
-                port == 44364;
+            return (host == '10.0.2.2' || host == 'localhost') && port == 44364;
           };
 
           return client;
@@ -246,12 +245,11 @@ class ApiService {
           .toString();
       consignor.markRemoteSnapshot();
 
-      final contractGroups =
-          ((json['contracts'] ?? json['Contracts']) as List?)
-                  ?.whereType<Map>()
-                  .map((e) => e.cast<String, dynamic>())
-                  .toList() ??
-              const <Map<String, dynamic>>[];
+      final contractGroups = ((json['contracts'] ?? json['Contracts']) as List?)
+              ?.whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList() ??
+          const <Map<String, dynamic>>[];
 
       final contracts = <ContractRecord>[];
       for (final groupJson in contractGroups) {
@@ -313,7 +311,8 @@ class ApiService {
         }
 
         final response = await _dio.put(
-          _path(settings.consignorsUpdateOne).replaceAll('{id}', '$consignorId'),
+          _path(settings.consignorsUpdateOne)
+              .replaceAll('{id}', '$consignorId'),
           data: consignor.toJson(),
         );
 
@@ -534,8 +533,8 @@ class ApiService {
           fileData: await _readFileAsBase64(upload.path),
         );
         final serverUpload = await updateUpload(consignorId, payload);
-        final serverUtc =
-            serverUpload.serverLastModifiedUtc ?? serverUpload.localLastModifiedUtc;
+        final serverUtc = serverUpload.serverLastModifiedUtc ??
+            serverUpload.localLastModifiedUtc;
 
         updatedUploads.add(
           serverUpload.copyWith(
@@ -580,8 +579,8 @@ class ApiService {
         }).toList(growable: false);
 
         final localMatch = localMatches.isEmpty ? null : localMatches.first;
-        final serverTimestamp =
-            serverUpload.serverLastModifiedUtc ?? serverUpload.localLastModifiedUtc;
+        final serverTimestamp = serverUpload.serverLastModifiedUtc ??
+            serverUpload.localLastModifiedUtc;
 
         mergedUploads.add(
           serverUpload.copyWith(
@@ -614,8 +613,8 @@ class ApiService {
         }).toList(growable: false);
 
         final localMatch = localMatches.isEmpty ? null : localMatches.first;
-        final serverTimestamp =
-            serverUpload.serverLastModifiedUtc ?? serverUpload.localLastModifiedUtc;
+        final serverTimestamp = serverUpload.serverLastModifiedUtc ??
+            serverUpload.localLastModifiedUtc;
 
         mergedUploads.add(
           serverUpload.copyWith(
@@ -667,17 +666,28 @@ class ApiService {
     required int consignorId,
     required Map<String, dynamic> json,
   }) async {
-    final files =
-        ((json['list'] ?? json['List'] ?? json['uploads'] ?? json['Uploads'])
-                    as List?)
-                ?.whereType<Map>()
-                .map((item) => item.cast<String, dynamic>())
-                .toList() ??
-            const <Map<String, dynamic>>[];
+    final files = ((json['list'] ??
+                json['List'] ??
+                json['uploads'] ??
+                json['Uploads']) as List?)
+            ?.whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList() ??
+        const <Map<String, dynamic>>[];
 
     final uploads = <ContractUpload>[];
     String pdfPath = '';
     String pdfName = 'consignor_contract.pdf';
+    final resolvedSyncStatus = RecordSyncStatusX.fromAny(
+      json['syncStatus'] ??
+          json['SyncStatus'] ??
+          json['status'] ??
+          json['Status'] ??
+          json['contractStatus'] ??
+          json['ContractStatus'],
+      hasRemoteReference: true,
+      legacySynced: true,
+    );
 
     for (final fileJson in files) {
       final upload =
@@ -699,10 +709,9 @@ class ApiService {
           (json['auctionDisplayName'] ?? json['AuctionDisplayName'])
                   ?.toString() ??
               '',
-      systemReferenceContract:
-          _toInt(json['systemReferenceContract'] ??
-                  json['SystemReferenceContract']) ??
-              0,
+      systemReferenceContract: _toInt(json['systemReferenceContract'] ??
+              json['SystemReferenceContract']) ??
+          0,
       pdfName: pdfName,
       signedAt: DateTime.tryParse(
             (json['signedAt'] ?? json['SignedAt'])?.toString() ?? '',
@@ -718,6 +727,9 @@ class ApiService {
     );
 
     contract.markRemoteSnapshot();
+    if (resolvedSyncStatus == RecordSyncStatus.finalized) {
+      contract.syncStatus = RecordSyncStatus.finalized;
+    }
     return contract;
   }
 
@@ -761,6 +773,7 @@ class ApiService {
       'fileId': upload.fileId,
       'auctionId': upload.auctionId,
       'fileType': upload.fileType.apiValue,
+      'kind': upload.kind.trim().isEmpty ? null : upload.kind.trim(),
       'fileName': upload.fileName,
       'fileData': fileData ?? '',
       'signedAt': upload.signedAt?.toUtc().toIso8601String(),
@@ -939,20 +952,18 @@ class ConsignorReference {
 
   factory ConsignorReference.fromJson(Map<String, dynamic> json) =>
       ConsignorReference(
-        systemReferenceConsignor:
-            _toIntAny(
-                  json['systemReferenceConsignor'] ??
-                      json['SystemReferenceConsignor'],
-                ) ??
-                _toIntAny(json['consignorId'] ?? json['ConsignorId']) ??
-                0,
-        systemReferenceCustomer:
-            _toIntAny(
-                  json['systemReferenceCustomer'] ??
-                      json['SystemReferenceCustomer'],
-                ) ??
-                _toIntAny(json['customerId'] ?? json['CustomerId']) ??
-                0,
+        systemReferenceConsignor: _toIntAny(
+              json['systemReferenceConsignor'] ??
+                  json['SystemReferenceConsignor'],
+            ) ??
+            _toIntAny(json['consignorId'] ?? json['ConsignorId']) ??
+            0,
+        systemReferenceCustomer: _toIntAny(
+              json['systemReferenceCustomer'] ??
+                  json['SystemReferenceCustomer'],
+            ) ??
+            _toIntAny(json['customerId'] ?? json['CustomerId']) ??
+            0,
         customerAction:
             (json['customerAction'] ?? json['CustomerAction'])?.toString() ??
                 'Unknown',

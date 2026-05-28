@@ -35,6 +35,7 @@ class AttachmentUtils {
 
   static String _keyFor(ContractAttachment attachment) {
     final path = attachment.path.trim().toLowerCase();
-    return '${attachment.type.name}::$path';
+    final kind = attachment.kind.trim().toLowerCase();
+    return '${attachment.type.name}::$kind::$path';
   }
 }

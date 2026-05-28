@@ -105,16 +105,16 @@ class AuthService {
     final tenant = settings.oauthTenantId.trim();
     final clientId = settings.oauthClientId.trim();
     final scope = settings.oauthScope.trim();
-    final redirectUri = settings.oauthRedirectUri.trim();
+    final configuredRedirectUri = settings.oauthRedirectUri.trim();
 
-    if ([tenant, clientId, scope, redirectUri].any((e) => e.isEmpty)) {
+    if ([tenant, clientId, scope, configuredRedirectUri].any((e) => e.isEmpty)) {
       throw AuthException(
         'OAuth settings are incomplete. Fill in tenant, client ID, scope, and redirect URI.',
       );
     }
 
-    final redirect = Uri.parse(redirectUri);
-    if (!redirect.isScheme('http') &&
+    final redirect = Uri.parse(configuredRedirectUri);
+    if (!redirect.isScheme('http') ||
         (redirect.host != '127.0.0.1' && redirect.host != 'localhost')) {
       throw AuthException(
         'This desktop sign-in flow requires a loopback redirect URI like http://127.0.0.1:12345.',
@@ -129,8 +129,9 @@ class AuthService {
 
     final server = await HttpServer.bind(
       InternetAddress.loopbackIPv4,
-      redirect.port,
+      redirect.hasPort ? redirect.port : 0,
     );
+    final redirectUri = redirect.replace(port: server.port).toString();
 
     try {
       final authorizeUri = Uri.https(

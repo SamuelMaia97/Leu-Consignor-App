@@ -267,7 +267,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> saveContract(ContractRecord contract) async {
-    if (contract.syncStatus != RecordSyncStatus.synced) {
+    if (contract.syncStatus.needsSync) {
       contract.markLocalChange(activeUsername);
     }
     await _contractRepo.put(contract);
@@ -424,7 +424,7 @@ class AppState extends ChangeNotifier {
     try {
       for (final id in dirtyIds) {
         final updated = await syncConsignor(id);
-        if (updated?.syncStatus == RecordSyncStatus.synced) {
+        if (updated?.synced == true) {
           syncedCount++;
         }
       }
@@ -692,7 +692,7 @@ class AppState extends ChangeNotifier {
           contract.auctionId!,
         );
 
-        if (synced != null && synced.syncStatus == RecordSyncStatus.synced) {
+        if (synced != null && synced.synced) {
           uploadedContracts++;
         }
 

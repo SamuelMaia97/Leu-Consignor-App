@@ -8,9 +8,11 @@ import 'package:go_router/go_router.dart';
 import 'package:iban_to_bic/iban_to_bic.dart';
 import 'package:provider/provider.dart';
 
+import '../domain/consignor_type.dart';
 import '../models/auction_option.dart';
 import '../models/consignor.dart';
 import '../models/contract_record.dart';
+import '../models/country.dart';
 import '../models/customer_lookup_result.dart';
 import '../models/payment_option.dart';
 import '../repositories/wizard_draft_repository.dart';
@@ -27,6 +29,12 @@ import '../widgets/country_dropdown.dart';
 import '../widgets/multi_auction_select_field.dart';
 import '../widgets/searchable_select_field.dart';
 import '../widgets/section_card.dart';
+
+const _ordererIdKind = 'NaturalPersonId';
+const _representativeIdKind = 'RepresentativeId';
+const _unsignedContractPrefix = 'PROV-';
+const _signedContractPrefix = 'COR-';
+const _legacyProvisionalContractPrefix = 'Prov-';
 
 class ConsignorWizardScreen extends StatefulWidget {
   const ConsignorWizardScreen({
@@ -74,25 +82,29 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   final Object _leaveGuardToken = Object();
 
   Timer? _searchDebounce;
+  Timer? _representativeSearchDebounce;
   int _step = 0;
   bool _saving = false;
   bool _searching = false;
+  bool _representativeSearching = false;
   bool _guardRegistered = false;
   bool? _resumeContractOnly;
   String? _activeContractId;
   String? _generatedPdfPath;
   bool _generatedPdfIncludesSignatures = false;
   List<CustomerLookupResult> _matches = const [];
+  List<CustomerLookupResult> _representativeMatches = const [];
   String _activeIbanLookup = '';
 
   bool get _isContractOnly => _resumeContractOnly ?? widget.contractOnly;
 
   List<_WizardStep> get _steps => _isContractOnly
-      ? const [
+      ? [
           _WizardStep.existingCustomer,
           _WizardStep.auctions,
           _WizardStep.representative,
           _WizardStep.identityFiles,
+          if (_requiresCommercialRegisterFiles) _WizardStep.registrationFiles,
           _WizardStep.productFiles,
           _WizardStep.fullReview,
           _WizardStep.signatures,
@@ -102,10 +114,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           _WizardStep.consignorType,
           _WizardStep.details,
           _WizardStep.contractDecision,
-          if (_draft.createContract) ...const [
+          if (_draft.createContract) ...[
             _WizardStep.auctions,
             _WizardStep.representative,
             _WizardStep.identityFiles,
+            if (_requiresCommercialRegisterFiles) _WizardStep.registrationFiles,
             _WizardStep.productFiles,
             _WizardStep.fullReview,
             _WizardStep.signatures,
@@ -114,8 +127,22 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   _WizardStep get _currentStep => _steps[_step];
 
-  int get _businessStepNumber {
-    return switch (_currentStep) {
+  bool get _requiresCommercialRegisterFiles {
+    return _draft.consignorType == ConsignorType.legalEntity ||
+        _draft.consignorType == ConsignorType.soleProprietor ||
+        (!_draft.coinsOwnedByConsignor &&
+            _representativeDraft.consignorType == ConsignorType.legalEntity);
+  }
+
+  bool get _requiresRepresentativeDetails {
+    return _draft.consignorType == ConsignorType.legalEntity ||
+        !_draft.coinsOwnedByConsignor;
+  }
+
+  int get _businessStepNumber => _businessStepFor(_currentStep);
+
+  int _businessStepFor(_WizardStep step) {
+    return switch (step) {
       _WizardStep.existingCustomer => 1,
       _WizardStep.consignorType => 2,
       _WizardStep.details => 3,
@@ -123,9 +150,26 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _WizardStep.auctions => 5,
       _WizardStep.representative => 6,
       _WizardStep.identityFiles => 7,
-      _WizardStep.productFiles => 8,
-      _WizardStep.fullReview => 9,
-      _WizardStep.signatures => 10,
+      _WizardStep.registrationFiles => 8,
+      _WizardStep.productFiles => 9,
+      _WizardStep.fullReview => 10,
+      _WizardStep.signatures => 11,
+    };
+  }
+
+  String _stepLabelFor(_WizardStep step) {
+    return switch (step) {
+      _WizardStep.existingCustomer => 'Customer',
+      _WizardStep.consignorType => 'Type',
+      _WizardStep.details => 'Details',
+      _WizardStep.contractDecision => 'Contract',
+      _WizardStep.auctions => 'Consignment',
+      _WizardStep.representative => 'Delivery',
+      _WizardStep.identityFiles => 'Picture ID',
+      _WizardStep.registrationFiles => 'Register',
+      _WizardStep.productFiles => 'Pictures',
+      _WizardStep.fullReview => 'Review',
+      _WizardStep.signatures => 'Sign',
     };
   }
 
@@ -361,6 +405,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _representativeSearchDebounce?.cancel();
     _controller.dispose();
     _unregisterLeaveGuard();
     super.dispose();
@@ -407,10 +452,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   bool _validateCurrentStep() {
     switch (_currentStep) {
       case _WizardStep.details:
-        return _detailsFormKey.currentState?.validate() ?? false;
+        return true;
       case _WizardStep.representative:
-        if (_draft.coinsOwnedByConsignor) return true;
-        return _representativeFormKey.currentState?.validate() ?? false;
+        return true;
       case _WizardStep.auctions:
         return _auctionFormKey.currentState?.validate() ?? false;
       default:
@@ -503,6 +547,72 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
   }
 
+  void _queueRepresentativeSearch(String query) {
+    _representativeSearchDebounce?.cancel();
+    if (query.trim().isEmpty) {
+      setState(() => _representativeMatches = const []);
+      return;
+    }
+    setState(() => _representativeSearching = true);
+    _representativeSearchDebounce = Timer(
+      const Duration(milliseconds: 350),
+      () => _searchExistingRepresentatives(query.trim()),
+    );
+  }
+
+  Future<void> _searchExistingRepresentatives(String query) async {
+    final state = context.read<AppState>();
+    await state.refreshAuthSessionState(notify: false);
+    if (!state.hasValidToken) {
+      if (!mounted) return;
+      setState(() {
+        _representativeSearching = false;
+        _representativeMatches = const [];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Microsoft login is required for lookup.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final matches = await ApiService(state.settings, state.token)
+          .searchExistingCustomers(query, take: 10);
+      if (!mounted) return;
+      setState(() {
+        _representativeMatches = matches;
+        _representativeSearching = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _representativeMatches = const [];
+        _representativeSearching = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Representative lookup failed: $e')),
+      );
+    }
+  }
+
+  void _selectExistingRepresentative(CustomerLookupResult result) {
+    setState(() {
+      _representativeDraft.applyPrefill(result.prefill);
+      _representativeDraft.usesExistingCustomer = true;
+      _representativeDraft.existingCustomerId = result.customerId;
+      _representativeDraft.existingCustomerLabel = result.displayLabel;
+      _representativeDraft.clearBankingDetails();
+      if (_representativeDraft.consignorType == ConsignorType.soleProprietor) {
+        _representativeDraft.consignorType = ConsignorType.legalEntity;
+      }
+      _representativeMatches = const [];
+      _generatedPdfPath = null;
+      _generatedPdfIncludesSignatures = false;
+    });
+  }
+
   Future<String?> _tryAutoFillBankingFromIban(
     _WizardDraft targetDraft,
     String rawIban,
@@ -582,7 +692,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     );
   }
 
-  Future<void> _openConsignorReviewEditor() async {
+  Future<bool> _openConsignorReviewEditor() async {
     final originalState = _draft.toResumeJson();
 
     final saved = await showDialog<bool>(
@@ -599,29 +709,103 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       ),
     );
 
-    if (!mounted) return;
+    if (!mounted) return false;
 
     if (saved == true) {
-      setState(() {
-        _generatedPdfPath = null;
-        _generatedPdfIncludesSignatures = false;
-      });
-      return;
+      setState(() => _saving = true);
+      try {
+        final state = context.read<AppState>();
+        final savedConsignor = await state.saveConsignor(_draft.toConsignor());
+        _draft.localConsignorId = savedConsignor.id;
+
+        if (state.hasValidToken) {
+          unawaited(_syncEditedProfileInBackground(state, savedConsignor.id));
+        }
+
+        if (!mounted) return false;
+        setState(() {
+          _generatedPdfPath = null;
+          _generatedPdfIncludesSignatures = false;
+          _saving = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Consignor profile details saved.')),
+        );
+        return true;
+      } catch (e) {
+        if (!mounted) return false;
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saving profile details failed: $e')),
+        );
+        return false;
+      }
     }
 
     setState(() {
       _draft.restoreFromResumeJson(originalState);
     });
+    return false;
   }
 
-  Future<void> _addFiles(UploadType type, {bool fromCamera = false}) async {
+  Future<void> _syncEditedProfileInBackground(
+    AppState state,
+    String consignorId,
+  ) async {
+    try {
+      final synced = await state.syncConsignor(consignorId);
+      if (!mounted || synced == null) return;
+      setState(() => _draft.localConsignorId = synced.id);
+    } catch (_) {
+      // The local profile is already saved; regular sync can retry later.
+    }
+  }
+
+  Future<bool> _ensureProfileReadyForContract() async {
+    final missingFields = _draft.missingRequiredFields;
+    if (missingFields.isEmpty) {
+      return true;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Complete missing profile fields first: ${missingFields.take(4).join(', ')}${missingFields.length > 4 ? '...' : ''}',
+        ),
+      ),
+    );
+
+    final saved = await _openConsignorReviewEditor();
+    if (!mounted) return false;
+    if (!saved) return false;
+
+    final stillMissing = _draft.missingRequiredFields;
+    if (stillMissing.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Still missing: ${stillMissing.take(4).join(', ')}${stillMissing.length > 4 ? '...' : ''}',
+          ),
+        ),
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<void> _addFiles(
+    UploadType type, {
+    bool fromCamera = false,
+    String kind = '',
+  }) async {
     List<String> paths;
 
     if (fromCamera) {
       final captured = await _fileService.captureImage(
         context: context,
         type: type,
-        filePrefix: type == UploadType.passport ? 'id' : 'product',
+        filePrefix: _filePrefixFor(type, kind),
       );
 
       paths = captured == null ? const [] : [captured];
@@ -638,7 +822,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       return;
     }
 
-    setState(() => _draft.addFiles(paths, type));
+    setState(() => _draft.addFiles(paths, type, kind: kind));
+  }
+
+  String _filePrefixFor(UploadType type, String kind) {
+    if (type == UploadType.passport) {
+      return kind == _representativeIdKind ? 'representative_id' : 'orderer_id';
+    }
+    return type == UploadType.product ? 'product' : 'contract_file';
   }
 
   void _removeFile(ContractUpload upload) {
@@ -713,6 +904,40 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       pdfName: pdfName ?? baseRecord.pdfName,
       lastModifiedUtc: nowUtc,
     );
+  }
+
+  String _contractPdfName(
+    ContractRecord record, {
+    required bool includeSignatures,
+  }) {
+    final reference = record.systemReferenceContract > 0
+        ? record.systemReferenceContract.toString()
+        : record.id;
+    final baseName = 'consignor_contract_$reference.pdf';
+    final prefix =
+        includeSignatures ? _signedContractPrefix : _unsignedContractPrefix;
+    return '$prefix${_withoutContractPrefix(baseName)}';
+  }
+
+  String _withoutContractPrefix(String value) {
+    var current = value.trim();
+    var changed = true;
+    while (changed) {
+      changed = false;
+      final lower = current.toLowerCase();
+      for (final prefix in const [
+        _unsignedContractPrefix,
+        _signedContractPrefix,
+        _legacyProvisionalContractPrefix,
+      ]) {
+        if (lower.startsWith(prefix.toLowerCase())) {
+          current = current.substring(prefix.length);
+          changed = true;
+          break;
+        }
+      }
+    }
+    return current;
   }
 
   Future<Consignor> _saveConsignorLocal({required bool draft}) async {
@@ -819,9 +1044,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     final consignor = _draft.toConsignor();
     final record = _buildContract(consignor.id);
-    final authorizedRepresentative = _draft.coinsOwnedByConsignor
-        ? null
-        : _representativeDraft.toConsignor();
+    final authorizedRepresentative = _requiresRepresentativeDetails
+        ? _representativeDraft.toConsignor()
+        : null;
 
     final signatureData =
         includeSignatures ? await _buildSignatureData() : null;
@@ -833,7 +1058,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
 
     final output = await _fileService.getSuggestedPdfPath(
-      'consignor_contract_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      _contractPdfName(record, includeSignatures: includeSignatures),
     );
 
     return _pdfService.buildContractPdf(
@@ -843,11 +1068,15 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       outputPath: output,
       authorizedRepresentative: authorizedRepresentative,
       signatureData: signatureData,
+      commissionPercent: _draft.commissionRate,
+      consignmentCountry: _draft.consignmentCountryName,
+      consignmentCountryIso3: _draft.consignmentCountryIso3,
     );
   }
 
   Future<bool> _generatePdf({bool includeSignatures = false}) async {
     if (_saving) return false;
+    if (!await _ensureProfileReadyForContract()) return false;
 
     setState(() => _saving = true);
     try {
@@ -923,7 +1152,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   Future<void> _saveFullFlow() async {
     if (_saving) return;
+    if (!await _ensureProfileReadyForContract()) return;
     if (!(_detailsFormKey.currentState?.validate() ?? true)) return;
+    if (!mounted) return;
     if (!_draft.signatureReady) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1049,9 +1280,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             children: [
               Expanded(
                 child: _StepIndicator(
-                  current: _step + 1,
-                  total: _steps.length,
-                  businessStep: _businessStepNumber,
+                  currentIndex: _step,
+                  steps: _steps,
+                  businessStepFor: _businessStepFor,
+                  labelFor: _stepLabelFor,
+                  onStepSelected: _saving ? null : _goToStep,
                 ),
               ),
               const SizedBox(width: 12),
@@ -1088,11 +1321,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           onNewConsignor: _selectNewConsignor,
         ),
       _WizardStep.consignorType => _ConsignorTypeStep(
-          initialValue: _draft.isLegalEntity,
-          onSelected: (isLegalEntity) {
+          initialValue: _draft.consignorType,
+          onSelected: (consignorType) {
             setState(() {
-              _draft.isLegalEntity = isLegalEntity;
-              if (isLegalEntity &&
+              _draft.consignorType = consignorType;
+              if (consignorType == ConsignorType.legalEntity) {
+                _draft.coinsOwnedByConsignor = false;
+              }
+              if (_draft.usesTradingName &&
                   _draft.prefillVatNumber.isNotEmpty &&
                   _draft.vatNumber.isEmpty) {
                 _draft.vatNumber = _draft.prefillVatNumber;
@@ -1126,13 +1362,23 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             _goToStep(_step + 1);
           },
         ),
-      _WizardStep.auctions => _AuctionStep(
-          formKey: _auctionFormKey,
-          draft: _draft,
-          auctions: context.watch<AppState>().auctions,
-          onChanged: (value) => setState(() => _draft.selectedAuctions = value),
-          onBack: _back,
-          onNext: _next,
+      _WizardStep.auctions => Consumer<AppState>(
+          builder: (context, state, _) => _AuctionStep(
+            formKey: _auctionFormKey,
+            draft: _draft,
+            auctions: state.auctions,
+            countries: state.countries,
+            onAuctionsChanged: (value) =>
+                setState(() => _draft.selectedAuctions = value),
+            onConsignmentCountryChanged: (country) {
+              setState(() {
+                _draft.consignmentCountryIso3 = country?.iso3 ?? '';
+                _draft.consignmentCountryName = country?.name ?? '';
+              });
+            },
+            onBack: _back,
+            onNext: _next,
+          ),
         ),
       _WizardStep.representative => Consumer<AppState>(
           builder: (context, state, _) => _RepresentativeStep(
@@ -1143,6 +1389,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             salutationOptions: _salutationOptions,
             correspondenceOptions: _correspondenceOptions,
             phonePrefixes: state.phonePrefixes,
+            searching: _representativeSearching,
+            matches: _representativeMatches,
+            onSearchChanged: _queueRepresentativeSearch,
+            onExistingSelected: _selectExistingRepresentative,
             onChanged: () => setState(() {}),
             onLookupIbanPressed: () =>
                 _handleIbanLookupPressed(_representativeDraft),
@@ -1150,11 +1400,32 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             onNext: _next,
           ),
         ),
-      _WizardStep.identityFiles => _FileStep(
-          title: 'Passport and ID',
-          files: _draft.passportFiles,
-          onAdd: () => _addFiles(UploadType.passport),
-          onCapture: () => _addFiles(UploadType.passport, fromCamera: true),
+      _WizardStep.identityFiles => _IdentityFilesStep(
+          ordererFiles: _draft.ordererIdFiles,
+          representativeFiles: _draft.representativeIdFiles,
+          onAddOrderer: () =>
+              _addFiles(UploadType.passport, kind: _ordererIdKind),
+          onCaptureOrderer: () => _addFiles(
+            UploadType.passport,
+            fromCamera: true,
+            kind: _ordererIdKind,
+          ),
+          onAddRepresentative: () =>
+              _addFiles(UploadType.passport, kind: _representativeIdKind),
+          onCaptureRepresentative: () => _addFiles(
+            UploadType.passport,
+            fromCamera: true,
+            kind: _representativeIdKind,
+          ),
+          onOpen: _fileService.open,
+          onRemove: _removeFile,
+          onBack: _back,
+          onNext: _next,
+        ),
+      _WizardStep.registrationFiles => _FileStep(
+          title: 'Commercial register',
+          files: _draft.registrationFiles,
+          onAdd: () => _addFiles(UploadType.agreement),
           onOpen: _fileService.open,
           onRemove: _removeFile,
           onBack: _back,
@@ -1173,10 +1444,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _WizardStep.fullReview => _FullReviewStep(
           draft: _draft,
           representative:
-              _draft.coinsOwnedByConsignor ? null : _representativeDraft,
+              _requiresRepresentativeDetails ? _representativeDraft : null,
           saving: _saving,
           generatedPdfPath: _generatedPdfPath,
-          onEditConsignor: _openConsignorReviewEditor,
+          onEditConsignor: () {
+            unawaited(_openConsignorReviewEditor());
+          },
           onBack: _back,
           onGeneratePdf: () => _generatePdf(),
           onOpenPdf: _generatedPdfPath == null
@@ -1212,6 +1485,7 @@ enum _WizardStep {
   auctions,
   representative,
   identityFiles,
+  registrationFiles,
   productFiles,
   fullReview,
   signatures,
@@ -1239,18 +1513,20 @@ class _WizardDraft {
   _WizardDraft({this.representativeMode = false});
 
   final bool representativeMode;
+  int formRevision = 0;
   String? localConsignorId;
   bool usesExistingCustomer = false;
   bool showExistingSearch = false;
   bool createContract = false;
   bool coinsOwnedByConsignor = true;
+  bool consignorPersonallyDeliversLots = true;
   int systemReferenceConsignor = 0;
   int systemReferenceCustomer = 0;
   int? existingCustomerId;
   String? existingCustomerLabel;
   String prefillVatNumber = '';
 
-  bool isLegalEntity = false;
+  ConsignorType consignorType = ConsignorType.naturalPerson;
   String tradingName = '';
   int? title;
   int? salutation;
@@ -1309,6 +1585,9 @@ class _WizardDraft {
   String references = '';
   double creditLimit = 0;
   double? discount;
+  String commissionRate = '';
+  String consignmentCountryIso3 = '';
+  String consignmentCountryName = '';
 
   List<AuctionOption> selectedAuctions = const [];
   final List<ContractUpload> uploads = [];
@@ -1320,6 +1599,17 @@ class _WizardDraft {
       customerSignatureStrokes.any((stroke) => stroke.length > 1);
 
   bool get signatureReady => leuSigner != null && hasCustomerSignature;
+
+  bool get isLegalEntity => consignorType == ConsignorType.legalEntity;
+
+  set isLegalEntity(bool value) {
+    consignorType =
+        value ? ConsignorType.legalEntity : ConsignorType.naturalPerson;
+  }
+
+  bool get isSoleProprietor => consignorType == ConsignorType.soleProprietor;
+
+  bool get usesTradingName => isLegalEntity || isSoleProprietor;
 
   bool get hasMeaningfulInput {
     return [
@@ -1337,6 +1627,18 @@ class _WizardDraft {
   List<ContractUpload> get passportFiles => uploads
       .where((e) => e.fileType == UploadType.passport && !e.isDeleted)
       .toList(growable: false);
+  List<ContractUpload> get ordererIdFiles => uploads
+      .where((e) =>
+          e.fileType == UploadType.passport &&
+          !e.isDeleted &&
+          e.kind != _representativeIdKind)
+      .toList(growable: false);
+  List<ContractUpload> get representativeIdFiles => uploads
+      .where((e) =>
+          e.fileType == UploadType.passport &&
+          !e.isDeleted &&
+          e.kind == _representativeIdKind)
+      .toList(growable: false);
   List<ContractUpload> get productFiles => uploads
       .where((e) => e.fileType == UploadType.product && !e.isDeleted)
       .toList(growable: false);
@@ -1351,12 +1653,15 @@ class _WizardDraft {
         'showExistingSearch': showExistingSearch,
         'createContract': createContract,
         'coinsOwnedByConsignor': coinsOwnedByConsignor,
+        'consignorPersonallyDeliversLots': consignorPersonallyDeliversLots,
         'systemReferenceConsignor': systemReferenceConsignor,
         'systemReferenceCustomer': systemReferenceCustomer,
         'existingCustomerId': existingCustomerId,
         'existingCustomerLabel': existingCustomerLabel,
         'prefillVatNumber': prefillVatNumber,
         'isLegalEntity': isLegalEntity,
+        'isSoleProprietor': isSoleProprietor,
+        'consignorType': consignorType.apiName,
         'tradingName': tradingName,
         'title': title,
         'salutation': salutation,
@@ -1416,6 +1721,9 @@ class _WizardDraft {
         'references': references,
         'creditLimit': creditLimit,
         'discount': discount,
+        'commissionRate': commissionRate,
+        'consignmentCountryIso3': consignmentCountryIso3,
+        'consignmentCountryName': consignmentCountryName,
         'selectedAuctions': selectedAuctions
             .map(
               (auction) => {
@@ -1447,12 +1755,21 @@ class _WizardDraft {
     showExistingSearch = _toBool(json['showExistingSearch']) ?? false;
     createContract = _toBool(json['createContract']) ?? false;
     coinsOwnedByConsignor = _toBool(json['coinsOwnedByConsignor']) ?? true;
+    consignorPersonallyDeliversLots =
+        _toBool(json['consignorPersonallyDeliversLots']) ?? true;
     systemReferenceConsignor = _toInt(json['systemReferenceConsignor']) ?? 0;
     systemReferenceCustomer = _toInt(json['systemReferenceCustomer']) ?? 0;
     existingCustomerId = _toInt(json['existingCustomerId']);
     existingCustomerLabel = _stringOrNull(json['existingCustomerLabel']);
     prefillVatNumber = _toString(json['prefillVatNumber']);
-    isLegalEntity = _toBool(json['isLegalEntity']) ?? false;
+    final legacyIsLegalEntity = _toBool(json['isLegalEntity']) ?? false;
+    final legacyIsSoleProprietor = _toBool(json['isSoleProprietor']) ?? false;
+    consignorType = legacyIsSoleProprietor
+        ? ConsignorType.soleProprietor
+        : ConsignorTypeX.fromAny(
+            json['consignorType'],
+            legacyIsLegalEntity: legacyIsLegalEntity,
+          );
     tradingName = _toString(json['tradingName']);
     title = _toInt(json['title']);
     salutation = _toInt(json['salutation']);
@@ -1518,6 +1835,9 @@ class _WizardDraft {
     references = _toString(json['references']);
     creditLimit = _toDouble(json['creditLimit']) ?? 0;
     discount = _toDouble(json['discount']);
+    commissionRate = _toString(json['commissionRate']);
+    consignmentCountryIso3 = _toString(json['consignmentCountryIso3']);
+    consignmentCountryName = _toString(json['consignmentCountryName']);
 
     selectedAuctions = (((json['selectedAuctions'] as List?) ?? const [])
         .whereType<Map>()
@@ -1603,8 +1923,11 @@ class _WizardDraft {
             : existingCustomerId);
     existingCustomerLabel =
         prefill.existingCustomerLabel ?? existingCustomerLabel;
-    isLegalEntity =
-        prefill.isLegalEntity || prefill.tradingName.trim().isNotEmpty;
+    consignorType = prefill.consignorType;
+    if (consignorType == ConsignorType.naturalPerson &&
+        prefill.tradingName.trim().isNotEmpty) {
+      consignorType = ConsignorType.legalEntity;
+    }
     tradingName = prefill.tradingName;
     title = prefill.consignorInfo.title;
     salutation = prefill.consignorInfo.salutation;
@@ -1672,16 +1995,22 @@ class _WizardDraft {
     references = prefill.references;
     creditLimit = prefill.creditLimit;
     discount = prefill.discount;
+    formRevision++;
   }
 
-  void addFiles(List<String> paths, UploadType type) {
+  void addFiles(List<String> paths, UploadType type, {String kind = ''}) {
     final now = DateTime.now().toUtc();
+    final normalizedKind = kind.trim();
     for (final path in paths) {
       final file = File(path);
       final fileName =
           file.uri.pathSegments.isEmpty ? path : file.uri.pathSegments.last;
       if (uploads.any(
-        (item) => item.path == path && item.fileType == type && !item.isDeleted,
+        (item) =>
+            item.path == path &&
+            item.fileType == type &&
+            item.kind == normalizedKind &&
+            !item.isDeleted,
       )) {
         continue;
       }
@@ -1691,11 +2020,80 @@ class _WizardDraft {
               '${type.name}_${now.microsecondsSinceEpoch}_${path.hashCode}',
           fileName: fileName,
           fileType: type,
+          kind: normalizedKind,
           path: path,
           localLastModifiedUtc: now,
         ),
       );
     }
+  }
+
+  void clearBankingDetails() {
+    bankName = '';
+    iban = '';
+    isIban = true;
+    bicSwift = '';
+    clearingNumber = '';
+    routingNumber = '';
+    bankCountryIso3 = '';
+    bankCountryName = '';
+    bankAddressStreet = '';
+    bankAddressStreetNumber = '';
+    bankAddressStreetAddressOptional = '';
+    bankAddressPostalCode = '';
+    bankAddressCity = '';
+    bankAddressAdminRegion = '';
+    bankAddressCountryIso3 = '';
+    bankAddressCountryName = '';
+    beneficiaryFirstName = '';
+    beneficiaryLastName = '';
+    beneficiaryAddressStreet = '';
+    beneficiaryAddressStreetNumber = '';
+    beneficiaryAddressStreetAddressOptional = '';
+    beneficiaryAddressPostalCode = '';
+    beneficiaryAddressCity = '';
+    beneficiaryAddressAdminRegion = '';
+    beneficiaryAddressCountryIso3 = '';
+    beneficiaryAddressCountryName = '';
+  }
+
+  List<String> get missingRequiredFields {
+    final missing = <String>[];
+
+    void requireText(String value, String label) {
+      if (value.trim().isEmpty) missing.add(label);
+    }
+
+    if (usesTradingName) requireText(tradingName, 'Trading name');
+    requireText(firstName, 'First name');
+    requireText(lastName, 'Last name');
+    if (dateOfBirth == null) missing.add('Date of birth');
+    requireText(nationalityIso3, 'Nationality');
+    requireText(phonePrefix, 'Phone prefix');
+    requireText(phone, 'Telephone');
+    requireText(email, 'Email');
+    requireText(street, 'Street');
+    requireText(streetNumber, 'House number');
+    requireText(postalCode, 'Postal code');
+    requireText(city, 'City');
+    requireText(countryIso3, 'Country');
+    if (isLegalEntity) requireText(eori, 'EORI');
+    if (vatLiability) requireText(vatNumber, 'VAT number');
+
+    requireText(iban, 'IBAN / Account Nr.');
+    requireText(bankName, 'Bank name');
+    requireText(bicSwift, 'BIC / SWIFT');
+
+    return missing
+        .map((field) => field.trim())
+        .where((field) => field.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  bool _looksLikeIban(String value) {
+    final compact = value.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    return RegExp(r'^[A-Z]{2}[0-9A-Z]{13,32}$').hasMatch(compact);
   }
 
   Consignor toConsignor() {
@@ -1709,7 +2107,7 @@ class _WizardDraft {
     consignor.paymentOption = PaymentOption.bankTransfer;
     consignor.existingCustomerId = existingCustomerId;
     consignor.existingCustomerLabel = existingCustomerLabel;
-    consignor.isLegalEntity = isLegalEntity;
+    consignor.consignorType = consignorType;
     consignor.tradingName = tradingName.trim();
     consignor.consignorInfo.title = title;
     consignor.consignorInfo.salutation = salutation;
@@ -1737,7 +2135,7 @@ class _WizardDraft {
     consignor.consignorAddress.countryName = countryName;
     consignor.bankingDetails.bankName = bankName.trim();
     consignor.bankingDetails.accountNumber = iban.trim();
-    consignor.bankingDetails.isIban = true;
+    consignor.bankingDetails.isIban = _looksLikeIban(iban);
     consignor.bankingDetails.bicSwift = bicSwift.trim();
     consignor.bankingDetails.clearingNumber = clearingNumber.trim();
     consignor.bankingDetails.routingNumber = routingNumber.trim();
@@ -1791,25 +2189,125 @@ class _WizardDraft {
 
 class _StepIndicator extends StatelessWidget {
   const _StepIndicator({
-    required this.current,
-    required this.total,
-    required this.businessStep,
+    required this.currentIndex,
+    required this.steps,
+    required this.businessStepFor,
+    required this.labelFor,
+    required this.onStepSelected,
   });
 
-  final int current;
-  final int total;
-  final int businessStep;
+  final int currentIndex;
+  final List<_WizardStep> steps;
+  final int Function(_WizardStep step) businessStepFor;
+  final String Function(_WizardStep step) labelFor;
+  final ValueChanged<int>? onStepSelected;
 
   @override
   Widget build(BuildContext context) {
+    final currentStep = steps[currentIndex];
+    final current = currentIndex + 1;
+    final total = steps.length;
+    final palette = context.palette;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Step $businessStep',
-            style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          'Step ${businessStepFor(currentStep)}',
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
         const SizedBox(height: 8),
         LinearProgressIndicator(value: current / total),
+        const SizedBox(height: 10),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var index = 0; index < steps.length; index++) ...[
+                _StepNavigationPill(
+                  label:
+                      '${businessStepFor(steps[index])}. ${labelFor(steps[index])}',
+                  tooltip:
+                      'Step ${businessStepFor(steps[index])}: ${labelFor(steps[index])}',
+                  selected: index == currentIndex,
+                  enabled: onStepSelected != null,
+                  foreground:
+                      index == currentIndex ? Colors.white : palette.text,
+                  background:
+                      index == currentIndex ? palette.brand : palette.card,
+                  borderColor:
+                      index == currentIndex ? palette.brand : palette.border,
+                  onTap: onStepSelected == null
+                      ? null
+                      : () => onStepSelected!(index),
+                ),
+                if (index < steps.length - 1) const SizedBox(width: 8),
+              ],
+            ],
+          ),
+        ),
       ],
+    );
+  }
+}
+
+class _StepNavigationPill extends StatelessWidget {
+  const _StepNavigationPill({
+    required this.label,
+    required this.tooltip,
+    required this.selected,
+    required this.enabled,
+    required this.foreground,
+    required this.background,
+    required this.borderColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final String tooltip;
+  final bool selected;
+  final bool enabled;
+  final Color foreground;
+  final Color background;
+  final Color borderColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveForeground =
+        enabled ? foreground : foreground.withValues(alpha: 0.45);
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: background,
+        shape: StadiumBorder(side: BorderSide(color: borderColor)),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: enabled ? onTap : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selected) ...[
+                  Icon(Icons.check_rounded,
+                      size: 16, color: effectiveForeground),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: effectiveForeground,
+                        fontWeight:
+                            selected ? FontWeight.w800 : FontWeight.w700,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1942,27 +2440,33 @@ class _ConsignorTypeStep extends StatelessWidget {
     required this.onBack,
   });
 
-  final bool initialValue;
-  final ValueChanged<bool> onSelected;
+  final ConsignorType initialValue;
+  final ValueChanged<ConsignorType> onSelected;
   final VoidCallback onBack;
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text('Legal entity or individual?',
+        Text('Who is the consignor?',
             style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
         _OptionCard(
           title: 'Individual (person)',
           icon: Icons.person_outline,
-          onTap: () => onSelected(false),
+          onTap: () => onSelected(ConsignorType.naturalPerson),
+        ),
+        const SizedBox(height: 12),
+        _OptionCard(
+          title: 'Sole proprietor',
+          icon: Icons.storefront_outlined,
+          onTap: () => onSelected(ConsignorType.soleProprietor),
         ),
         const SizedBox(height: 12),
         _OptionCard(
           title: 'Company or legal entity',
           icon: Icons.business_outlined,
-          onTap: () => onSelected(true),
+          onTap: () => onSelected(ConsignorType.legalEntity),
         ),
         const SizedBox(height: 24),
         Align(
@@ -2006,7 +2510,11 @@ class _DetailsStep extends StatelessWidget {
       child: ListView(
         children: [
           Text(
-            draft.isLegalEntity ? 'Company details' : 'Personal details',
+            switch (draft.consignorType) {
+              ConsignorType.legalEntity => 'Company details',
+              ConsignorType.soleProprietor => 'Sole proprietor details',
+              ConsignorType.naturalPerson => 'Personal details',
+            },
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 16),
@@ -2036,6 +2544,10 @@ class _RepresentativeStep extends StatelessWidget {
     required this.salutationOptions,
     required this.correspondenceOptions,
     required this.phonePrefixes,
+    required this.searching,
+    required this.matches,
+    required this.onSearchChanged,
+    required this.onExistingSelected,
     required this.onChanged,
     required this.onLookupIbanPressed,
     required this.onBack,
@@ -2049,6 +2561,10 @@ class _RepresentativeStep extends StatelessWidget {
   final List<_LookupOption<int>> salutationOptions;
   final List<_LookupOption<String>> correspondenceOptions;
   final List<PhonePrefix> phonePrefixes;
+  final bool searching;
+  final List<CustomerLookupResult> matches;
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<CustomerLookupResult> onExistingSelected;
   final VoidCallback onChanged;
   final VoidCallback onLookupIbanPressed;
   final VoidCallback onBack;
@@ -2056,6 +2572,10 @@ class _RepresentativeStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final requiresRepresentativeDetails =
+        ownerDraft.consignorType == ConsignorType.legalEntity ||
+            !ownerDraft.coinsOwnedByConsignor;
+
     return Form(
       key: formKey,
       child: ListView(
@@ -2068,14 +2588,69 @@ class _RepresentativeStep extends StatelessWidget {
             child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('The consignor is also the (beneficial) owner'),
-              value: ownerDraft.coinsOwnedByConsignor,
+              value: ownerDraft.consignorType == ConsignorType.legalEntity
+                  ? false
+                  : ownerDraft.coinsOwnedByConsignor,
+              onChanged: ownerDraft.consignorType == ConsignorType.legalEntity
+                  ? null
+                  : (value) {
+                      ownerDraft.coinsOwnedByConsignor = value;
+                      onChanged();
+                    },
+            ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Delivery',
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                'The consignor personally delivers the lots to Leu Numismatik AG',
+              ),
+              value: ownerDraft.consignorPersonallyDeliversLots,
               onChanged: (value) {
-                ownerDraft.coinsOwnedByConsignor = value;
+                ownerDraft.consignorPersonallyDeliversLots = value;
                 onChanged();
               },
             ),
           ),
-          if (!ownerDraft.coinsOwnedByConsignor) ...[
+          if (requiresRepresentativeDetails) ...[
+            const SizedBox(height: 16),
+            SectionCard(
+              title: 'Find existing Customer',
+              child: Column(
+                children: [
+                  TextField(
+                    decoration: InputDecoration(
+                      labelText: 'Search existing Customer',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: searching
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : null,
+                    ),
+                    onChanged: onSearchChanged,
+                  ),
+                  if (matches.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    for (final match in matches)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(match.displayLabel),
+                        subtitle: Text(match.searchSubtitle),
+                        onTap: () => onExistingSelected(match),
+                      ),
+                  ],
+                ],
+              ),
+            ),
             const SizedBox(height: 16),
             _ConsignorDetailsForm(
               draft: representativeDraft,
@@ -2085,6 +2660,7 @@ class _RepresentativeStep extends StatelessWidget {
               phonePrefixes: phonePrefixes,
               onChanged: onChanged,
               onLookupIbanPressed: onLookupIbanPressed,
+              includeBanking: false,
             ),
           ],
           const SizedBox(height: 20),
@@ -2104,6 +2680,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
     required this.phonePrefixes,
     required this.onChanged,
     required this.onLookupIbanPressed,
+    this.includeBanking = true,
   });
 
   final _WizardDraft draft;
@@ -2113,9 +2690,11 @@ class _ConsignorDetailsForm extends StatelessWidget {
   final List<PhonePrefix> phonePrefixes;
   final VoidCallback onChanged;
   final VoidCallback onLookupIbanPressed;
+  final bool includeBanking;
 
-  String get _keyPrefix =>
-      draft.representativeMode ? 'representative' : 'owner';
+  String get _keyPrefix => draft.representativeMode
+      ? 'representative-${draft.formRevision}'
+      : 'owner-${draft.formRevision}';
 
   PhonePrefix? _selectedPhonePrefix() {
     final byOrigin = draft.phonePrefixOriginId == null
@@ -2135,24 +2714,30 @@ class _ConsignorDetailsForm extends StatelessWidget {
     return Column(
       children: [
         SectionCard(
-          title: draft.isLegalEntity ? 'Company / person' : 'Authorized representative',
+          title: draft.representativeMode
+              ? 'Authorized representative'
+              : draft.usesTradingName
+                  ? 'Company / person'
+                  : 'Person',
           child: _ResponsiveFormGrid(
             children: [
-              if (!draft.representativeMode)
-                _BooleanCard(
-                  key: ValueKey('$_keyPrefix-field-legal-entity'),
-                  title: 'Legal entity',
-                  value: draft.isLegalEntity,
-                  onChanged: (value) {
-                    draft.isLegalEntity = value;
-                    if (value &&
-                        draft.prefillVatNumber.isNotEmpty &&
-                        draft.vatNumber.isEmpty) {
-                      draft.vatNumber = draft.prefillVatNumber;
-                    }
-                    onChanged();
-                  },
-                ),
+              _ConsignorTypeSelector(
+                value: draft.consignorType,
+                includeSoleProprietor: !draft.representativeMode,
+                onChanged: (value) {
+                  draft.consignorType = value;
+                  if (!draft.representativeMode &&
+                      value == ConsignorType.legalEntity) {
+                    draft.coinsOwnedByConsignor = false;
+                  }
+                  if (draft.usesTradingName &&
+                      draft.prefillVatNumber.isNotEmpty &&
+                      draft.vatNumber.isEmpty) {
+                    draft.vatNumber = draft.prefillVatNumber;
+                  }
+                  onChanged();
+                },
+              ),
               SearchableSelectFormField<_LookupOption<int>>(
                 key: ValueKey('$_keyPrefix-field-title'),
                 label: 'Title',
@@ -2189,12 +2774,14 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     FormValidators.requiredText(value, 'Last name'),
                 onChanged: (value) => draft.lastName = value,
               ),
-              if (draft.isLegalEntity)
+              if (draft.usesTradingName)
                 TextFormField(
                   key: ValueKey('$_keyPrefix-field-trading-name'),
                   initialValue: draft.tradingName,
-                  decoration: const InputDecoration(
-                    labelText: 'Company / trading name *',
+                  decoration: InputDecoration(
+                    labelText: draft.isSoleProprietor
+                        ? 'Sole proprietor / trading name *'
+                        : 'Company / trading name *',
                   ),
                   validator: (value) =>
                       FormValidators.requiredText(value, 'Trading name'),
@@ -2426,69 +3013,70 @@ class _ConsignorDetailsForm extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        SectionCard(
-          title: 'Bank transfer details',
-          child: _ResponsiveFormGrid(
-            children: [
-              TextFormField(
-                key: ValueKey('$_keyPrefix-field-iban'),
-                initialValue: draft.iban,
-                decoration: InputDecoration(
-                  labelText: 'IBAN *',
-                  suffixIcon: IconButton(
-                    tooltip: 'Auto-fill bank data',
-                    onPressed: onLookupIbanPressed,
-                    icon: const Icon(Icons.travel_explore_rounded),
+        if (includeBanking) ...[
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Bank transfer details',
+            child: _ResponsiveFormGrid(
+              children: [
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-iban'),
+                  initialValue: draft.iban,
+                  decoration: InputDecoration(
+                    labelText: 'IBAN / Account Nr. *',
+                    suffixIcon: IconButton(
+                      tooltip: 'Auto-fill bank data',
+                      onPressed: onLookupIbanPressed,
+                      icon: const Icon(Icons.travel_explore_rounded),
+                    ),
                   ),
+                  validator: FormValidators.ibanOrAccountNumber,
+                  onChanged: (value) => draft.iban = value,
                 ),
-                validator: FormValidators.iban,
-                onChanged: (value) => draft.iban = value,
-              ),
-              TextFormField(
-                key: ValueKey(
-                  '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
+                TextFormField(
+                  key: ValueKey(
+                    '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
+                  ),
+                  initialValue: draft.bankName,
+                  decoration: const InputDecoration(labelText: 'Bank name *'),
+                  validator: (value) =>
+                      FormValidators.requiredText(value, 'Bank name'),
+                  onChanged: (value) => draft.bankName = value,
                 ),
-                initialValue: draft.bankName,
-                decoration: const InputDecoration(labelText: 'Bank name'),
-                onChanged: (value) => draft.bankName = value,
-              ),
-              TextFormField(
-                key: ValueKey(
-                  '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
+                TextFormField(
+                  key: ValueKey(
+                    '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
+                  ),
+                  initialValue: draft.bicSwift,
+                  decoration: const InputDecoration(labelText: 'BIC / SWIFT *'),
+                  validator: (value) =>
+                      FormValidators.requiredText(value, 'BIC / SWIFT'),
+                  onChanged: (value) => draft.bicSwift = value,
                 ),
-                initialValue: draft.bicSwift,
-                decoration: const InputDecoration(labelText: 'BIC / SWIFT'),
-                onChanged: (value) => draft.bicSwift = value,
-              ),
-              TextFormField(
-                key: ValueKey('$_keyPrefix-field-clearing-number'),
-                initialValue: draft.clearingNumber,
-                decoration: const InputDecoration(labelText: 'Clearing number'),
-                onChanged: (value) => draft.clearingNumber = value,
-              ),
-              TextFormField(
-                key: ValueKey('$_keyPrefix-field-routing-number'),
-                initialValue: draft.routingNumber,
-                decoration: const InputDecoration(labelText: 'Routing number'),
-                onChanged: (value) => draft.routingNumber = value,
-              ),
-              CountryDropdown(
-                key: ValueKey(
-                  '$_keyPrefix-field-bank-country-${draft.bankCountryIso3}',
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-clearing-number'),
+                  initialValue: draft.clearingNumber,
+                  decoration:
+                      const InputDecoration(labelText: 'Clearing number'),
+                  onChanged: (value) => draft.clearingNumber = value,
                 ),
-                label: 'Bank country',
-                value: draft.bankCountryIso3,
-                countries: countries,
-                onChanged: (country) {
-                  draft.bankCountryIso3 = country?.iso3 ?? '';
-                  draft.bankCountryName = country?.name ?? '';
-                  onChanged();
-                },
-              ),
-            ],
+                CountryDropdown(
+                  key: ValueKey(
+                    '$_keyPrefix-field-bank-country-${draft.bankCountryIso3}',
+                  ),
+                  label: 'Bank country',
+                  value: draft.bankCountryIso3,
+                  countries: countries,
+                  onChanged: (country) {
+                    draft.bankCountryIso3 = country?.iso3 ?? '';
+                    draft.bankCountryName = country?.name ?? '';
+                    onChanged();
+                  },
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -2548,7 +3136,9 @@ class _AuctionStep extends StatelessWidget {
     required this.formKey,
     required this.draft,
     required this.auctions,
-    required this.onChanged,
+    required this.countries,
+    required this.onAuctionsChanged,
+    required this.onConsignmentCountryChanged,
     required this.onBack,
     required this.onNext,
   });
@@ -2556,7 +3146,9 @@ class _AuctionStep extends StatelessWidget {
   final GlobalKey<FormState> formKey;
   final _WizardDraft draft;
   final List<AuctionOption> auctions;
-  final ValueChanged<List<AuctionOption>> onChanged;
+  final List<Country> countries;
+  final ValueChanged<List<AuctionOption>> onAuctionsChanged;
+  final ValueChanged<Country?> onConsignmentCountryChanged;
   final VoidCallback onBack;
   final VoidCallback onNext;
 
@@ -2566,15 +3158,49 @@ class _AuctionStep extends StatelessWidget {
       key: formKey,
       child: ListView(
         children: [
-          Text('Choose auctions',
+          Text('Consignment information',
               style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
-          MultiAuctionSelectField(
-            label: 'Auctions *',
-            items: auctions,
-            selected: draft.selectedAuctions,
-            validator: MultiAuctionSelectField.requireSelection,
-            onChanged: onChanged,
+          SectionCard(
+            title: 'Auctions',
+            child: MultiAuctionSelectField(
+              label: 'Auctions *',
+              items: auctions,
+              selected: draft.selectedAuctions,
+              validator: MultiAuctionSelectField.requireSelection,
+              onChanged: onAuctionsChanged,
+            ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Commission rate',
+            child: TextFormField(
+              key: const ValueKey('contract-field-commission-rate'),
+              initialValue: draft.commissionRate,
+              decoration: const InputDecoration(
+                labelText: 'Commission rate *',
+                suffixText: '%',
+              ),
+              validator: (value) =>
+                  FormValidators.percentage(value, 'Commission rate'),
+              onChanged: (value) => draft.commissionRate = value,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Consignment Country',
+            child: CountryDropdown(
+              label: 'Consignment Country',
+              value: draft.consignmentCountryIso3,
+              countries: countries,
+              hintText: 'Search Consignment Country',
+              onChanged: onConsignmentCountryChanged,
+            ),
           ),
           const SizedBox(height: 20),
           _WizardButtons(onBack: onBack, onNext: onNext),
@@ -2648,9 +3274,122 @@ class _FileStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-        TextButton(onPressed: onNext, child: const Text('Skip for now')),
         _WizardButtons(onBack: onBack, onNext: onNext),
       ],
+    );
+  }
+}
+
+class _IdentityFilesStep extends StatelessWidget {
+  const _IdentityFilesStep({
+    required this.ordererFiles,
+    required this.representativeFiles,
+    required this.onAddOrderer,
+    required this.onCaptureOrderer,
+    required this.onAddRepresentative,
+    required this.onCaptureRepresentative,
+    required this.onOpen,
+    required this.onRemove,
+    required this.onBack,
+    required this.onNext,
+  });
+
+  final List<ContractUpload> ordererFiles;
+  final List<ContractUpload> representativeFiles;
+  final VoidCallback onAddOrderer;
+  final VoidCallback onCaptureOrderer;
+  final VoidCallback onAddRepresentative;
+  final VoidCallback onCaptureRepresentative;
+  final ValueChanged<String> onOpen;
+  final ValueChanged<ContractUpload> onRemove;
+  final VoidCallback onBack;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Text('Picture ID', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 16),
+        _FileUploadSection(
+          title: 'Identification of the Consignor',
+          files: ordererFiles,
+          onAdd: onAddOrderer,
+          onCapture: onCaptureOrderer,
+          onOpen: onOpen,
+          onRemove: onRemove,
+        ),
+        const SizedBox(height: 12),
+        _FileUploadSection(
+          title: 'Identification of the Authorized Representative',
+          files: representativeFiles,
+          onAdd: onAddRepresentative,
+          onCapture: onCaptureRepresentative,
+          onOpen: onOpen,
+          onRemove: onRemove,
+        ),
+        const SizedBox(height: 20),
+        _WizardButtons(onBack: onBack, onNext: onNext),
+      ],
+    );
+  }
+}
+
+class _FileUploadSection extends StatelessWidget {
+  const _FileUploadSection({
+    required this.title,
+    required this.files,
+    required this.onAdd,
+    required this.onCapture,
+    required this.onOpen,
+    required this.onRemove,
+  });
+
+  final String title;
+  final List<ContractUpload> files;
+  final VoidCallback onAdd;
+  final VoidCallback onCapture;
+  final ValueChanged<String> onOpen;
+  final ValueChanged<ContractUpload> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: title,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Icons.upload_file_outlined),
+                label: const Text('Add file'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onCapture,
+                icon: const Icon(Icons.photo_camera_outlined),
+                label: const Text('Capture'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (files.isEmpty)
+            const Text('No files selected yet.')
+          else
+            for (final file in files)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _FileTile(
+                  upload: file,
+                  onOpen: onOpen,
+                  onRemove: onRemove,
+                ),
+              ),
+        ],
+      ),
     );
   }
 }
@@ -2682,11 +3421,36 @@ class _FullReviewStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final missingFields = draft.missingRequiredFields;
+    final selectedAuctions = draft.selectedAuctions
+        .map((auction) => auction.displayName)
+        .where((name) => name.trim().isNotEmpty)
+        .join(', ');
+    final commissionRate = draft.commissionRate.trim();
+    final commissionDisplay = commissionRate.isEmpty
+        ? 'Not entered'
+        : commissionRate.endsWith('%')
+            ? commissionRate
+            : '$commissionRate%';
+    final consignmentCountry = draft.consignmentCountryName.trim();
+
     return ListView(
       children: [
         Text('Full review', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
-        _ConsignorReview(draft: draft, onEdit: onEditConsignor),
+        if (missingFields.isNotEmpty) ...[
+          _MissingFieldsReview(
+            missingFields: missingFields,
+            onEdit: onEditConsignor,
+          ),
+          const SizedBox(height: 12),
+        ],
+        _ConsignorReview(
+          draft: draft,
+          onEdit: onEditConsignor,
+          editLabel:
+              missingFields.isEmpty ? 'Edit' : 'Complete Profile Details',
+        ),
         if (representative != null) ...[
           const SizedBox(height: 12),
           SectionCard(
@@ -2696,9 +3460,24 @@ class _FullReviewStep extends StatelessWidget {
         ],
         const SizedBox(height: 12),
         SectionCard(
-          title: 'Auctions',
-          child:
-              Text(draft.selectedAuctions.map((e) => e.displayName).join(', ')),
+          title: 'Consignment Information',
+          child: _ReviewLines(
+            lines: [
+              _ReviewLine(
+                'Auctions',
+                selectedAuctions.isEmpty
+                    ? 'No auctions selected'
+                    : selectedAuctions,
+              ),
+              _ReviewLine('Commission rate', commissionDisplay),
+              _ReviewLine(
+                'Consignment country',
+                consignmentCountry.isEmpty
+                    ? 'Not selected'
+                    : consignmentCountry,
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 12),
         SectionCard(
@@ -2826,7 +3605,7 @@ class _ConsignorReviewEditDialogState
                 children: [
                   Expanded(
                     child: Text(
-                      widget.draft.isLegalEntity
+                      widget.draft.usesTradingName
                           ? 'Edit company details'
                           : 'Edit consignor details',
                       style: Theme.of(context).textTheme.headlineSmall,
@@ -3171,11 +3950,92 @@ class _SignaturePainter extends CustomPainter {
       oldDelegate.strokes != strokes;
 }
 
+class _MissingFieldsReview extends StatelessWidget {
+  const _MissingFieldsReview({
+    required this.missingFields,
+    required this.onEdit,
+  });
+
+  final List<String> missingFields;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final visibleFields = missingFields
+        .map((field) => field.trim())
+        .where((field) => field.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+
+    return SectionCard(
+      title: 'Missing fields',
+      trailing: OutlinedButton.icon(
+        onPressed: onEdit,
+        icon: const Icon(Icons.edit_outlined),
+        label: const Text('Complete Profile Details'),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (visibleFields.isEmpty)
+            Text(
+              'No missing required fields.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: palette.textMuted),
+            )
+          else
+            for (final field in visibleFields)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: palette.warning.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: palette.warning.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.error_outline_rounded,
+                        size: 18,
+                        color: palette.warning,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        field,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: palette.text,
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ConsignorReview extends StatelessWidget {
-  const _ConsignorReview({required this.draft, this.onEdit});
+  const _ConsignorReview({
+    required this.draft,
+    this.onEdit,
+    this.editLabel = 'Edit',
+  });
 
   final _WizardDraft draft;
   final VoidCallback? onEdit;
+  final String editLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -3186,7 +4046,7 @@ class _ConsignorReview extends StatelessWidget {
           : OutlinedButton.icon(
               onPressed: onEdit,
               icon: const Icon(Icons.edit_outlined),
-              label: const Text('Edit'),
+              label: Text(editLabel),
             ),
       child: _ReviewLines(lines: draft.reviewLines),
     );
@@ -3251,9 +4111,15 @@ extension _WizardDraftReview on _WizardDraft {
 
   List<_ReviewLine> get reviewLines => [
         _ReviewLine(
-            'Type', isLegalEntity ? 'Company or legal entity' : 'Individual'),
+          'Type',
+          switch (consignorType) {
+            ConsignorType.naturalPerson => 'Individual',
+            ConsignorType.soleProprietor => 'Sole proprietor',
+            ConsignorType.legalEntity => 'Company or legal entity',
+          },
+        ),
         _ReviewLine(
-            'Name', isLegalEntity ? tradingName : '$firstName $lastName'),
+            'Name', usesTradingName ? tradingName : '$firstName $lastName'),
         _ReviewLine('Title', _titleLabel),
         _ReviewLine('Salutation', _salutationLabel),
         _ReviewLine(
@@ -3278,7 +4144,7 @@ extension _WizardDraftReview on _WizardDraft {
         ),
         _ReviewLine('VAT number', vatNumber),
         _ReviewLine('EORI', eori),
-        _ReviewLine(isIban ? 'IBAN' : 'Account number', iban),
+        _ReviewLine('IBAN / Account Nr.', iban),
         _ReviewLine('BIC / SWIFT', bicSwift),
         _ReviewLine('Clearing number', clearingNumber),
         _ReviewLine('Routing number', routingNumber),
@@ -3407,6 +4273,55 @@ class _ResponsiveFormGrid extends StatelessWidget {
               .toList(growable: false),
         );
       },
+    );
+  }
+}
+
+class _ConsignorTypeSelector extends StatelessWidget {
+  const _ConsignorTypeSelector({
+    required this.value,
+    required this.includeSoleProprietor,
+    required this.onChanged,
+  });
+
+  final ConsignorType value;
+  final bool includeSoleProprietor;
+  final ValueChanged<ConsignorType> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = <ConsignorType>[
+      ConsignorType.naturalPerson,
+      if (includeSoleProprietor) ConsignorType.soleProprietor,
+      ConsignorType.legalEntity,
+    ];
+    final selected =
+        options.contains(value) ? value : ConsignorType.naturalPerson;
+
+    return SegmentedButton<ConsignorType>(
+      segments: [
+        for (final option in options)
+          ButtonSegment<ConsignorType>(
+            value: option,
+            icon: Icon(
+              switch (option) {
+                ConsignorType.naturalPerson => Icons.person_outline,
+                ConsignorType.soleProprietor => Icons.storefront_outlined,
+                ConsignorType.legalEntity => Icons.business_outlined,
+              },
+            ),
+            label: Text(
+              switch (option) {
+                ConsignorType.naturalPerson => 'Individual',
+                ConsignorType.soleProprietor => 'Sole proprietor',
+                ConsignorType.legalEntity => 'Legal entity',
+              },
+            ),
+          ),
+      ],
+      selected: {selected},
+      showSelectedIcon: false,
+      onSelectionChanged: (selection) => onChanged(selection.single),
     );
   }
 }

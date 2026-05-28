@@ -20,6 +20,10 @@ import '../widgets/page_header.dart';
 import '../widgets/multi_auction_select_field.dart';
 import '../widgets/section_card.dart';
 
+const _unsignedContractPrefix = 'PROV-';
+const _signedContractPrefix = 'COR-';
+const _legacyProvisionalContractPrefix = 'Prov-';
+
 enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving }
 
 class ContractEditorScreen extends StatefulWidget {
@@ -101,7 +105,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   int? get _backendConsignorId {
-    final consignor = context.read<AppState>().consignorById(widget.consignorId);
+    final consignor =
+        context.read<AppState>().consignorById(widget.consignorId);
     if (consignor != null && consignor.systemReferenceConsignor > 0) {
       return consignor.systemReferenceConsignor;
     }
@@ -210,11 +215,13 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   Future<void> _updateAuctions(
     List<AuctionOption> selected,
   ) async {
-    final auctionIds = selected.map((item) => item.auctionId).toList(growable: false);
-    final displayNames = selected.map((item) => item.displayName).toList(growable: false);
+    final auctionIds =
+        selected.map((item) => item.auctionId).toList(growable: false);
+    final displayNames =
+        selected.map((item) => item.displayName).toList(growable: false);
     final nextId = auctionIds.isEmpty
         ? _record.id
-         : '${widget.consignorId}_${auctionIds.join('_')}';
+        : '${widget.consignorId}_${auctionIds.join('_')}';
 
     setState(() {
       _record = _record.copyWith(
@@ -309,6 +316,43 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     }
   }
 
+  String _pdfFileNameForCurrentStatus() {
+    final reference = _record.systemReferenceContract > 0
+        ? _record.systemReferenceContract.toString()
+        : _record.id;
+    final fallback = 'consignor_contract_$reference.pdf';
+    final rawName = _record.pdfName.trim();
+    final current = rawName.isEmpty || rawName == 'consignor_contract.pdf'
+        ? fallback
+        : rawName;
+    final withoutPrefix = _withoutContractPrefix(current);
+
+    return _record.syncStatus == RecordSyncStatus.finalized
+        ? '$_signedContractPrefix$withoutPrefix'
+        : '$_unsignedContractPrefix$withoutPrefix';
+  }
+
+  String _withoutContractPrefix(String value) {
+    var current = value.trim();
+    var changed = true;
+    while (changed) {
+      changed = false;
+      final lower = current.toLowerCase();
+      for (final prefix in const [
+        _unsignedContractPrefix,
+        _signedContractPrefix,
+        _legacyProvisionalContractPrefix,
+      ]) {
+        if (lower.startsWith(prefix.toLowerCase())) {
+          current = current.substring(prefix.length);
+          changed = true;
+          break;
+        }
+      }
+    }
+    return current;
+  }
+
   Future<void> _generatePdf() async {
     final appState = context.read<AppState>();
     final consignor = appState.consignorById(widget.consignorId);
@@ -316,17 +360,15 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     if (consignor == null) return;
 
     if (_record.auctionId == null) {
-      _showSnack('Select at least one auction before generating the contract PDF.');
+      _showSnack(
+          'Select at least one auction before generating the contract PDF.');
       return;
     }
 
     setState(() => _busy = true);
     try {
-      final output = await _fileService.getSuggestedPdfPath(
-        _record.pdfName.trim().isEmpty
-            ? 'consignor_contract.pdf'
-            : _record.pdfName.trim(),
-      );
+      final output = await _fileService
+          .getSuggestedPdfPath(_pdfFileNameForCurrentStatus());
 
       final file = await _pdfService.buildContractPdf(
         apiService: ApiService(appState.settings, appState.token),
@@ -338,6 +380,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       setState(() {
         _record = _record.copyWith(
           pdfPath: file.path,
+          pdfName: file.uri.pathSegments.isEmpty
+              ? _pdfFileNameForCurrentStatus()
+              : file.uri.pathSegments.last,
           lastModifiedUtc: DateTime.now().toUtc(),
         );
       });
@@ -455,73 +500,73 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     String? overridePath,
     String? overrideFileName,
   }) async {
-  final auctionId = _record.auctionId;
+    final auctionId = _record.auctionId;
 
-  if (auctionId == null) {
-    _showSnack('Select at least one auction before replacing files.');
-    return;
-  }
-
-  String replacementPath;
-
-  if (overridePath != null && overridePath.trim().isNotEmpty) {
-    replacementPath = overridePath;
-  } else {
-    final selectedPaths = await _fileService.pickFiles(
-      imagesOnly: target.fileType != UploadType.agreement,
-      allowMultiple: false,
-    );
-
-    if (selectedPaths.isEmpty) {
+    if (auctionId == null) {
+      _showSnack('Select at least one auction before replacing files.');
       return;
     }
 
-    final importedPaths = await _fileService.importFilesForUpload(
-      selectedPaths,
-      target.fileType,
-    );
+    String replacementPath;
 
-    if (importedPaths.isEmpty) {
-      return;
+    if (overridePath != null && overridePath.trim().isNotEmpty) {
+      replacementPath = overridePath;
+    } else {
+      final selectedPaths = await _fileService.pickFiles(
+        imagesOnly: target.fileType != UploadType.agreement,
+        allowMultiple: false,
+      );
+
+      if (selectedPaths.isEmpty) {
+        return;
+      }
+
+      final importedPaths = await _fileService.importFilesForUpload(
+        selectedPaths,
+        target.fileType,
+      );
+
+      if (importedPaths.isEmpty) {
+        return;
+      }
+
+      replacementPath = importedPaths.first;
     }
 
-    replacementPath = importedPaths.first;
-  }
+    final nowUtc = DateTime.now().toUtc();
+    final replacementFile = File(replacementPath);
 
-  final nowUtc = DateTime.now().toUtc();
-  final replacementFile = File(replacementPath);
+    final fileName = overrideFileName?.trim().isNotEmpty == true
+        ? overrideFileName!.trim()
+        : replacementFile.uri.pathSegments.isEmpty
+            ? replacementPath
+            : replacementFile.uri.pathSegments.last;
 
-  final fileName = overrideFileName?.trim().isNotEmpty == true
-      ? overrideFileName!.trim()
-      : replacementFile.uri.pathSegments.isEmpty
-          ? replacementPath
-          : replacementFile.uri.pathSegments.last;
-
-  final updatedLocal = target.copyWith(
-    auctionId: auctionId,
-    fileName: fileName,
-    path: replacementPath,
-    localLastModifiedUtc: nowUtc,
-    isDeleted: false,
-  );
-
-  setState(() {
-    _record = _record.copyWith(
-      uploads: _record.uploads
-          .map(
-            (upload) =>
-                identical(upload, target) || upload.localId == target.localId
-                    ? updatedLocal
-                    : upload,
-          )
-          .toList(),
-      syncStatus: _record.hasRemoteReference
-          ? RecordSyncStatus.pendingSync
-          : RecordSyncStatus.draft,
-      lastModifiedUtc: nowUtc,
+    final updatedLocal = target.copyWith(
+      auctionId: auctionId,
+      fileName: fileName,
+      path: replacementPath,
+      localLastModifiedUtc: nowUtc,
+      isDeleted: false,
     );
-  });
-}
+
+    setState(() {
+      _record = _record.copyWith(
+        uploads: _record.uploads
+            .map(
+              (upload) =>
+                  identical(upload, target) || upload.localId == target.localId
+                      ? updatedLocal
+                      : upload,
+            )
+            .toList(),
+        syncStatus: _record.hasRemoteReference
+            ? RecordSyncStatus.pendingSync
+            : RecordSyncStatus.draft,
+        lastModifiedUtc: nowUtc,
+      );
+    });
+  }
 
   Future<void> _deleteUpload(ContractUpload upload) async {
     final nowUtc = DateTime.now().toUtc();

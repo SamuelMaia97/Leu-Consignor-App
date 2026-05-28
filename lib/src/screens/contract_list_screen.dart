@@ -105,12 +105,11 @@ class _ContractListScreenState extends State<ContractListScreen> {
 
     if (!mounted) return;
 
-    final message =
-        updated != null && updated.syncStatus == RecordSyncStatus.synced
-            ? 'Contract synced successfully.'
-            : (updated?.syncErrorMessage ??
-                context.read<AppState>().lastMessage ??
-                'Contract sync finished.');
+    final message = updated != null && updated.synced
+        ? 'Contract synced successfully.'
+        : (updated?.syncErrorMessage ??
+            context.read<AppState>().lastMessage ??
+            'Contract sync finished.');
 
     ScaffoldMessenger.of(
       context,
@@ -266,15 +265,13 @@ class _ContractListScreenState extends State<ContractListScreen> {
           final summary = _ContractListSummary.from(
             contracts: state.contracts,
             consignorsById: {
-              for (final consignor in state.consignors)
-                consignor.id: consignor,
+              for (final consignor in state.consignors) consignor.id: consignor,
             },
             query: _query,
             quickFilter: _quickFilter,
             selectedConsignorId: _selectedConsignorId,
             selectedAuctionId: _selectedAuctionId,
           );
-
 
           return CustomScrollView(
             slivers: [
@@ -392,8 +389,8 @@ class _ContractListScreenState extends State<ContractListScreen> {
                                   label: 'Consignor',
                                   items: consignorOptions,
                                   itemLabel: (item) => item.displayName,
-                                  initialValue:
-                                      _selectedConsignorOption(consignorOptions),
+                                  initialValue: _selectedConsignorOption(
+                                      consignorOptions),
                                   onChanged: (value) {
                                     setState(() {
                                       _selectedConsignorId = value?.consignorId;
@@ -455,15 +452,15 @@ class _ContractListScreenState extends State<ContractListScreen> {
                                 label: 'Synced',
                                 selected:
                                     _quickFilter == _ContractQuickFilter.synced,
-                                onSelected: () =>
-                                    _setQuickFilter(_ContractQuickFilter.synced),
+                                onSelected: () => _setQuickFilter(
+                                    _ContractQuickFilter.synced),
                               ),
                               _QuickFilterChip(
                                 label: 'Failed',
                                 selected:
                                     _quickFilter == _ContractQuickFilter.failed,
-                                onSelected: () =>
-                                    _setQuickFilter(_ContractQuickFilter.failed),
+                                onSelected: () => _setQuickFilter(
+                                    _ContractQuickFilter.failed),
                               ),
                               OutlinedButton.icon(
                                 onPressed: summary.hasActiveFilters
@@ -514,8 +511,7 @@ class _ContractListScreenState extends State<ContractListScreen> {
                 SliverList(
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final contract = summary.visibleItems[index];
-                    final isSyncing =
-                        contract.auctionId != null &&
+                    final isSyncing = contract.auctionId != null &&
                         state.isSyncingContract(
                           contract.consignorId,
                           contract.auctionId!,
@@ -533,18 +529,21 @@ class _ContractListScreenState extends State<ContractListScreen> {
                         isSyncing: isSyncing,
                         onOpen: () => _openContract(contract),
                         onSync: contract.auctionId != null &&
-                                _ContractListSummary._effectiveStatus(contract) !=
-                                    RecordSyncStatus.synced
+                                _ContractListSummary._effectiveStatus(contract)
+                                    .needsSync
                             ? () => _syncContract(contract)
                             : null,
                         localAction: _localDraftActionFor(contract),
                         onDeleteDraft: () => _deleteLocalDraft(contract),
-                        onViewError: _ContractListSummary._effectiveStatus(contract) ==
-                                    RecordSyncStatus.syncFailed &&
-                                (contract.syncErrorMessage?.trim().isNotEmpty ??
-                                    false)
-                            ? () => _showSyncError(contract)
-                            : null,
+                        onViewError:
+                            _ContractListSummary._effectiveStatus(contract) ==
+                                        RecordSyncStatus.syncFailed &&
+                                    (contract.syncErrorMessage
+                                            ?.trim()
+                                            .isNotEmpty ??
+                                        false)
+                                ? () => _showSyncError(contract)
+                                : null,
                       ),
                     );
                   }, childCount: summary.visibleItems.length),
@@ -703,7 +702,8 @@ class _ContractListSummary {
           contract.consignorId != selectedConsignorId) {
         return false;
       }
-      if (selectedAuctionId != null && contract.auctionId != selectedAuctionId) {
+      if (selectedAuctionId != null &&
+          contract.auctionId != selectedAuctionId) {
         return false;
       }
       return true;
@@ -724,6 +724,7 @@ class _ContractListSummary {
 
       switch (status) {
         case RecordSyncStatus.synced:
+        case RecordSyncStatus.finalized:
           syncedCount++;
           break;
         case RecordSyncStatus.pendingSync:
@@ -776,7 +777,8 @@ class _ContractListSummary {
       case _ContractQuickFilter.pendingSync:
         return status == RecordSyncStatus.pendingSync;
       case _ContractQuickFilter.synced:
-        return status == RecordSyncStatus.synced;
+        return status == RecordSyncStatus.synced ||
+            status == RecordSyncStatus.finalized;
       case _ContractQuickFilter.failed:
         return status == RecordSyncStatus.syncFailed;
     }
@@ -785,6 +787,12 @@ class _ContractListSummary {
   static RecordSyncStatus _effectiveStatus(ContractRecord contract) {
     if (contract.syncStatus == RecordSyncStatus.syncFailed) {
       return RecordSyncStatus.syncFailed;
+    }
+
+    if (contract.syncStatus == RecordSyncStatus.finalized &&
+        !contract.hasLocalChanges &&
+        contract.auctionId != null) {
+      return RecordSyncStatus.finalized;
     }
 
     if (contract.syncStatus == RecordSyncStatus.draft ||
@@ -800,7 +808,8 @@ class _ContractListSummary {
     return RecordSyncStatus.synced;
   }
 
-  static String _buildSearchText(ContractRecord contract, Consignor? consignor) {
+  static String _buildSearchText(
+      ContractRecord contract, Consignor? consignor) {
     final fileNames = contract.uploads
         .where((upload) => !upload.isDeleted)
         .map((upload) => upload.fileName)
@@ -825,6 +834,8 @@ class _ContractListSummary {
         return 'pending sync pending unsynced not synced';
       case RecordSyncStatus.synced:
         return 'synced';
+      case RecordSyncStatus.finalized:
+        return 'finalized final synced';
       case RecordSyncStatus.syncFailed:
         return 'sync failed failed error';
     }
@@ -916,7 +927,8 @@ class _ContractListRow extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   if (status == RecordSyncStatus.syncFailed &&
-                      (contract.syncErrorMessage?.trim().isNotEmpty ?? false)) ...[
+                      (contract.syncErrorMessage?.trim().isNotEmpty ??
+                          false)) ...[
                     const SizedBox(height: 10),
                     Text(
                       contract.syncErrorMessage!,
@@ -1000,6 +1012,8 @@ class _ContractListRow extends StatelessWidget {
         return 'Pending sync';
       case RecordSyncStatus.synced:
         return 'Synced';
+      case RecordSyncStatus.finalized:
+        return 'Finalized';
       case RecordSyncStatus.syncFailed:
         return 'Failed';
     }
@@ -1008,6 +1022,7 @@ class _ContractListRow extends StatelessWidget {
   static StatusBadgeTone _statusTone(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return StatusBadgeTone.success;
       case RecordSyncStatus.pendingSync:
         return StatusBadgeTone.info;
@@ -1021,6 +1036,7 @@ class _ContractListRow extends StatelessWidget {
   static IconData _statusIcon(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return Icons.sync_alt;
       case RecordSyncStatus.pendingSync:
         return Icons.cloud_upload_outlined;

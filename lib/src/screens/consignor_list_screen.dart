@@ -122,12 +122,11 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
 
     if (!mounted) return;
 
-    final message =
-        updated != null && updated.syncStatus == RecordSyncStatus.synced
-            ? 'Consignor synced successfully.'
-            : (updated?.syncErrorMessage ??
-                context.read<AppState>().lastMessage ??
-                'Draft sync finished.');
+    final message = updated != null && updated.synced
+        ? 'Consignor synced successfully.'
+        : (updated?.syncErrorMessage ??
+            context.read<AppState>().lastMessage ??
+            'Draft sync finished.');
 
     ScaffoldMessenger.of(
       context,
@@ -531,6 +530,7 @@ class _ConsignorListSummary {
     for (final consignor in consignors) {
       switch (consignor.syncStatus) {
         case RecordSyncStatus.synced:
+        case RecordSyncStatus.finalized:
           syncedCount++;
           break;
         case RecordSyncStatus.pendingSync:
@@ -576,7 +576,8 @@ class _ConsignorListSummary {
       case _ConsignorQuickFilter.pendingSync:
         return consignor.syncStatus == RecordSyncStatus.pendingSync;
       case _ConsignorQuickFilter.synced:
-        return consignor.syncStatus == RecordSyncStatus.synced;
+        return consignor.syncStatus == RecordSyncStatus.synced ||
+            consignor.syncStatus == RecordSyncStatus.finalized;
       case _ConsignorQuickFilter.failed:
         return consignor.syncStatus == RecordSyncStatus.syncFailed;
     }
@@ -603,6 +604,8 @@ class _ConsignorListSummary {
         return 'pending sync pending unsynced not synced';
       case RecordSyncStatus.synced:
         return 'synced synced profile';
+      case RecordSyncStatus.finalized:
+        return 'finalized final synced profile';
       case RecordSyncStatus.syncFailed:
         return 'sync failed failed error';
     }
@@ -825,6 +828,8 @@ class _ConsignorRow extends StatelessWidget {
         return 'Pending sync';
       case RecordSyncStatus.synced:
         return 'Synced';
+      case RecordSyncStatus.finalized:
+        return 'Finalized';
       case RecordSyncStatus.syncFailed:
         return 'Sync failed';
     }
@@ -833,6 +838,7 @@ class _ConsignorRow extends StatelessWidget {
   static StatusBadgeTone _statusTone(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return StatusBadgeTone.success;
       case RecordSyncStatus.pendingSync:
         return StatusBadgeTone.info;
@@ -846,6 +852,7 @@ class _ConsignorRow extends StatelessWidget {
   static IconData _statusIcon(RecordSyncStatus status) {
     switch (status) {
       case RecordSyncStatus.synced:
+      case RecordSyncStatus.finalized:
         return Icons.cloud_done_outlined;
       case RecordSyncStatus.pendingSync:
         return Icons.cloud_upload_outlined;
