@@ -10,11 +10,15 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
     required List<AuctionOption> selected,
     required ValueChanged<List<AuctionOption>> onChanged,
     String? hintText,
+    String Function(AuctionOption auction)? itemLabel,
     super.validator,
     bool enabled = true,
   }) : super(
           initialValue: selected,
           builder: (field) {
+            String labelFor(AuctionOption auction) =>
+                itemLabel?.call(auction) ?? auction.displayName;
+
             Future<void> openPicker() async {
               if (!enabled) return;
 
@@ -31,7 +35,7 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
                   return StatefulBuilder(
                     builder: (context, setSheetState) {
                       final filtered = items.where((item) {
-                        return item.displayName
+                        return labelFor(item)
                             .toLowerCase()
                             .contains(query.toLowerCase());
                       }).toList(growable: false);
@@ -76,7 +80,7 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
                                                 .contains(item.auctionId);
                                             return CheckboxListTile(
                                               value: checked,
-                                              title: Text(item.displayName),
+                                              title: Text(labelFor(item)),
                                               controlAffinity:
                                                   ListTileControlAffinity.leading,
                                               onChanged: (value) {
@@ -162,7 +166,7 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
                     children: value
                         .map(
                           (auction) => FilterChip(
-                            label: Text(auction.displayName),
+                            label: Text(labelFor(auction)),
                             labelStyle: TextStyle(
                               color: Theme.of(field.context).colorScheme.onSurface,
                               fontWeight: FontWeight.w600,

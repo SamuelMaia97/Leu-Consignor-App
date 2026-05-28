@@ -1260,7 +1260,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             key: const ValueKey(
                               'editor-field-world-coins-subscribed',
                             ),
-                            title: 'World coins subscribed',
+                            title: 'Medieval and Modern Coins',
                             subtitle: 'Collector preference.',
                             value: _model.worldCoinsSubscribed,
                             onChanged: (value) => setState(
