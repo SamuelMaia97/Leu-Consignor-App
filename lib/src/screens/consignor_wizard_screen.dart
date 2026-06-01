@@ -32,6 +32,11 @@ import '../widgets/section_card.dart';
 
 const _ordererIdKind = 'NaturalPersonId';
 const _representativeIdKind = 'RepresentativeId';
+const _ordererIdValidationReportKind = 'NaturalPersonIdValidationReport';
+const _representativeIdValidationReportKind =
+    'RepresentativeIdValidationReport';
+const _pentaOutputRootPath = r'C:\CoinContracts';
+const _pentaScanTimeout = Duration(minutes: 2);
 const _unsignedContractPrefix = 'PROV-';
 const _signedContractPrefix = 'COR-';
 const _legacyProvisionalContractPrefix = 'Prov-';
@@ -825,6 +830,282 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     setState(() => _draft.addFiles(paths, type, kind: kind));
   }
 
+  Future<void> _scanWithPenta(String kind) async {
+    final outputRoot = Directory(_pentaOutputRootPath);
+    if (!await outputRoot.exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Penta scan folder not found: C:\\CoinContracts'),
+        ),
+      );
+      return;
+    }
+
+    final startedAt = DateTime.now();
+    final knownOutputFolders = await _pentaOutputFolders(outputRoot);
+
+    if (!mounted) return;
+    final scanFiles = await showDialog<_PentaScanFiles>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _PentaScanDialog(
+        scan: (isCancelled, onStatusChanged) => _waitForPentaScanFiles(
+          outputRoot: outputRoot,
+          startedAt: startedAt,
+          knownOutputFolders: knownOutputFolders,
+          isCancelled: isCancelled,
+          onStatusChanged: onStatusChanged,
+        ),
+      ),
+    );
+
+    if (!mounted || scanFiles == null) {
+      return;
+    }
+
+    final importedImagePaths = await _fileService.importFilesForUpload(
+      [scanFiles.visibleImagePath],
+      UploadType.passport,
+    );
+    final importedReportPaths = scanFiles.reportPdfPath == null
+        ? const <String>[]
+        : await _fileService.importFilesForUpload(
+            [scanFiles.reportPdfPath!],
+            UploadType.passport,
+          );
+    final importedPaths = [...importedImagePaths, ...importedReportPaths];
+
+    if (importedPaths.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No Penta scan files could be imported.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _draft.addFiles(importedImagePaths, UploadType.passport, kind: kind);
+      _draft.addFiles(
+        importedReportPaths,
+        UploadType.passport,
+        kind: _pentaValidationReportKindFor(kind),
+      );
+    });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Penta scan imported: ${importedPaths.length} file${importedPaths.length == 1 ? '' : 's'}.',
+        ),
+      ),
+    );
+  }
+
+  String _pentaValidationReportKindFor(String kind) {
+    return kind == _representativeIdKind
+        ? _representativeIdValidationReportKind
+        : _ordererIdValidationReportKind;
+  }
+
+  Future<Set<String>> _pentaOutputFolders(Directory outputRoot) async {
+    final folders = await outputRoot
+        .list()
+        .where((entity) =>
+            entity is Directory && _isPentaOutputFolder(entity.path))
+        .map((entity) => entity.path)
+        .toList();
+    return folders.toSet();
+  }
+
+  Future<_PentaScanFiles> _waitForPentaScanFiles({
+    required Directory outputRoot,
+    required DateTime startedAt,
+    required Set<String> knownOutputFolders,
+    required bool Function() isCancelled,
+    required ValueChanged<String> onStatusChanged,
+  }) async {
+    final deadline = startedAt.add(_pentaScanTimeout);
+
+    while (DateTime.now().isBefore(deadline)) {
+      if (isCancelled()) {
+        throw const _PentaScanCancelledException();
+      }
+
+      final folder = await _latestNewPentaOutputFolder(
+        outputRoot: outputRoot,
+        startedAt: startedAt,
+        knownOutputFolders: knownOutputFolders,
+      );
+
+      if (folder == null) {
+        onStatusChanged('Waiting for scan output...');
+        await Future<void>.delayed(const Duration(seconds: 1));
+        continue;
+      }
+
+      onStatusChanged('Scan output detected. Waiting for files...');
+      final stableFiles = await _waitForStablePentaFiles(
+        folder,
+        isCancelled: isCancelled,
+      );
+      final scanFiles = _selectPentaScanFiles(stableFiles);
+      if (scanFiles != null) {
+        return scanFiles;
+      }
+
+      onStatusChanged('Waiting for visible image and report...');
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+
+    throw const _PentaScanTimeoutException();
+  }
+
+  Future<Directory?> _latestNewPentaOutputFolder({
+    required Directory outputRoot,
+    required DateTime startedAt,
+    required Set<String> knownOutputFolders,
+  }) async {
+    final threshold = startedAt.subtract(const Duration(seconds: 2));
+    final folders = await outputRoot
+        .list()
+        .where((entity) =>
+            entity is Directory &&
+            _isPentaOutputFolder(entity.path) &&
+            !knownOutputFolders.contains(entity.path))
+        .cast<Directory>()
+        .toList();
+
+    final candidates = <Directory>[];
+    for (final folder in folders) {
+      final stat = await folder.stat();
+      if (stat.modified.isAfter(threshold)) {
+        candidates.add(folder);
+      }
+    }
+
+    candidates.sort((a, b) {
+      final aName = _fileNameFromPath(a.path);
+      final bName = _fileNameFromPath(b.path);
+      return bName.compareTo(aName);
+    });
+
+    return candidates.isEmpty ? null : candidates.first;
+  }
+
+  Future<List<File>> _waitForStablePentaFiles(
+    Directory folder, {
+    required bool Function() isCancelled,
+  }) async {
+    Map<String, int> previousSnapshot = const {};
+    var stableCycles = 0;
+
+    for (var attempt = 0; attempt < 20; attempt++) {
+      if (isCancelled()) {
+        throw const _PentaScanCancelledException();
+      }
+
+      final files = await folder
+          .list(recursive: true)
+          .where((entity) => entity is File)
+          .cast<File>()
+          .toList();
+      final snapshot = <String, int>{};
+
+      for (final file in files) {
+        if (!await file.exists()) continue;
+        snapshot[file.path] = await file.length();
+      }
+
+      if (snapshot.isNotEmpty && _sameFileSnapshot(snapshot, previousSnapshot)) {
+        stableCycles++;
+        if (stableCycles >= 2) {
+          return files;
+        }
+      } else {
+        stableCycles = 0;
+      }
+
+      previousSnapshot = snapshot;
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    }
+
+    return folder
+        .list(recursive: true)
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+  }
+
+  _PentaScanFiles? _selectPentaScanFiles(List<File> files) {
+    if (files.isEmpty) return null;
+
+    File? visibleImage;
+    File? reportPdf;
+
+    for (final file in files) {
+      final name = _fileNameFromPath(file.path).toLowerCase();
+      if (name == 'page1_visible.jpg') {
+        visibleImage = file;
+      } else if (name.endsWith('.pdf') && name.startsWith('report_')) {
+        reportPdf = file;
+      }
+    }
+
+    if (visibleImage == null) {
+      final imageFiles = files.where(_isImageFile).toList()
+        ..sort((a, b) {
+          final aName = _fileNameFromPath(a.path).toLowerCase();
+          final bName = _fileNameFromPath(b.path).toLowerCase();
+          final aScore =
+              aName.contains('visible') && !aName.contains('portrait') ? 0 : 1;
+          final bScore =
+              bName.contains('visible') && !bName.contains('portrait') ? 0 : 1;
+          return aScore.compareTo(bScore);
+        });
+
+      if (imageFiles.isNotEmpty) {
+        visibleImage = imageFiles.first;
+      }
+    }
+
+    if (visibleImage == null) {
+      return null;
+    }
+
+    return _PentaScanFiles(
+      visibleImagePath: visibleImage.path,
+      reportPdfPath: reportPdf?.path,
+    );
+  }
+
+  bool _isPentaOutputFolder(String path) {
+    return _fileNameFromPath(path).startsWith('Output_');
+  }
+
+  bool _isImageFile(File file) {
+    final name = _fileNameFromPath(file.path).toLowerCase();
+    return name.endsWith('.jpg') ||
+        name.endsWith('.jpeg') ||
+        name.endsWith('.png') ||
+        name.endsWith('.bmp');
+  }
+
+  bool _sameFileSnapshot(Map<String, int> left, Map<String, int> right) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  String _fileNameFromPath(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final parts = normalized.split('/');
+    return parts.isEmpty ? path : parts.last;
+  }
+
   String _filePrefixFor(UploadType type, String kind) {
     if (type == UploadType.passport) {
       return kind == _representativeIdKind ? 'representative_id' : 'orderer_id';
@@ -1413,6 +1694,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             fromCamera: true,
             kind: _ordererIdKind,
           ),
+          onPentaScanOrderer: () => _scanWithPenta(_ordererIdKind),
           onAddRepresentative: () =>
               _addFiles(UploadType.passport, kind: _representativeIdKind),
           onCaptureRepresentative: () => _addFiles(
@@ -1420,6 +1702,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             fromCamera: true,
             kind: _representativeIdKind,
           ),
+          onPentaScanRepresentative: () =>
+              _scanWithPenta(_representativeIdKind),
           onOpen: _fileService.open,
           onRemove: _removeFile,
           onBack: _back,
@@ -1633,13 +1917,15 @@ class _WizardDraft {
       .where((e) =>
           e.fileType == UploadType.passport &&
           !e.isDeleted &&
-          e.kind != _representativeIdKind)
+          (e.kind != _representativeIdKind &&
+              e.kind != _representativeIdValidationReportKind))
       .toList(growable: false);
   List<ContractUpload> get representativeIdFiles => uploads
       .where((e) =>
           e.fileType == UploadType.passport &&
           !e.isDeleted &&
-          e.kind == _representativeIdKind)
+          (e.kind == _representativeIdKind ||
+              e.kind == _representativeIdValidationReportKind))
       .toList(growable: false);
   List<ContractUpload> get productFiles => uploads
       .where((e) => e.fileType == UploadType.product && !e.isDeleted)
@@ -3274,8 +3560,10 @@ class _IdentityFilesStep extends StatelessWidget {
     required this.representativeFiles,
     required this.onAddOrderer,
     required this.onCaptureOrderer,
+    required this.onPentaScanOrderer,
     required this.onAddRepresentative,
     required this.onCaptureRepresentative,
+    required this.onPentaScanRepresentative,
     required this.onOpen,
     required this.onRemove,
     required this.onBack,
@@ -3286,8 +3574,10 @@ class _IdentityFilesStep extends StatelessWidget {
   final List<ContractUpload> representativeFiles;
   final VoidCallback onAddOrderer;
   final VoidCallback onCaptureOrderer;
+  final VoidCallback onPentaScanOrderer;
   final VoidCallback onAddRepresentative;
   final VoidCallback onCaptureRepresentative;
+  final VoidCallback onPentaScanRepresentative;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
   final VoidCallback onBack;
@@ -3304,6 +3594,7 @@ class _IdentityFilesStep extends StatelessWidget {
           files: ordererFiles,
           onAdd: onAddOrderer,
           onCapture: onCaptureOrderer,
+          onPentaScan: onPentaScanOrderer,
           onOpen: onOpen,
           onRemove: onRemove,
         ),
@@ -3313,11 +3604,138 @@ class _IdentityFilesStep extends StatelessWidget {
           files: representativeFiles,
           onAdd: onAddRepresentative,
           onCapture: onCaptureRepresentative,
+          onPentaScan: onPentaScanRepresentative,
           onOpen: onOpen,
           onRemove: onRemove,
         ),
         const SizedBox(height: 20),
         _WizardButtons(onBack: onBack, onNext: onNext),
+      ],
+    );
+  }
+}
+
+typedef _PentaScanRunner = Future<_PentaScanFiles> Function(
+  bool Function() isCancelled,
+  ValueChanged<String> onStatusChanged,
+);
+
+class _PentaScanFiles {
+  const _PentaScanFiles({
+    required this.visibleImagePath,
+    this.reportPdfPath,
+  });
+
+  final String visibleImagePath;
+  final String? reportPdfPath;
+}
+
+class _PentaScanCancelledException implements Exception {
+  const _PentaScanCancelledException();
+}
+
+class _PentaScanTimeoutException implements Exception {
+  const _PentaScanTimeoutException();
+}
+
+class _PentaScanDialog extends StatefulWidget {
+  const _PentaScanDialog({required this.scan});
+
+  final _PentaScanRunner scan;
+
+  @override
+  State<_PentaScanDialog> createState() => _PentaScanDialogState();
+}
+
+class _PentaScanDialogState extends State<_PentaScanDialog> {
+  bool _cancelled = false;
+  bool _didPop = false;
+  String _status = 'Waiting for scan output...';
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_runScan());
+  }
+
+  Future<void> _runScan() async {
+    try {
+      final result = await widget.scan(
+        () => _cancelled,
+        (status) {
+          if (mounted) {
+            setState(() => _status = status);
+          }
+        },
+      );
+
+      if (!mounted || _cancelled || _didPop) return;
+      _didPop = true;
+      Navigator.of(context, rootNavigator: true).pop(result);
+    } on _PentaScanCancelledException {
+      return;
+    } on _PentaScanTimeoutException {
+      if (mounted && !_didPop) {
+        setState(() {
+          _error = 'No completed Penta scan was detected within 2 minutes.';
+        });
+      }
+    } catch (e) {
+      if (mounted && !_didPop) {
+        setState(() => _error = 'Penta scan failed: $e');
+      }
+    }
+  }
+
+  void _close() {
+    _cancelled = true;
+    if (_didPop) return;
+    _didPop = true;
+    Navigator.of(context, rootNavigator: true).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final error = _error;
+
+    return AlertDialog(
+      title: const Text('Penta Scan'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'With opened ID Analyze Application please provide identification document to the scanner',
+            ),
+            const SizedBox(height: 18),
+            if (error == null) ...[
+              Row(
+                children: [
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(_status)),
+                ],
+              ),
+            ] else
+              Text(
+                error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _close,
+          child: Text(error == null ? 'Cancel' : 'Close'),
+        ),
       ],
     );
   }
@@ -3329,6 +3747,7 @@ class _FileUploadSection extends StatelessWidget {
     required this.files,
     required this.onAdd,
     required this.onCapture,
+    required this.onPentaScan,
     required this.onOpen,
     required this.onRemove,
   });
@@ -3337,6 +3756,7 @@ class _FileUploadSection extends StatelessWidget {
   final List<ContractUpload> files;
   final VoidCallback onAdd;
   final VoidCallback onCapture;
+  final VoidCallback onPentaScan;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
 
@@ -3360,6 +3780,11 @@ class _FileUploadSection extends StatelessWidget {
                 onPressed: onCapture,
                 icon: const Icon(Icons.photo_camera_outlined),
                 label: const Text('Capture'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onPentaScan,
+                icon: const Icon(Icons.document_scanner_outlined),
+                label: const Text('Penta Scan'),
               ),
             ],
           ),
@@ -4193,6 +4618,7 @@ class _FileTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final preview = FilePreview.fromPath(upload.path);
+    final kindLabel = _uploadKindLabel(upload.kind);
     final thumb = preview.isImage
         ? ClipRRect(
             borderRadius: BorderRadius.circular(12),
@@ -4219,9 +4645,23 @@ class _FileTile extends StatelessWidget {
           thumb,
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              upload.fileName,
-              style: const TextStyle(fontWeight: FontWeight.w700),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  upload.fileName,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (kindLabel != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    kindLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.black54,
+                        ),
+                  ),
+                ],
+              ],
             ),
           ),
           IconButton(
@@ -4239,6 +4679,17 @@ class _FileTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _uploadKindLabel(String kind) {
+  if (kind == _ordererIdValidationReportKind ||
+      kind == _representativeIdValidationReportKind) {
+    return 'Penta validation report';
+  }
+  if (kind == _ordererIdKind || kind == _representativeIdKind) {
+    return 'Identification document';
+  }
+  return null;
 }
 
 class _FallbackPreview extends StatelessWidget {

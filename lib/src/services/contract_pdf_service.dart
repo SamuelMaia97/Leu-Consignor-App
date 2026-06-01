@@ -123,7 +123,9 @@ class ContractPdfPayloadBuilder {
       (upload) =>
           !upload.isDeleted &&
           upload.fileType == UploadType.passport &&
-          upload.kind != 'RepresentativeId',
+          upload.kind != 'RepresentativeId' &&
+          upload.kind != 'RepresentativeIdValidationReport' &&
+          upload.kind != 'NaturalPersonIdValidationReport',
     );
     final hasRepresentativeIdFiles = record.uploads.any(
       (upload) =>
