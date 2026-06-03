@@ -57,7 +57,9 @@ class ContractRenderPayloadBuilder {
       (upload) =>
           !upload.isDeleted &&
           upload.fileType == UploadType.passport &&
-          upload.kind != 'RepresentativeId',
+          upload.kind != 'RepresentativeId' &&
+          upload.kind != 'RepresentativeIdValidationReport' &&
+          upload.kind != 'NaturalPersonIdValidationReport',
     );
     final hasRepresentativeIdAttachment = record.uploads.any(
       (upload) =>
