@@ -1871,7 +1871,7 @@ class _WizardDraft {
   String references = '';
   double creditLimit = 0;
   double? discount;
-  String commissionRate = '';
+  String commissionRate = '10';
   String consignmentCountryIso3 = '';
   String consignmentCountryName = '';
 
@@ -2664,16 +2664,12 @@ class _ExistingCustomerStep extends StatelessWidget {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
-        _OptionCard(
-          title: contractOnly ? 'Find existing consignor' : 'Existing customer',
-          icon: Icons.search_rounded,
-          onTap: onFindExisting,
-        ),
-        if (showSearch) ...[
+        
+        ...[
           const SizedBox(height: 12),
           TextField(
             decoration: InputDecoration(
-              labelText: 'Search existing customers',
+              labelText: 'Search customer',
               prefixIcon: const Icon(Icons.search_rounded),
               suffixIcon: searching
                   ? const Padding(
@@ -2689,7 +2685,7 @@ class _ExistingCustomerStep extends StatelessWidget {
             onChanged: onSearchChanged,
           ),
         ],
-        if (showSearch && matches.isNotEmpty) ...[
+        if (matches.isNotEmpty) ...[
           const SizedBox(height: 12),
           SectionCard(
             title: 'Results',
