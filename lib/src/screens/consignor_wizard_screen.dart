@@ -2426,7 +2426,6 @@ class _WizardDraft {
 
     requireText(iban, 'IBAN / Account Nr.');
     requireText(bankName, 'Bank name');
-    requireText(bicSwift, 'BIC / SWIFT');
 
     return missing
         .map((field) => field.trim())
@@ -3373,9 +3372,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
                   ),
                   initialValue: draft.bicSwift,
-                  decoration: const InputDecoration(labelText: 'BIC / SWIFT *'),
-                  validator: (value) =>
-                      FormValidators.requiredText(value, 'BIC / SWIFT'),
+                  decoration: const InputDecoration(labelText: 'BIC / SWIFT'),
                   onChanged: (value) => draft.bicSwift = value,
                 ),
                 TextFormField(

@@ -1276,7 +1276,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                 SectionCard(
                   title: 'Bank transfer details',
                   subtitle:
-                      'The consignor app supports bank transfer only. IBAN or account number, bank name, and BIC / SWIFT are required.',
+                      'The consignor app supports bank transfer only. IBAN or account number and bank name are required.',
                   icon: Icons.account_balance_outlined,
                   child: _ResponsiveFormGrid(
                     children: [
@@ -1304,9 +1304,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                         key: const ValueKey('editor-field-bic-swift'),
                         initialValue: _model.bankingDetails.bicSwift,
                         decoration:
-                            const InputDecoration(labelText: 'BIC / SWIFT *'),
-                        validator: (value) =>
-                            FormValidators.requiredText(value, 'BIC / SWIFT'),
+                            const InputDecoration(labelText: 'BIC / SWIFT'),
                         onChanged: (value) =>
                             _model.bankingDetails.bicSwift = value,
                       ),
