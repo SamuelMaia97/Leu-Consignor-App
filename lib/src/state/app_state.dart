@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/app_settings.dart';
+import '../models/abacus_sync.dart';
 import '../models/auction_option.dart';
 import '../models/consignor.dart';
 import '../models/contract_record.dart';
@@ -324,6 +325,7 @@ class AppState extends ChangeNotifier {
       await _settingsRepo.saveToken(newToken);
       await refreshAuthSessionState(notify: false);
       await refreshPhonePrefixes(silent: true);
+      await refreshAuctions(silent: true);
       lastMessage = 'Microsoft sign-in succeeded.';
     } catch (e) {
       lastMessage = 'Microsoft sign-in failed: $e';
@@ -437,10 +439,13 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Consignor?> syncConsignor(String id) async {
+  Future<Consignor?> syncConsignor(
+    String id, {
+    Consignor? authorizedRepresentative,
+  }) async {
     final initial = consignorById(id);
     if (initial == null) return null;
-    if (!initial.needsSync) return initial;
+    if (!initial.needsSync && authorizedRepresentative == null) return initial;
     if (_syncingConsignorIds.contains(id)) return initial;
     if (!await _ensureActiveMicrosoftSession()) return initial;
 
@@ -449,7 +454,12 @@ class AppState extends ChangeNotifier {
 
     try {
       final api = ApiService(settings, token);
-      final pushResult = await api.pushConsignors([initial]);
+      final pushResult = await api.pushConsignors(
+        [initial],
+        authorizedRepresentatives: authorizedRepresentative == null
+            ? const {}
+            : {initial.id: authorizedRepresentative},
+      );
       final reference = pushResult.references[id];
       final syncedFromServer = pushResult.syncedConsignors[id];
 
@@ -506,7 +516,11 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<ContractRecord?> syncContract(String consignorId, int auctionId) async {
+  Future<ContractRecord?> syncContract(
+    String consignorId,
+    int auctionId, {
+    AbacusContractSyncEvent syncEvent = AbacusContractSyncEvent.manualSync,
+  }) async {
     final current = _contractRepo.getByConsignorAndAuction(
       consignorId,
       auctionId,
@@ -516,7 +530,10 @@ class AppState extends ChangeNotifier {
             int.tryParse(consignorId);
 
     if (current == null) return null;
-    if (!current.hasLocalChanges) return current;
+    if (!current.hasLocalChanges &&
+        syncEvent == AbacusContractSyncEvent.manualSync) {
+      return current;
+    }
     if (!await _ensureActiveMicrosoftSession()) return current;
 
     final key = _contractKey(consignorId, auctionId);
@@ -533,7 +550,11 @@ class AppState extends ChangeNotifier {
         );
       }
 
-      final synced = await api.syncContractRecord(backendConsignorId, current);
+      final synced = await api.syncContractRecord(
+        backendConsignorId,
+        current,
+        syncEvent: syncEvent,
+      );
       final updated = synced.copyWith(
         id: current.id,
         consignorId: current.consignorId,
@@ -752,8 +773,9 @@ class AppState extends ChangeNotifier {
 
   void _setSyncProgress(int current, int total, String message) {
     final safeTotal = total < 0 ? 0 : total;
-    final safeCurrent =
-        safeTotal <= 0 ? (current < 0 ? 0 : current) : current.clamp(0, safeTotal);
+    final safeCurrent = safeTotal <= 0
+        ? (current < 0 ? 0 : current)
+        : current.clamp(0, safeTotal);
 
     syncProgressCurrent = safeCurrent;
     syncProgressTotal = safeTotal;

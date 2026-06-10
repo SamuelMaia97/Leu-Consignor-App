@@ -101,6 +101,7 @@ class ContractPdfPayloadBuilder {
     final attachments = <Map<String, dynamic>>[];
     for (final upload in record.uploads) {
       if (upload.isDeleted) continue;
+      if (upload.isGeneratedContractPdf) continue;
 
       final fileData = await _uploadFileData(upload);
       if (fileData.trim().isEmpty) continue;
@@ -278,8 +279,13 @@ class ContractPdfPayloadBuilder {
     final legalOwnerRepName =
         ownerIsLegal ? ownerOrEmpty?.consignorInfo.fullName ?? '' : '';
 
+    final bankAccountValue = consignor.bankingDetails.accountNumber;
+    final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
+    final accountNumberValue =
+        consignor.bankingDetails.isIban ? '' : bankAccountValue;
+
     final values = <String, dynamic>{
-      'account_number': consignor.bankingDetails.accountNumber,
+      'account_number': accountNumberValue,
       'auction_name': auctionName,
       'auction_date': _formatDate(auctionDate),
       'commission_percent': commissionPercent,
@@ -340,9 +346,7 @@ class ContractPdfPayloadBuilder {
           _addressLine2(consignor.bankingDetails.beneficiaryAddress),
       'beneficiary_address_3':
           _addressLine3(consignor.bankingDetails.beneficiaryAddress),
-      'iban': consignor.bankingDetails.isIban
-          ? consignor.bankingDetails.accountNumber
-          : '',
+      'iban': ibanValue,
       'bic_swift': consignor.bankingDetails.bicSwift,
       'clearing_nr': consignor.bankingDetails.clearingNumber,
       'routing_nr': consignor.bankingDetails.routingNumber,
@@ -488,7 +492,7 @@ class ContractPdfPayloadBuilder {
     _ContractRenderScenario scenario,
   ) {
     const matrix = <String, List<bool>>{
-      'Paragraf1': [true, true, true, false, false, false, false, false],
+      'Paragraf1': [false, false, false, false, false, false, false, false],
       'Paragraf2': [false, false, false, false, false, true, true, true],
       'Paragraf3': [false, false, false, false, false, true, true, true],
       'Paragraf4': [true, true, true, false, false, true, true, true],
@@ -500,15 +504,15 @@ class ContractPdfPayloadBuilder {
       'Paragraf10': [false, true, false, false, false, false, true, false],
       'Paragraf11': [false, false, true, true, false, true, false, false],
       'Paragraf12': [false, false, false, false, true, false, false, true],
-      'Paragraf13': [true, true, true, false, false, true, true, true],
+      'Paragraf13': [true, true, true, true, false, true, true, true],
       'Paragraf14': [false, false, false, true, true, true, true, true],
-      'Paragraf15': [false, true, false, true, false, false, true, false],
+      'Paragraf15': [false, true, true, true, true, false, true, true],
       'Paragraf16': [false, false, true, false, true, false, false, true],
       'Paragraf17': [true, false, false, false, false, true, false, false],
-      'Paragraf18': [false, true, true, false, false, false, true, true],
-      'Paragraf19': [false, false, false, true, true, false, false, false],
-      'Paragraf20': [false, false, false, false, false, false, false, false],
-      'Paragraf21': [false, false, true, true, true, false, false, true],
+      'Paragraf18': [false, true, false, false, false, false, true, false],
+      'Paragraf19': [false, false, false, false, true, false, false, true],
+      'Paragraf20': [false, false, true, false, false, false, false, false],
+      'Paragraf21': [false, false, false, true, true, true, true, true],
       'Paragraf22': [true, false, false, false, false, true, false, false],
       'Paragraf23': [false, true, true, true, true, false, true, true],
     };
@@ -547,10 +551,7 @@ class ContractPdfPayloadBuilder {
   }
 
   static String _addressLine2(Address address) {
-    final parts = [address.streetAddressOptional, address.addressInfo]
-        .where((part) => part.toString().trim().isNotEmpty)
-        .join(', ');
-    return parts.trim();
+    return address.streetAddressOptional.trim();
   }
 
   static String _addressLine3(Address address) {
@@ -606,7 +607,8 @@ class ContractPdfPayloadBuilder {
           .map((value) => _localizedAuctionName(value, correspondence))
           .join(', ');
     }
-    return _localizedAuctionName(record.auctionDisplayName.trim(), correspondence);
+    return _localizedAuctionName(
+        record.auctionDisplayName.trim(), correspondence);
   }
 
   String _localizedAuctionName(String value, String? correspondence) {

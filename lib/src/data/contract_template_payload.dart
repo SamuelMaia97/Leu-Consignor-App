@@ -76,6 +76,11 @@ class ContractRenderPayloadBuilder {
     final customerSignature = _encodeBytes(signatureData?.customerSignaturePng);
     final auctionDate = record.signedAt;
 
+    final bankAccountValue = consignor.bankingDetails.accountNumber;
+    final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
+    final accountNumberValue =
+        consignor.bankingDetails.isIban ? '' : bankAccountValue;
+
     return ContractRenderPayload({
       'consignorType': consignorType.apiName,
       'consignorFullName': consignor.displayName,
@@ -117,11 +122,9 @@ class ContractRenderPayloadBuilder {
       'bankAddress1': _addressLine1(consignor.bankingDetails.bankAddress),
       'bankAddress2': _addressLine2(consignor.bankingDetails.bankAddress),
       'bankAddress3': _addressLine3(consignor.bankingDetails.bankAddress),
-      'accountNumber': consignor.bankingDetails.accountNumber,
+      'accountNumber': accountNumberValue,
       'clearingNumber': consignor.bankingDetails.clearingNumber,
-      'iban': consignor.bankingDetails.isIban
-          ? consignor.bankingDetails.accountNumber
-          : '',
+      'iban': ibanValue,
       'bicSwift': consignor.bankingDetails.bicSwift,
       'routingNumber': consignor.bankingDetails.routingNumber,
       'beneficiaryName': consignor.bankingDetails.beneficiary.fullName,
@@ -172,6 +175,10 @@ class ContractRenderPayloadBuilder {
     final payloads = <ContractAttachmentPayload>[];
 
     for (final attachment in attachments) {
+      if (_isGeneratedContractAttachment(attachment)) {
+        continue;
+      }
+
       final file = File(attachment.path);
       if (!await file.exists()) {
         continue;
@@ -217,6 +224,31 @@ class ContractRenderPayloadBuilder {
     return 'Other';
   }
 
+  bool _isGeneratedContractAttachment(ContractAttachment attachment) {
+    if (attachment.type != UploadType.agreement) return false;
+
+    final normalizedKind = _normalizeGeneratedContractToken(attachment.kind);
+    if (normalizedKind == 'agreement' ||
+        normalizedKind == 'contract' ||
+        normalizedKind == 'generatedcontract') {
+      return true;
+    }
+
+    final normalizedName = _normalizeGeneratedContractToken(attachment.path);
+    return normalizedName.contains('einlieferungsvertrag') ||
+        normalizedName.contains('consignorcontract') ||
+        normalizedName.contains('consignoragreement') ||
+        normalizedName.contains('provconsignoragreement');
+  }
+
+  String _normalizeGeneratedContractToken(String value) {
+    if (value.trim().isEmpty) return '';
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\.[a-z0-9]+$'), '')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
   static String _contentType(String fileName) {
     final lower = fileName.toLowerCase();
     if (lower.endsWith('.pdf')) return 'application/pdf';
@@ -250,10 +282,7 @@ class ContractRenderPayloadBuilder {
   }
 
   static String _addressLine2(Address address) {
-    final parts = [address.streetAddressOptional, address.addressInfo]
-        .where((part) => part.toString().trim().isNotEmpty)
-        .join(', ');
-    return parts.trim();
+    return address.streetAddressOptional.trim();
   }
 
   static String _addressLine3(Address address) {

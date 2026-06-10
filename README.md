@@ -228,8 +228,8 @@ The app uses the configured API base URL plus the endpoint paths below. Several 
 | --- | --- | --- | --- |
 | `GET` | `/api/consignors-app/consignors/get-all` | Validate connection and fetch remote consignor summaries. | Optional query parameter: `sinceUtc=<UTC ISO timestamp>` for incremental sync. |
 | `GET` | `/api/consignors-app/consignors/get/{id}` | Fetch one consignor with contract groups/files. | `{id}` is the backend consignor ID. |
-| `PUT` | `/api/consignors-app/consignors/update/{id}` | Update an existing backend consignor. | Body is `Consignor.toJson()`. |
-| `POST` | `/api/consignors-app/consignors/bulk-create` | Create one or more new consignors. | Body is an array of `Consignor.toJson()` objects. |
+| `PUT` | `/api/consignors-app/consignors/update/{id}` | Update an existing backend consignor. | Body is `Consignor.toJson()`, optionally with `abacusRepresentativeLink`. |
+| `POST` | `/api/consignors-app/consignors/bulk-create` | Create one or more new consignors. | Body is an array of `Consignor.toJson()` objects, optionally with `abacusRepresentativeLink`. |
 | `GET` | `/api/consignors-app/files/get-all` | Configured legacy/all-files endpoint. | Present in settings; not heavily used by current sync flow. |
 | `GET` | `/api/consignors-app/files/get/{id}` | Configured single-file endpoint. | Present in settings; not heavily used by current sync flow. |
 | `PUT` | `/api/consignors-app/files/update/{id}` | Configured file update endpoint. | Present in settings; current upload updates use the hard-coded upload endpoint below. |
@@ -243,10 +243,10 @@ The app uses the configured API base URL plus the endpoint paths below. Several 
 | --- | --- | --- | --- |
 | `GET` | `/api/consignors-app/auctions/dropdown` | Fetch auction dropdown options. | Expects an array of auction objects. |
 | `POST` | `/api/consignors-app/contracts/render-pdf` | Render the official contract PDF from app data. | Body contains template version, record, consignor, representative/owner, signatures, attachments, and flags. Response is PDF bytes. |
-| `POST` | `/api/consignors-app/consignors/{consignorId}/contracts` | Create/sync a contract group with files for a consignor and auction. | Body contains `consignorId`, `auctionId`, optional `signedAt`, and `files`. |
-| `PUT` | `/api/consignors-app/consignors/{consignorId}/uploads/{uploadId}` | Replace/update an existing upload. | Body is an upload payload with Base64 `fileData`. |
+| `POST` | `/api/consignors-app/consignors/{consignorId}/contracts` | Create/sync a contract group with files for a consignor and auction. | Body contains `consignorId`, `auctionId`, optional `signedAt`, `abacusSync`, and `files`. |
+| `PUT` | `/api/consignors-app/consignors/{consignorId}/uploads/{uploadId}` | Replace/update an existing upload. | Body is an upload payload with Base64 `fileData` and optional file-level `abacusSync`. |
 | `DELETE` | `/api/consignors-app/consignors/{consignorId}/uploads/{uploadId}` | Delete an existing upload. | No request body. |
-| `POST` | `/api/consignors-app/consignors/{consignorId}/contracts/{auctionId}/sync` | Refresh/sync one contract group after remote changes. | No request body. Response is a contract group. |
+| `POST` | `/api/consignors-app/consignors/{consignorId}/contracts/{auctionId}/sync` | Refresh/sync one contract group after remote changes or enqueue an Abacus event-only sync. | Body contains `abacusSync`. Response is a contract group. |
 
 ### Additional template API client
 
@@ -296,6 +296,7 @@ Contract upload payloads include:
 - `fileData` as Base64
 - `signedAt`
 - `lastModifiedUtc`
+- optional `abacusSync`
 
 Upload type values:
 
@@ -304,6 +305,21 @@ Upload type values:
 | `1` | Passport / ID image |
 | `2` | Agreement / registration file |
 | `3` | Product image |
+
+#### Abacus sync payloads
+
+When a signed/generated contract, passport image, representative passport image, or coin image should be archived in Abacus, the upload payload includes an `abacusSync` object. The backend should upload the binary first to `/api/file-store/v1/user`, then POST the returned `Location` to the relevant `SubjectDocuments` endpoint and verify receipt before marking the Backoffice sync task complete.
+
+Known dossier hints sent by the app:
+
+| File kind | Abacus dossier | Storage hint | Naming pattern |
+| --- | --- | --- | --- |
+| Contract PDF | `Vertrag Einlieferung` | lookup by dossier name | `Consignment_Contract_[ContractNumber]` |
+| Passport / ID | `Passport` | `39c1d257-327c-bb79-0408-9be8b5a1dcca` / `PASS` | `Passport_[ConsignorID]_[YYYYMMDD]` |
+| Representative ID | `Passport` | `39c1d257-327c-bb79-0408-9be8b5a1dcca` / `PASS` | `Representative_Passport_[ConsignorID]_[YYYYMMDD]` |
+| Coin image | `Einlieferung Fotos` | `56d62f82-6053-d8b8-1dc8-abd6970e5aaf` / `EINL` | `Coin_[LotID_or_TempID]_[YYYYMMDD]` |
+
+When an authorized representative is captured in the wizard, the consignor sync payload includes `abacusRepresentativeLink`. The backend should create or resolve the representative address subject and then POST `/Links` with relation `Representative`; test link type `899a75fc-a264-2e72-cab2-098101eb9bf0`, production link type `e174dc18-df58-ff73-edec-742a9302ec72`.
 
 #### PDF render payload
 

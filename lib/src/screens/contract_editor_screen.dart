@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/abacus_sync.dart';
 import '../models/auction_option.dart';
 import '../models/contract_record.dart';
 import '../models/sync_status.dart';
@@ -21,8 +22,6 @@ import '../widgets/multi_auction_select_field.dart';
 import '../widgets/section_card.dart';
 
 const _unsignedContractPrefix = 'PROV-';
-const _signedContractPrefix = 'COR-';
-const _legacyProvisionalContractPrefix = 'Prov-';
 
 enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving }
 
@@ -284,6 +283,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       final syncedRecord = await api.syncContractRecord(
         backendConsignorId,
         _record,
+        syncEvent: AbacusContractSyncEvent.contractFinalized,
       );
 
       setState(() {
@@ -317,40 +317,50 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   String _pdfFileNameForCurrentStatus() {
-    final reference = _record.systemReferenceContract > 0
-        ? _record.systemReferenceContract.toString()
-        : _record.id;
-    final fallback = 'consignor_contract_$reference.pdf';
-    final rawName = _record.pdfName.trim();
-    final current = rawName.isEmpty || rawName == 'consignor_contract.pdf'
-        ? fallback
-        : rawName;
-    final withoutPrefix = _withoutContractPrefix(current);
-
-    return _record.syncStatus == RecordSyncStatus.finalized
-        ? '$_signedContractPrefix$withoutPrefix'
-        : '$_unsignedContractPrefix$withoutPrefix';
+    final prefix = _record.syncStatus == RecordSyncStatus.finalized
+        ? ''
+        : _unsignedContractPrefix;
+    final auctionPart = _auctionCodePart(_record.auctionDisplayNames);
+    final auctionSuffix = auctionPart.isEmpty ? '' : ' ($auctionPart)';
+    return '$prefix'
+        'Consignor-Agreement$auctionSuffix ${_todayDatePart()}.pdf';
   }
 
-  String _withoutContractPrefix(String value) {
-    var current = value.trim();
-    var changed = true;
-    while (changed) {
-      changed = false;
-      final lower = current.toLowerCase();
-      for (final prefix in const [
-        _unsignedContractPrefix,
-        _signedContractPrefix,
-        _legacyProvisionalContractPrefix,
-      ]) {
-        if (lower.startsWith(prefix.toLowerCase())) {
-          current = current.substring(prefix.length);
-          changed = true;
-          break;
-        }
-      }
-    }
-    return current;
+  String _auctionCodePart(List<String> auctionNames) {
+    final codes = auctionNames
+        .map(_auctionCode)
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+    return codes.join(' & ');
+  }
+
+  String _auctionCode(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return '';
+
+    final webMatch = RegExp(
+      r'\bWeb\s+(?:Auction|Auktion)\s*(\d+)\b',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (webMatch != null) return 'WA${webMatch.group(1)}';
+
+    final auctionMatch = RegExp(
+      r'\b(?:Auction|Auktion)\s*(\d+)\b',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (auctionMatch != null) return 'A${auctionMatch.group(1)}';
+
+    return normalized
+        .replaceAll(RegExp(r'[\\/:*?"<>|]+'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _todayDatePart() {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
   }
 
   Future<void> _generatePdf() async {
@@ -387,11 +397,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
         );
       });
 
-      final existingPdfMatches = _record.uploads.where((upload) {
-        return upload.fileType == UploadType.agreement &&
-            upload.fileName.toLowerCase().endsWith('.pdf') &&
-            !upload.isDeleted;
-      }).toList();
+      final existingPdfMatches = _record.uploads
+          .where((upload) => upload.isGeneratedContractPdf && !upload.isDeleted)
+          .toList();
 
       final existingPdf =
           existingPdfMatches.isEmpty ? null : existingPdfMatches.first;
@@ -407,15 +415,43 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
           [file.path],
           UploadType.agreement,
           openOnComplete: false,
+          kind: 'GeneratedContract',
         );
       }
 
       if (!mounted) return;
+      await _enqueueGeneratedPdfSyncIfPossible(appState);
       _showSnack('PDF created at ${file.path}');
     } finally {
       if (mounted) {
         setState(() => _busy = false);
       }
+    }
+  }
+
+  Future<void> _enqueueGeneratedPdfSyncIfPossible(AppState appState) async {
+    final auctionId = _record.auctionId;
+    final backendConsignorId = _backendConsignorId;
+    if (!appState.hasValidToken ||
+        auctionId == null ||
+        backendConsignorId == null ||
+        backendConsignorId <= 0) {
+      await _persistLocal();
+      return;
+    }
+
+    await _persistLocal();
+    final synced = await appState.syncContract(
+      widget.consignorId,
+      auctionId,
+      syncEvent: AbacusContractSyncEvent.contractGenerated,
+    );
+    if (synced != null && mounted) {
+      setState(() {
+        _record = synced.copyWith(consignorId: widget.consignorId);
+      });
+      _lastPersistedRecordId = _record.id;
+      _captureSnapshot();
     }
   }
 
@@ -456,6 +492,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     List<String> paths,
     UploadType type, {
     bool openOnComplete = false,
+    String kind = '',
   }) async {
     final auctionId = _record.auctionId;
 
@@ -475,6 +512,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
         auctionId: auctionId,
         fileName: fileName,
         fileType: type,
+        kind: kind,
         path: path,
         localLastModifiedUtc: nowUtc,
       );

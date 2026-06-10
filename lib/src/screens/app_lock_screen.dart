@@ -151,7 +151,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'Consignor Management',
+                                  'C.O.I.N.S.',
                                   textAlign: TextAlign.center,
                                   style: Theme.of(context)
                                       .textTheme
@@ -336,7 +336,8 @@ class _LoginPatternPainter extends CustomPainter {
 
     const gap = 84.0;
     for (double x = -size.height; x < size.width; x += gap) {
-      canvas.drawLine(Offset(x, size.height), Offset(x + size.height, 0), paint);
+      canvas.drawLine(
+          Offset(x, size.height), Offset(x + size.height, 0), paint);
     }
   }
 

@@ -8,7 +8,6 @@ class Address {
     this.adminRegion = '',
     this.countryIso3 = '',
     this.countryName = '',
-    this.addressInfo = '',
   });
 
   String streetAddress;
@@ -19,7 +18,6 @@ class Address {
   String adminRegion;
   String countryIso3;
   String countryName;
-  String addressInfo;
 
   factory Address.fromJson(Map<String, dynamic> json) => Address(
         streetAddress:
@@ -40,8 +38,6 @@ class Address {
             '',
         countryIso3: _countryIso(json['country'] ?? json['Country']),
         countryName: _countryName(json['country'] ?? json['Country']),
-        addressInfo:
-            (json['addressinfo'] ?? json['addressInfo'] ?? json['Addressinfo']) as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -57,7 +53,6 @@ class Address {
                 'countryName': countryName,
               },
         'city': city,
-        'addressinfo': addressInfo,
       };
 
   String toSingleLine() {
