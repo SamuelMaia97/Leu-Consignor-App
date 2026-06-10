@@ -1,6 +1,5 @@
 import 'dart:io';
 
-const _processName = 'ID_Analyze';
 const _executableName = 'ID_Analyze.exe';
 
 class DeskoIdAnalyzeService {

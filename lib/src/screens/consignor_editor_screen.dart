@@ -535,6 +535,11 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
           ),
           actions: [
             TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnsavedChangesAction.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_UnsavedChangesAction.closeWithoutSaving),
               child: const Text('Close without saving'),
@@ -561,6 +566,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
         return _saveAsDraft();
       case _UnsavedChangesAction.closeWithoutSaving:
         return true;
+      case _UnsavedChangesAction.cancel:
       case null:
         return false;
     }
@@ -1866,7 +1872,7 @@ class _LookupOption<T> {
   final String label;
 }
 
-enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving }
+enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving, cancel }
 
 extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
