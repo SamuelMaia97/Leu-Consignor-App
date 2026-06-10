@@ -20,6 +20,7 @@ import '../repositories/wizard_draft_repository.dart';
 import '../models/phone_prefix.dart';
 import '../services/api_service.dart';
 import '../services/contract_pdf_service.dart';
+import '../services/desko_id_analyze_service.dart';
 import '../services/file_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -78,6 +79,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   final _representativeDraft = _WizardDraft(representativeMode: true);
   final _fileService = FileService();
   final _pdfService = ContractPdfService();
+  final _deskoIdAnalyzeService = DeskoIdAnalyzeService();
   final _wizardDraftRepo = WizardDraftRepository();
   final _ibanToBic = IbanToBic();
   final _detailsFormKey = GlobalKey<FormState>();
@@ -867,21 +869,28 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       return;
     }
 
-    final startedAt = DateTime.now();
-    final knownOutputFolders = await _pentaOutputFolders(outputRoot);
-
     if (!mounted) return;
     final scanFiles = await showDialog<_PentaScanFiles>(
       context: context,
       barrierDismissible: false,
       builder: (_) => _PentaScanDialog(
-        scan: (isCancelled, onStatusChanged) => _waitForPentaScanFiles(
-          outputRoot: outputRoot,
-          startedAt: startedAt,
-          knownOutputFolders: knownOutputFolders,
-          isCancelled: isCancelled,
-          onStatusChanged: onStatusChanged,
-        ),
+        scan: (isCancelled, onApplicationReady, onStatusChanged) async {
+          await _deskoIdAnalyzeService.ensureReady();
+          if (isCancelled()) {
+            throw const _PentaScanCancelledException();
+          }
+
+          onApplicationReady();
+          final startedAt = DateTime.now();
+          final knownOutputFolders = await _pentaOutputFolders(outputRoot);
+          return _waitForPentaScanFiles(
+            outputRoot: outputRoot,
+            startedAt: startedAt,
+            knownOutputFolders: knownOutputFolders,
+            isCancelled: isCancelled,
+            onStatusChanged: onStatusChanged,
+          );
+        },
       ),
     );
 
@@ -3666,6 +3675,7 @@ class _IdentityFilesStep extends StatelessWidget {
 
 typedef _PentaScanRunner = Future<_PentaScanFiles> Function(
   bool Function() isCancelled,
+  VoidCallback onApplicationReady,
   ValueChanged<String> onStatusChanged,
 );
 
@@ -3699,6 +3709,7 @@ class _PentaScanDialog extends StatefulWidget {
 class _PentaScanDialogState extends State<_PentaScanDialog> {
   bool _cancelled = false;
   bool _didPop = false;
+  bool _applicationReady = false;
   String _status = 'Waiting for scan output...';
   String? _error;
 
@@ -3712,6 +3723,11 @@ class _PentaScanDialogState extends State<_PentaScanDialog> {
     try {
       final result = await widget.scan(
         () => _cancelled,
+        () {
+          if (mounted) {
+            setState(() => _applicationReady = true);
+          }
+        },
         (status) {
           if (mounted) {
             setState(() => _status = status);
@@ -3729,6 +3745,10 @@ class _PentaScanDialogState extends State<_PentaScanDialog> {
         setState(() {
           _error = 'No completed Penta scan was detected within 2 minutes.';
         });
+      }
+    } on DeskoIdAnalyzeException catch (e) {
+      if (mounted && !_didPop) {
+        setState(() => _error = e.message);
       }
     } catch (e) {
       if (mounted && !_didPop) {
@@ -3756,8 +3776,10 @@ class _PentaScanDialogState extends State<_PentaScanDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'With opened ID Analyze Application please provide identification document to the scanner',
+            Text(
+              _applicationReady
+                  ? 'Please provide identification document to the scanner'
+                  : 'Starting Analyze Application',
             ),
             const SizedBox(height: 18),
             if (error == null) ...[
