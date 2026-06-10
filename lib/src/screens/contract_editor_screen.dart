@@ -23,7 +23,7 @@ import '../widgets/section_card.dart';
 
 const _unsignedContractPrefix = 'PROV-';
 
-enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving }
+enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving, cancel }
 
 class ContractEditorScreen extends StatefulWidget {
   const ContractEditorScreen({
@@ -653,6 +653,11 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
           ),
           actions: [
             TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_UnsavedChangesAction.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_UnsavedChangesAction.closeWithoutSaving),
               child: const Text('Close without saving'),
@@ -679,6 +684,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
         return _saveAsDraft();
       case _UnsavedChangesAction.closeWithoutSaving:
         return true;
+      case _UnsavedChangesAction.cancel:
       case null:
         return false;
     }

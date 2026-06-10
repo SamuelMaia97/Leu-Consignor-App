@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -1337,11 +1338,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   Future<Uint8List?> _renderCustomerSignaturePng() async {
     if (!_draft.hasCustomerSignature) return null;
 
-    final sourceSize = _draft.customerSignatureCanvasSize;
-    final safeSourceWidth = sourceSize.width <= 0 ? 1.0 : sourceSize.width;
-    final safeSourceHeight = sourceSize.height <= 0 ? 1.0 : sourceSize.height;
     const outputWidth = 900.0;
     const outputHeight = 300.0;
+    final signatureBounds = _signatureBounds(_draft.customerSignatureStrokes);
+    if (signatureBounds == null) return null;
+
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
     final paint = ui.Paint()
@@ -1351,15 +1352,32 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       ..strokeJoin = ui.StrokeJoin.round
       ..style = ui.PaintingStyle.stroke;
 
-    final scaleX = outputWidth / safeSourceWidth;
-    final scaleY = outputHeight / safeSourceHeight;
+    const padding = 24.0;
+    final availableWidth = outputWidth - padding * 2;
+    final availableHeight = outputHeight - padding * 2;
+    final scale = math.min(
+      availableWidth / signatureBounds.width,
+      availableHeight / signatureBounds.height,
+    );
+    final offset = ui.Offset(
+      (outputWidth - signatureBounds.width * scale) / 2 -
+          signatureBounds.left * scale,
+      (outputHeight - signatureBounds.height * scale) / 2 -
+          signatureBounds.top * scale,
+    );
 
     for (final stroke in _draft.customerSignatureStrokes) {
       if (stroke.length < 2) continue;
       final path = ui.Path()
-        ..moveTo(stroke.first.dx * scaleX, stroke.first.dy * scaleY);
+        ..moveTo(
+          stroke.first.dx * scale + offset.dx,
+          stroke.first.dy * scale + offset.dy,
+        );
       for (final point in stroke.skip(1)) {
-        path.lineTo(point.dx * scaleX, point.dy * scaleY);
+        path.lineTo(
+          point.dx * scale + offset.dx,
+          point.dy * scale + offset.dy,
+        );
       }
       canvas.drawPath(path, paint);
     }
@@ -1371,6 +1389,31 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     picture.dispose();
     image.dispose();
     return byteData?.buffer.asUint8List();
+  }
+
+  ui.Rect? _signatureBounds(List<List<Offset>> strokes) {
+    double? left;
+    double? top;
+    double? right;
+    double? bottom;
+
+    for (final stroke in strokes) {
+      if (stroke.length < 2) continue;
+      for (final point in stroke) {
+        left = left == null ? point.dx : math.min(left, point.dx);
+        top = top == null ? point.dy : math.min(top, point.dy);
+        right = right == null ? point.dx : math.max(right, point.dx);
+        bottom = bottom == null ? point.dy : math.max(bottom, point.dy);
+      }
+    }
+
+    if (left == null || top == null || right == null || bottom == null) {
+      return null;
+    }
+
+    final width = math.max(right - left, 1.0);
+    final height = math.max(bottom - top, 1.0);
+    return ui.Rect.fromLTWH(left, top, width, height);
   }
 
   Future<File> _createContractPdf({required bool includeSignatures}) async {
@@ -1574,6 +1617,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           ),
           actions: [
             TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_CreationExitAction.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
               onPressed: () => Navigator.of(dialogContext)
                   .pop(_CreationExitAction.closeWithoutSaving),
               child: const Text('Close without saving'),
@@ -1605,6 +1653,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           );
         }
         return true;
+      case _CreationExitAction.cancel:
       case null:
         return false;
     }
@@ -1846,7 +1895,7 @@ enum _WizardStep {
   signatures,
 }
 
-enum _CreationExitAction { closeWithoutSaving, addToDraft }
+enum _CreationExitAction { closeWithoutSaving, addToDraft, cancel }
 
 enum _LeuSigner {
   larsRutten(
@@ -4304,6 +4353,8 @@ class _SignatureStep extends StatelessWidget {
               const SizedBox(height: 12),
               _SignaturePad(
                 initialStrokes: draft.customerSignatureStrokes,
+                initialCanvasSize: draft.customerSignatureCanvasSize,
+                enabled: !saving,
                 onChanged: onSignatureChanged,
               ),
               const SizedBox(height: 8),
@@ -4361,10 +4412,14 @@ class _SignatureStep extends StatelessWidget {
 class _SignaturePad extends StatefulWidget {
   const _SignaturePad({
     required this.initialStrokes,
+    required this.initialCanvasSize,
+    required this.enabled,
     required this.onChanged,
   });
 
   final List<List<Offset>> initialStrokes;
+  final Size initialCanvasSize;
+  final bool enabled;
   final void Function(List<List<Offset>> strokes, Size size) onChanged;
 
   @override
@@ -4372,7 +4427,253 @@ class _SignaturePad extends StatefulWidget {
 }
 
 class _SignaturePadState extends State<_SignaturePad> {
+  Future<void> _openSignatureDialog() async {
+    if (!widget.enabled) return;
+
+    final result = await showDialog<_SignatureDialogResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _SignatureDialog(
+        initialStrokes: widget.initialStrokes,
+        initialCanvasSize: widget.initialCanvasSize,
+      ),
+    );
+
+    if (result == null) return;
+    widget.onChanged(result.strokes, result.canvasSize);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 600.0;
+        const height = 180.0;
+        final hasSignature = widget.initialStrokes.any((e) => e.length > 1);
+
+        return InkWell(
+          onTap: widget.enabled ? _openSignatureDialog : null,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: width,
+            height: height,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(
+                color: hasSignature ? const Color(0xFF163865) : Colors.black26,
+                width: hasSignature ? 1.6 : 1,
+              ),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _SignaturePainter(
+                      widget.initialStrokes,
+                      sourceSize: widget.initialCanvasSize,
+                      fitToBounds: true,
+                    ),
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+                if (!hasSignature)
+                  const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.draw_outlined, size: 32),
+                        SizedBox(height: 8),
+                        Text(
+                          'Tap to open signing window',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  const Align(
+                    alignment: Alignment.bottomRight,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Color(0xFFEAF0F7),
+                        borderRadius: BorderRadius.all(Radius.circular(8)),
+                      ),
+                      child: Padding(
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        child: Text(
+                          'Tap to edit',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SignatureDialogResult {
+  const _SignatureDialogResult({
+    required this.strokes,
+    required this.canvasSize,
+  });
+
+  final List<List<Offset>> strokes;
+  final Size canvasSize;
+}
+
+class _SignatureDialog extends StatefulWidget {
+  const _SignatureDialog({
+    required this.initialStrokes,
+    required this.initialCanvasSize,
+  });
+
+  final List<List<Offset>> initialStrokes;
+  final Size initialCanvasSize;
+
+  @override
+  State<_SignatureDialog> createState() => _SignatureDialogState();
+}
+
+class _SignatureDialogState extends State<_SignatureDialog> {
+  List<List<Offset>> _strokes = <List<Offset>>[];
+  Size _canvasSize = Size.zero;
+  int _clearRevision = 0;
+
+  bool get _hasSignature => _strokes.any((stroke) => stroke.length > 1);
+
+  @override
+  void initState() {
+    super.initState();
+    _strokes = widget.initialStrokes
+        .map((stroke) => List<Offset>.from(stroke))
+        .toList(growable: true);
+    _canvasSize = widget.initialCanvasSize;
+  }
+
+  void _handleChanged(List<List<Offset>> strokes, Size size) {
+    setState(() {
+      _strokes = strokes;
+      _canvasSize = size;
+    });
+  }
+
+  void _clear() {
+    setState(() {
+      _strokes = <List<Offset>>[];
+      _canvasSize = Size.zero;
+      _clearRevision++;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final maxWidth = media.size.width < 980 ? media.size.width - 32 : 980.0;
+    final maxHeight = media.size.height < 640 ? media.size.height - 32 : 640.0;
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(16),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: maxWidth,
+          maxHeight: maxHeight,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.draw_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Customer signature',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: _SignatureCapturePad(
+                  key: ValueKey(_clearRevision),
+                  initialStrokes: _strokes,
+                  initialCanvasSize: _canvasSize,
+                  onChanged: _handleChanged,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _clear,
+                    icon: const Icon(Icons.clear_rounded),
+                    label: const Text('Clear'),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: !_hasSignature
+                        ? null
+                        : () => Navigator.of(context).pop(
+                              _SignatureDialogResult(
+                                strokes: _strokes,
+                                canvasSize: _canvasSize,
+                              ),
+                            ),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('OK'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SignatureCapturePad extends StatefulWidget {
+  const _SignatureCapturePad({
+    super.key,
+    required this.initialStrokes,
+    required this.initialCanvasSize,
+    required this.onChanged,
+  });
+
+  final List<List<Offset>> initialStrokes;
+  final Size initialCanvasSize;
+  final void Function(List<List<Offset>> strokes, Size size) onChanged;
+
+  @override
+  State<_SignatureCapturePad> createState() => _SignatureCapturePadState();
+}
+
+class _SignatureCapturePadState extends State<_SignatureCapturePad> {
   late List<List<Offset>> _strokes;
+  Size _size = Size.zero;
+  bool _scaledInitialStrokes = false;
 
   @override
   void initState() {
@@ -4382,34 +4683,50 @@ class _SignaturePadState extends State<_SignaturePad> {
         .toList(growable: true);
   }
 
-  @override
-  void didUpdateWidget(covariant _SignaturePad oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.initialStrokes.isEmpty && _strokes.isNotEmpty) {
-      _strokes = <List<Offset>>[];
-    }
-  }
-
-  void _notify(Size size) {
+  void _notify() {
+    if (_size == Size.zero) return;
     widget.onChanged(
       _strokes
           .map((stroke) => List<Offset>.from(stroke))
           .toList(growable: false),
-      size,
+      _size,
     );
   }
 
-  void _startStroke(DragStartDetails details, Size size) {
-    setState(() => _strokes.add(<Offset>[details.localPosition]));
-    _notify(size);
+  void _scaleInitialStrokesIfNeeded(Size size) {
+    if (_scaledInitialStrokes) return;
+    _scaledInitialStrokes = true;
+    _size = size;
+
+    final source = widget.initialCanvasSize;
+    if (source.width > 0 &&
+        source.height > 0 &&
+        (source.width != size.width || source.height != size.height)) {
+      final scaleX = size.width / source.width;
+      final scaleY = size.height / source.height;
+      _strokes = _strokes
+          .map(
+            (stroke) => stroke
+                .map((point) => Offset(point.dx * scaleX, point.dy * scaleY))
+                .toList(growable: false),
+          )
+          .toList(growable: true);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _notify());
   }
 
-  void _appendStroke(DragUpdateDetails details, Size size) {
+  void _startStroke(DragStartDetails details) {
+    setState(() => _strokes.add(<Offset>[details.localPosition]));
+    _notify();
+  }
+
+  void _appendStroke(DragUpdateDetails details) {
     if (_strokes.isEmpty) {
       _strokes.add(<Offset>[]);
     }
     setState(() => _strokes.last.add(details.localPosition));
-    _notify(size);
+    _notify();
   }
 
   @override
@@ -4417,13 +4734,16 @@ class _SignaturePadState extends State<_SignaturePad> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width =
-            constraints.maxWidth.isFinite ? constraints.maxWidth : 600.0;
-        const height = 220.0;
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 900.0;
+        final height =
+            constraints.maxHeight.isFinite ? constraints.maxHeight : 360.0;
         final size = Size(width, height);
+        _scaleInitialStrokesIfNeeded(size);
 
         return GestureDetector(
-          onPanStart: (details) => _startStroke(details, size),
-          onPanUpdate: (details) => _appendStroke(details, size),
+          behavior: HitTestBehavior.opaque,
+          onPanStart: _startStroke,
+          onPanUpdate: _appendStroke,
           child: Container(
             width: width,
             height: height,
@@ -4432,9 +4752,15 @@ class _SignaturePadState extends State<_SignaturePad> {
               border: Border.all(color: Colors.black26),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: CustomPaint(
-              painter: _SignaturePainter(_strokes),
-              child: const SizedBox.expand(),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: CustomPaint(
+                painter: _SignaturePainter(
+                  _strokes,
+                  sourceSize: size,
+                ),
+                child: const SizedBox.expand(),
+              ),
             ),
           ),
         );
@@ -4444,9 +4770,15 @@ class _SignaturePadState extends State<_SignaturePad> {
 }
 
 class _SignaturePainter extends CustomPainter {
-  const _SignaturePainter(this.strokes);
+  const _SignaturePainter(
+    this.strokes, {
+    this.sourceSize = Size.zero,
+    this.fitToBounds = false,
+  });
 
   final List<List<Offset>> strokes;
+  final Size sourceSize;
+  final bool fitToBounds;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -4457,19 +4789,86 @@ class _SignaturePainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
 
+    final bounds = _bounds(strokes);
+    if (fitToBounds && bounds != null) {
+      const padding = 12.0;
+      final availableWidth = math.max(size.width - padding * 2, 1.0);
+      final availableHeight = math.max(size.height - padding * 2, 1.0);
+      final scale = math.min(
+        availableWidth / bounds.width,
+        availableHeight / bounds.height,
+      );
+      final offset = Offset(
+        (size.width - bounds.width * scale) / 2 - bounds.left * scale,
+        (size.height - bounds.height * scale) / 2 - bounds.top * scale,
+      );
+      _drawStrokes(canvas, paint, scale, scale, offset);
+      return;
+    }
+
+    final scaleX = sourceSize.width <= 0 ? 1.0 : size.width / sourceSize.width;
+    final scaleY =
+        sourceSize.height <= 0 ? 1.0 : size.height / sourceSize.height;
+    _drawStrokes(canvas, paint, scaleX, scaleY, Offset.zero);
+  }
+
+  void _drawStrokes(
+    Canvas canvas,
+    Paint paint,
+    double scaleX,
+    double scaleY,
+    Offset offset,
+  ) {
     for (final stroke in strokes) {
       if (stroke.length < 2) continue;
-      final path = Path()..moveTo(stroke.first.dx, stroke.first.dy);
+      final path = Path()
+        ..moveTo(
+          stroke.first.dx * scaleX + offset.dx,
+          stroke.first.dy * scaleY + offset.dy,
+        );
       for (final point in stroke.skip(1)) {
-        path.lineTo(point.dx, point.dy);
+        path.lineTo(
+          point.dx * scaleX + offset.dx,
+          point.dy * scaleY + offset.dy,
+        );
       }
       canvas.drawPath(path, paint);
     }
   }
 
+  Rect? _bounds(List<List<Offset>> strokes) {
+    double? left;
+    double? top;
+    double? right;
+    double? bottom;
+
+    for (final stroke in strokes) {
+      if (stroke.length < 2) continue;
+      for (final point in stroke) {
+        left = left == null ? point.dx : math.min(left, point.dx);
+        top = top == null ? point.dy : math.min(top, point.dy);
+        right = right == null ? point.dx : math.max(right, point.dx);
+        bottom = bottom == null ? point.dy : math.max(bottom, point.dy);
+      }
+    }
+
+    if (left == null || top == null || right == null || bottom == null) {
+      return null;
+    }
+
+    return Rect.fromLTWH(
+      left,
+      top,
+      math.max(right - left, 1.0),
+      math.max(bottom - top, 1.0),
+    );
+  }
+
   @override
   bool shouldRepaint(covariant _SignaturePainter oldDelegate) =>
-      oldDelegate.strokes != strokes;
+      oldDelegate.strokes != strokes ||
+      oldDelegate.sourceSize != sourceSize ||
+      oldDelegate.fitToBounds != fitToBounds;
 }
 
 class _MissingFieldsReview extends StatelessWidget {

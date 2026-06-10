@@ -4,14 +4,37 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import 'leu_logo.dart';
 import 'responsive.dart';
 import 'status_badge.dart';
 
-class AppShell extends StatelessWidget {
+bool _desktopSidebarCollapsed = false;
+
+class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.title, required this.child});
 
   final String title;
   final Widget child;
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  late bool _sidebarCollapsed;
+
+  @override
+  void initState() {
+    super.initState();
+    _sidebarCollapsed = _desktopSidebarCollapsed;
+  }
+
+  void _toggleSidebarCollapsed() {
+    setState(() {
+      _sidebarCollapsed = !_sidebarCollapsed;
+      _desktopSidebarCollapsed = _sidebarCollapsed;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +60,7 @@ class AppShell extends StatelessWidget {
       },
       child: KeyedSubtree(
         key: ValueKey(location),
-        child: child,
+        child: widget.child,
       ),
     );
 
@@ -53,6 +76,7 @@ class AppShell extends StatelessWidget {
                   padding: const EdgeInsets.all(12),
                   child: _Sidebar(
                     selectedIndex: selectedIndex,
+                    collapsed: false,
                     onSelect: (index) {
                       Navigator.of(context).pop();
                       _go(context, index);
@@ -100,6 +124,8 @@ class AppShell extends StatelessWidget {
                       padding: const EdgeInsets.fromLTRB(18, 18, 0, 18),
                       child: _Sidebar(
                         selectedIndex: selectedIndex,
+                        collapsed: _sidebarCollapsed,
+                        onToggleCollapsed: _toggleSidebarCollapsed,
                         onSelect: (index) => _go(context, index),
                       ),
                     ),
@@ -133,7 +159,7 @@ class AppShell extends StatelessWidget {
                         child: Column(
                           children: [
                             _TopBar(
-                              title: title,
+                              title: widget.title,
                               showMenu: !desktop,
                             ),
                             Consumer<AppState>(
@@ -443,10 +469,14 @@ class _TopBar extends StatelessWidget {
 class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.selectedIndex,
+    required this.collapsed,
+    this.onToggleCollapsed,
     required this.onSelect,
   });
 
   final int selectedIndex;
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
   final ValueChanged<int> onSelect;
 
   @override
@@ -461,24 +491,28 @@ class _Sidebar extends StatelessWidget {
         label: 'Dashboard',
         icon: Icons.grid_view_rounded,
         selected: selectedIndex == 0,
+        collapsed: collapsed,
         onTap: () => onSelect(0),
       ),
       _NavItem(
         label: 'Consignors',
         icon: Icons.people_alt_outlined,
         selected: selectedIndex == 1,
+        collapsed: collapsed,
         onTap: () => onSelect(1),
       ),
       _NavItem(
         label: 'Contracts',
         icon: Icons.description_outlined,
         selected: selectedIndex == 2,
+        collapsed: collapsed,
         onTap: () => onSelect(2),
       ),
       _NavItem(
         label: 'Settings',
         icon: Icons.settings_outlined,
         selected: selectedIndex == 3,
+        collapsed: collapsed,
         onTap: () => onSelect(3),
       ),
       if (state.isAdminUser)
@@ -486,13 +520,16 @@ class _Sidebar extends StatelessWidget {
           label: 'Users',
           icon: Icons.manage_accounts_outlined,
           selected: selectedIndex == 4,
+          collapsed: collapsed,
           onTap: () => onSelect(4),
         ),
     ];
 
-    return Container(
-      width: 286,
-      padding: const EdgeInsets.all(20),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      width: collapsed ? 88 : 286,
+      padding: EdgeInsets.all(collapsed ? 12 : 20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -512,49 +549,27 @@ class _Sidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
-            ),
-            child: Column(
-              children: [
-                Image.asset(
-                  'assets/images/logo-color.png',
-                  width: 196,
-                  height: 92,
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.high,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'C.O.I.N.S.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Color(0xFFDCE6F3),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
+          _SidebarHeader(
+            collapsed: collapsed,
+            onToggleCollapsed: onToggleCollapsed,
           ),
           const SizedBox(height: 26),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Text(
-              'WORKSPACE',
-              style: TextStyle(
-                color: Color(0xFFDCE6F3),
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.2,
+          if (!collapsed) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                'WORKSPACE',
+                style: TextStyle(
+                  color: Color(0xFFDCE6F3),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2,
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
+          ] else
+            const SizedBox(height: 12),
           Expanded(
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
@@ -562,26 +577,170 @@ class _Sidebar extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+          _SidebarUserTile(
+            collapsed: collapsed,
+            initials: initials,
+            activeUsername: activeUsername,
+            onLogout: () => _logout(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _logout(BuildContext context) async {
+    final appState = context.read<AppState>();
+    final canLeave = await appState.canLeaveCurrentRoute(consume: true);
+
+    if (!context.mounted || !canLeave) return;
+
+    context.go('/');
+    appState.logoutLocalUser();
+  }
+
+  String _initials(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 'S';
+
+    final parts = trimmed.split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+    return parts.take(2).map((p) => p[0].toUpperCase()).join();
+  }
+}
+
+class _SidebarHeader extends StatelessWidget {
+  const _SidebarHeader({
+    required this.collapsed,
+    required this.onToggleCollapsed,
+  });
+
+  final bool collapsed;
+  final VoidCallback? onToggleCollapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: collapsed ? 10 : 18,
+        vertical: collapsed ? 12 : 20,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: Column(
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: collapsed
+                ? const LeuLogo(
+                    key: ValueKey('collapsed-logo'),
+                    size: 42,
+                    variant: LeuLogoVariant.iconOnly,
+                  )
+                : const LeuLogo(
+                    key: ValueKey('expanded-logo'),
+                    size: 196,
+                    variant: LeuLogoVariant.full,
+                  ),
+          ),
+          if (!collapsed) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'C.O.I.N.S.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFFDCE6F3),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-            child: Row(
+          ],
+          if (onToggleCollapsed != null) ...[
+            SizedBox(height: collapsed ? 10 : 14),
+            Tooltip(
+              message: collapsed ? 'Expand navigation' : 'Collapse navigation',
+              child: IconButton(
+                onPressed: onToggleCollapsed,
+                icon: Icon(
+                  collapsed
+                      ? Icons.keyboard_double_arrow_right_rounded
+                      : Icons.keyboard_double_arrow_left_rounded,
+                ),
+                color: Colors.white,
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.white.withValues(alpha: 0.10),
+                  hoverColor: Colors.white.withValues(alpha: 0.16),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SidebarUserTile extends StatelessWidget {
+  const _SidebarUserTile({
+    required this.collapsed,
+    required this.initials,
+    required this.activeUsername,
+    required this.onLogout,
+  });
+
+  final bool collapsed;
+  final String initials;
+  final String activeUsername;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+
+    final avatar = CircleAvatar(
+      radius: 18,
+      backgroundColor: palette.brandAccent,
+      child: Text(
+        initials,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+      ),
+      child: collapsed
+          ? Column(
               children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: palette.brandAccent,
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
+                Tooltip(message: activeUsername, child: avatar),
+                const SizedBox(height: 8),
+                Tooltip(
+                  message: 'Log out',
+                  child: IconButton(
+                    onPressed: onLogout,
+                    icon: const Icon(Icons.logout_rounded),
+                    color: Colors.white,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white.withValues(alpha: 0.10),
+                      hoverColor: Colors.white.withValues(alpha: 0.16),
                     ),
                   ),
                 ),
+              ],
+            )
+          : Row(
+              children: [
+                avatar,
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -613,7 +772,7 @@ class _Sidebar extends StatelessWidget {
                 Tooltip(
                   message: 'Log out',
                   child: IconButton(
-                    onPressed: () => _logout(context),
+                    onPressed: onLogout,
                     icon: const Icon(Icons.logout_rounded),
                     color: Colors.white,
                     style: IconButton.styleFrom(
@@ -624,28 +783,7 @@ class _Sidebar extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ],
-      ),
     );
-  }
-
-  Future<void> _logout(BuildContext context) async {
-    final appState = context.read<AppState>();
-    final canLeave = await appState.canLeaveCurrentRoute(consume: true);
-
-    if (!context.mounted || !canLeave) return;
-
-    context.go('/');
-    appState.logoutLocalUser();
-  }
-
-  String _initials(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) return 'S';
-
-    final parts = trimmed.split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
-    return parts.take(2).map((p) => p[0].toUpperCase()).join();
   }
 }
 
@@ -654,19 +792,21 @@ class _NavItem extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.selected,
+    required this.collapsed,
     required this.onTap,
   });
 
   final String label;
   final IconData icon;
   final bool selected;
+  final bool collapsed;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
 
-    return Padding(
+    final item = Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: selected ? Colors.white : Colors.transparent,
@@ -685,35 +825,42 @@ class _NavItem extends StatelessWidget {
             ),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             child: Row(
+              mainAxisAlignment: collapsed
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
               children: [
                 Icon(
                   icon,
                   color: selected ? palette.brand : Colors.white,
                   size: 20,
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: selected ? palette.brand : Colors.white,
-                    fontWeight: FontWeight.w800,
+                if (!collapsed) ...[
+                  const SizedBox(width: 12),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: selected ? palette.brand : Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const Spacer(),
-                AnimatedOpacity(
-                  duration: const Duration(milliseconds: 180),
-                  opacity: selected ? 1 : 0,
-                  child: Icon(
-                    Icons.chevron_right_rounded,
-                    color: palette.brand,
-                    size: 18,
+                  const Spacer(),
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 180),
+                    opacity: selected ? 1 : 0,
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      color: palette.brand,
+                      size: 18,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
         ),
       ),
     );
+
+    return collapsed ? Tooltip(message: label, child: item) : item;
   }
 }
