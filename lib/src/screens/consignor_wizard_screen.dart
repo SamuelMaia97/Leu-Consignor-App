@@ -9,6 +9,7 @@ import 'package:iban_to_bic/iban_to_bic.dart';
 import 'package:provider/provider.dart';
 
 import '../domain/consignor_type.dart';
+import '../models/abacus_sync.dart';
 import '../models/auction_option.dart';
 import '../models/consignor.dart';
 import '../models/contract_record.dart';
@@ -38,8 +39,6 @@ const _representativeIdValidationReportKind =
 const _pentaOutputRootPath = r'C:\CoinContracts';
 const _pentaScanTimeout = Duration(minutes: 2);
 const _unsignedContractPrefix = 'PROV-';
-const _signedContractPrefix = 'COR-';
-const _legacyProvisionalContractPrefix = 'Prov-';
 
 class ConsignorWizardScreen extends StatefulWidget {
   const ConsignorWizardScreen({
@@ -93,6 +92,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   bool _searching = false;
   bool _representativeSearching = false;
   bool _guardRegistered = false;
+  bool _auctionRefreshInFlight = false;
   bool? _resumeContractOnly;
   String? _activeContractId;
   String? _generatedPdfPath;
@@ -439,6 +439,29 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
     );
+    if (_steps[next] == _WizardStep.auctions) {
+      unawaited(_ensureAuctionsAvailable());
+    }
+  }
+
+  Future<void> _ensureAuctionsAvailable() async {
+    if (_auctionRefreshInFlight || !mounted) return;
+
+    final state = context.read<AppState>();
+    await state.refreshAuthSessionState(notify: false);
+    if (!mounted ||
+        state.auctions.isNotEmpty ||
+        !state.hasValidToken ||
+        state.settings.apiBaseUrl.trim().isEmpty) {
+      return;
+    }
+
+    _auctionRefreshInFlight = true;
+    try {
+      await state.refreshAuctions(silent: false);
+    } finally {
+      _auctionRefreshInFlight = false;
+    }
   }
 
   void _next() {
@@ -697,7 +720,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     );
   }
 
-  Future<bool> _openConsignorReviewEditor() async {
+  Future<bool> _openConsignorReviewEditor(
+      {bool highlightMissing = false}) async {
     final originalState = _draft.toResumeJson();
 
     final saved = await showDialog<bool>(
@@ -709,6 +733,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         salutationOptions: _salutationOptions,
         correspondenceOptions: _correspondenceOptions,
         phonePrefixes: context.read<AppState>().phonePrefixes,
+        highlightMissing: highlightMissing,
         onChanged: () => setState(() {}),
         onLookupIbanPressed: () => _handleIbanLookupPressed(_draft),
       ),
@@ -780,7 +805,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       ),
     );
 
-    final saved = await _openConsignorReviewEditor();
+    final saved = await _openConsignorReviewEditor(highlightMissing: true);
     if (!mounted) return false;
     if (!saved) return false;
 
@@ -1018,7 +1043,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         snapshot[file.path] = await file.length();
       }
 
-      if (snapshot.isNotEmpty && _sameFileSnapshot(snapshot, previousSnapshot)) {
+      if (snapshot.isNotEmpty &&
+          _sameFileSnapshot(snapshot, previousSnapshot)) {
         stableCycles++;
         if (stableCycles >= 2) {
           return files;
@@ -1136,9 +1162,23 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     final firstAuctionId = auctionIds.isEmpty ? null : auctionIds.first;
 
-    final uploads = _draft.uploads.map((upload) {
-      return upload.copyWith(auctionId: firstAuctionId);
-    }).toList(growable: true);
+    final uploads = <ContractUpload>[];
+    for (final upload in _draft.uploads) {
+      if (upload.isGeneratedContractPdf) {
+        if ((upload.fileId ?? 0) > 0) {
+          uploads.add(
+            upload.copyWith(
+              auctionId: firstAuctionId,
+              isDeleted: true,
+              localLastModifiedUtc: nowUtc,
+            ),
+          );
+        }
+        continue;
+      }
+
+      uploads.add(upload.copyWith(auctionId: firstAuctionId));
+    }
 
     final pdfPath = _generatedPdfPath?.trim() ?? '';
     String? pdfName;
@@ -1149,26 +1189,18 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           ? 'consignor_contract.pdf'
           : pdfFile.uri.pathSegments.last;
 
-      final alreadyAdded = uploads.any(
-        (upload) =>
-            !upload.isDeleted &&
-            upload.fileType == UploadType.agreement &&
-            upload.path == pdfPath,
+      uploads.add(
+        ContractUpload(
+          localId:
+              'generated_contract_${nowUtc.microsecondsSinceEpoch}_${pdfPath.hashCode}',
+          auctionId: firstAuctionId,
+          fileName: pdfName,
+          fileType: UploadType.agreement,
+          kind: 'GeneratedContract',
+          path: pdfPath,
+          localLastModifiedUtc: nowUtc,
+        ),
       );
-
-      if (!alreadyAdded) {
-        uploads.add(
-          ContractUpload(
-            localId:
-                'agreement_${pdfName}_${nowUtc.microsecondsSinceEpoch}_${pdfPath.hashCode}',
-            auctionId: firstAuctionId,
-            fileName: pdfName,
-            fileType: UploadType.agreement,
-            path: pdfPath,
-            localLastModifiedUtc: nowUtc,
-          ),
-        );
-      }
     }
 
     final baseRecord = ContractRecord.empty(
@@ -1194,34 +1226,48 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     ContractRecord record, {
     required bool includeSignatures,
   }) {
-    final reference = record.systemReferenceContract > 0
-        ? record.systemReferenceContract.toString()
-        : record.id;
-    final baseName = 'consignor_contract_$reference.pdf';
-    final prefix =
-        includeSignatures ? _signedContractPrefix : _unsignedContractPrefix;
-    return '$prefix${_withoutContractPrefix(baseName)}';
+    final prefix = includeSignatures ? '' : _unsignedContractPrefix;
+    final auctionPart = _auctionCodePart(record.auctionDisplayNames);
+    final auctionSuffix = auctionPart.isEmpty ? '' : ' ($auctionPart)';
+    return '$prefix'
+        'Consignor-Agreement$auctionSuffix ${_todayDatePart()}.pdf';
   }
 
-  String _withoutContractPrefix(String value) {
-    var current = value.trim();
-    var changed = true;
-    while (changed) {
-      changed = false;
-      final lower = current.toLowerCase();
-      for (final prefix in const [
-        _unsignedContractPrefix,
-        _signedContractPrefix,
-        _legacyProvisionalContractPrefix,
-      ]) {
-        if (lower.startsWith(prefix.toLowerCase())) {
-          current = current.substring(prefix.length);
-          changed = true;
-          break;
-        }
-      }
-    }
-    return current;
+  String _auctionCodePart(List<String> auctionNames) {
+    final codes = auctionNames
+        .map(_auctionCode)
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+    return codes.join(' & ');
+  }
+
+  String _auctionCode(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return '';
+
+    final webMatch = RegExp(
+      r'\bWeb\s+(?:Auction|Auktion)\s*(\d+)\b',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (webMatch != null) return 'WA${webMatch.group(1)}';
+
+    final auctionMatch = RegExp(
+      r'\b(?:Auction|Auktion)\s*(\d+)\b',
+      caseSensitive: false,
+    ).firstMatch(normalized);
+    if (auctionMatch != null) return 'A${auctionMatch.group(1)}';
+
+    return normalized
+        .replaceAll(RegExp(r'[\\/:*?"<>|]+'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  String _todayDatePart() {
+    final now = DateTime.now();
+    return '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
   }
 
   Future<Consignor> _saveConsignorLocal({required bool draft}) async {
@@ -1410,6 +1456,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }
 
   Future<Consignor> _saveConsignorBeforeContract(AppState state) async {
+    final authorizedRepresentative = _requiresRepresentativeDetails
+        ? _representativeDraft.toConsignor()
+        : null;
     var saved = await state.saveConsignor(_draft.toConsignor());
     _draft.localConsignorId = saved.id;
 
@@ -1417,7 +1466,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       return saved;
     }
 
-    final synced = await state.syncConsignor(saved.id);
+    final synced = await state.syncConsignor(
+      saved.id,
+      authorizedRepresentative: authorizedRepresentative,
+    );
     saved = synced ?? state.consignorById(saved.id) ?? saved;
     _draft.localConsignorId = saved.id;
 
@@ -1468,8 +1520,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       await state.saveContract(contract);
 
       if (state.hasValidToken && contract.auctionId != null) {
-        final synced =
-            await state.syncContract(savedConsignor.id, contract.auctionId!);
+        final synced = await state.syncContract(
+          savedConsignor.id,
+          contract.auctionId!,
+          syncEvent: AbacusContractSyncEvent.contractSigned,
+        );
         final error = synced?.syncErrorMessage;
         if (synced == null || (error != null && error.trim().isNotEmpty)) {
           throw Exception(
@@ -1735,7 +1790,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           saving: _saving,
           generatedPdfPath: _generatedPdfPath,
           onEditConsignor: () {
-            unawaited(_openConsignorReviewEditor());
+            unawaited(
+              _openConsignorReviewEditor(
+                highlightMissing: _draft.missingRequiredFields.isNotEmpty,
+              ),
+            );
           },
           onBack: _back,
           onGeneratePdf: () => _generatePdf(),
@@ -2664,7 +2723,6 @@ class _ExistingCustomerStep extends StatelessWidget {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
-        
         ...[
           const SizedBox(height: 12),
           TextField(
@@ -2868,7 +2926,8 @@ class _RepresentativeStep extends StatelessWidget {
             title: 'Ownership',
             child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('The consignor is also the (beneficial) owner'),
+              title: const Text(
+                  'Are the coins delivered directly by the Consignor'),
               value: ownerDraft.consignorType == ConsignorType.legalEntity
                   ? false
                   : ownerDraft.coinsOwnedByConsignor,
@@ -3433,10 +3492,7 @@ class _AuctionStep extends StatelessWidget {
               label: 'Auctions *',
               items: auctions,
               selected: draft.selectedAuctions,
-              itemLabel: (auction) => _localizedAuctionDisplayName(
-                auction.displayName,
-                draft.correspondence,
-              ),
+              itemLabel: (auction) => auction.displayName,
               validator: MultiAuctionSelectField.requireSelection,
               onChanged: onAuctionsChanged,
             ),
@@ -3832,10 +3888,7 @@ class _FullReviewStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final missingFields = draft.missingRequiredFields;
     final selectedAuctions = draft.selectedAuctions
-        .map((auction) => _localizedAuctionDisplayName(
-              auction.displayName,
-              draft.correspondence,
-            ))
+        .map((auction) => auction.displayName)
         .where((name) => name.trim().isNotEmpty)
         .join(', ');
     final commissionRate = draft.commissionRate.trim();
@@ -3985,6 +4038,7 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
     required this.salutationOptions,
     required this.correspondenceOptions,
     required this.phonePrefixes,
+    required this.highlightMissing,
     required this.onChanged,
     required this.onLookupIbanPressed,
   });
@@ -3994,6 +4048,7 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
   final List<_LookupOption<int>> salutationOptions;
   final List<_LookupOption<String>> correspondenceOptions;
   final List<PhonePrefix> phonePrefixes;
+  final bool highlightMissing;
   final VoidCallback onChanged;
   final VoidCallback onLookupIbanPressed;
 
@@ -4005,7 +4060,15 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
 class _ConsignorReviewEditDialogState
     extends State<_ConsignorReviewEditDialog> {
   final _formKey = GlobalKey<FormState>();
-  AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
+  late AutovalidateMode _autovalidateMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _autovalidateMode = widget.highlightMissing
+        ? AutovalidateMode.always
+        : AutovalidateMode.disabled;
+  }
 
   void _handleChanged() {
     setState(() {});

@@ -6,6 +6,7 @@ import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 
 import 'file_service.dart';
+import '../models/abacus_sync.dart';
 import '../models/app_settings.dart';
 import '../models/auction_option.dart';
 import '../models/consignor.dart';
@@ -286,7 +287,10 @@ class ApiService {
     }
   }
 
-  Future<PushConsignorResult> pushConsignors(List<Consignor> consignors) async {
+  Future<PushConsignorResult> pushConsignors(
+    List<Consignor> consignors, {
+    Map<String, Consignor> authorizedRepresentatives = const {},
+  }) async {
     if (settings.apiBaseUrl.trim().isEmpty || consignors.isEmpty) {
       return const PushConsignorResult();
     }
@@ -313,7 +317,10 @@ class ApiService {
         final response = await _dio.put(
           _path(settings.consignorsUpdateOne)
               .replaceAll('{id}', '$consignorId'),
-          data: consignor.toJson(),
+          data: _consignorPayload(
+            consignor,
+            authorizedRepresentative: authorizedRepresentatives[consignor.id],
+          ),
         );
 
         final payload = response.data is Map
@@ -341,7 +348,14 @@ class ApiService {
       if (toCreate.isNotEmpty) {
         final response = await _dio.post(
           _path(settings.consignorsBulkUpdate),
-          data: toCreate.map((e) => e.toJson()).toList(),
+          data: toCreate
+              .map(
+                (e) => _consignorPayload(
+                  e,
+                  authorizedRepresentative: authorizedRepresentatives[e.id],
+                ),
+              )
+              .toList(),
         );
         final data = response.data;
 
@@ -410,16 +424,32 @@ class ApiService {
     int auctionId,
     List<ContractUpload> uploads, {
     DateTime? signedAt,
+    AbacusContractSyncEvent syncEvent = AbacusContractSyncEvent.manualSync,
+    String? contractNumber,
   }) async {
     _ensureConfigured();
     try {
+      final eventUtc = DateTime.now().toUtc();
       final response = await _dio.post(
         '/api/consignors-app/consignors/$consignorId/contracts',
         data: {
           'consignorId': consignorId,
           'auctionId': auctionId,
           'signedAt': signedAt?.toUtc().toIso8601String(),
-          'files': [for (final upload in uploads) await _uploadPayload(upload)],
+          'abacusSync': _contractSyncPayload(syncEvent),
+          'files': [
+            for (final upload in uploads)
+              await _uploadPayload(
+                upload,
+                abacusMetadata: AbacusFileSyncMetadata.forUpload(
+                  upload: upload,
+                  consignorSubjectId: consignorId,
+                  contractNumber: contractNumber ?? auctionId.toString(),
+                  eventUtc: eventUtc,
+                  trigger: syncEvent,
+                ),
+              ),
+          ],
         },
       );
 
@@ -434,8 +464,10 @@ class ApiService {
 
   Future<ContractUpload> updateUpload(
     int consignorId,
-    ContractUpload upload,
-  ) async {
+    ContractUpload upload, {
+    AbacusContractSyncEvent syncEvent = AbacusContractSyncEvent.manualSync,
+    String? contractNumber,
+  }) async {
     _ensureConfigured();
     final uploadId = upload.fileId;
     if (uploadId == null || uploadId <= 0) {
@@ -445,7 +477,16 @@ class ApiService {
     try {
       final response = await _dio.put(
         '/api/consignors-app/consignors/$consignorId/uploads/$uploadId',
-        data: await _uploadPayload(upload),
+        data: await _uploadPayload(
+          upload,
+          abacusMetadata: AbacusFileSyncMetadata.forUpload(
+            upload: upload,
+            consignorSubjectId: consignorId,
+            contractNumber: contractNumber ?? uploadId.toString(),
+            eventUtc: DateTime.now().toUtc(),
+            trigger: syncEvent,
+          ),
+        ),
       );
 
       return await _uploadFromJson(
@@ -468,11 +509,18 @@ class ApiService {
     }
   }
 
-  Future<ContractRecord> syncContract(int consignorId, int auctionId) async {
+  Future<ContractRecord> syncContract(
+    int consignorId,
+    int auctionId, {
+    AbacusContractSyncEvent syncEvent = AbacusContractSyncEvent.manualSync,
+  }) async {
     _ensureConfigured();
     try {
       final response = await _dio.post(
         '/api/consignors-app/consignors/$consignorId/contracts/$auctionId/sync',
+        data: {
+          'abacusSync': _contractSyncPayload(syncEvent),
+        },
       );
       return await _contractFromGroupJson(
         consignorId: consignorId,
@@ -485,8 +533,9 @@ class ApiService {
 
   Future<ContractRecord> syncContractRecord(
     int consignorId,
-    ContractRecord record,
-  ) async {
+    ContractRecord record, {
+    AbacusContractSyncEvent syncEvent = AbacusContractSyncEvent.manualSync,
+  }) async {
     _ensureConfigured();
 
     final auctionId = record.auctionId;
@@ -503,6 +552,7 @@ class ApiService {
     var workingRecord = record.copyWith(
       uploads: record.uploads.map((upload) => upload.copyWith()).toList(),
     );
+    final contractNumber = _contractNumber(record);
 
     final pendingDeletes = workingRecord.uploads
         .where((upload) => upload.isDeleted && (upload.fileId ?? 0) > 0)
@@ -512,6 +562,22 @@ class ApiService {
         .toList(growable: false);
 
     var touchedRemote = false;
+    final hasPendingUploadWork = pendingDeletes.isNotEmpty ||
+        pendingCreates.isNotEmpty ||
+        workingRecord.uploads.any((upload) {
+          return (upload.fileId ?? 0) > 0 && upload.needsSync;
+        });
+
+    if (!hasPendingUploadWork &&
+        syncEvent != AbacusContractSyncEvent.manualSync) {
+      final refreshed = await syncContract(
+        consignorId,
+        auctionId,
+        syncEvent: syncEvent,
+      );
+      refreshed.markSynced(remoteModifiedUtc: refreshed.lastModifiedUtc);
+      return refreshed;
+    }
 
     for (final upload in pendingDeletes) {
       await deleteUpload(consignorId, upload.fileId!);
@@ -532,7 +598,12 @@ class ApiService {
         final payload = upload.copyWith(
           fileData: await _readFileAsBase64(upload.path),
         );
-        final serverUpload = await updateUpload(consignorId, payload);
+        final serverUpload = await updateUpload(
+          consignorId,
+          payload,
+          syncEvent: syncEvent,
+          contractNumber: contractNumber,
+        );
         final serverUtc = serverUpload.serverLastModifiedUtc ??
             serverUpload.localLastModifiedUtc;
 
@@ -566,6 +637,8 @@ class ApiService {
         auctionId,
         createPayloads,
         signedAt: workingRecord.signedAt,
+        syncEvent: syncEvent,
+        contractNumber: contractNumber,
       );
 
       final mergedUploads = <ContractUpload>[];
@@ -600,7 +673,11 @@ class ApiService {
         uploads: mergedUploads,
       );
     } else if (touchedRemote) {
-      final refreshed = await syncContract(consignorId, auctionId);
+      final refreshed = await syncContract(
+        consignorId,
+        auctionId,
+        syncEvent: syncEvent,
+      );
       final mergedUploads = <ContractUpload>[];
 
       for (final serverUpload in refreshed.uploads) {
@@ -757,7 +834,48 @@ class ApiService {
     );
   }
 
-  Future<Map<String, dynamic>> _uploadPayload(ContractUpload upload) async {
+  Map<String, dynamic> _consignorPayload(
+    Consignor consignor, {
+    Consignor? authorizedRepresentative,
+  }) {
+    final payload = consignor.toJson();
+    if (authorizedRepresentative != null) {
+      payload['abacusRepresentativeLink'] = AbacusRepresentativeLinkMetadata(
+        representative: authorizedRepresentative,
+        trigger: 'ConsignorSync',
+      ).toJson();
+    }
+    return payload;
+  }
+
+  Map<String, dynamic> _contractSyncPayload(AbacusContractSyncEvent event) => {
+        'queueForAbacus': event != AbacusContractSyncEvent.manualSync,
+        'trigger': event.apiName,
+        'target': 'VendorDossier',
+        'fileStoreEndpoint': '/api/file-store/v1/user',
+        'documentsEndpoint': 'SubjectDocuments',
+        'verifyReceipt': event.requiresDossierReceipt,
+        'retry': {
+          'maxAttempts': 3,
+          'logBackofficeError': true,
+        },
+      };
+
+  String _contractNumber(ContractRecord record) {
+    if (record.systemReferenceContract > 0) {
+      return record.systemReferenceContract.toString();
+    }
+    final pdfName = record.pdfName.trim();
+    if (pdfName.isNotEmpty && pdfName != 'consignor_contract.pdf') {
+      return pdfName.replaceAll(RegExp(r'\.[^.]+$'), '');
+    }
+    return record.id;
+  }
+
+  Future<Map<String, dynamic>> _uploadPayload(
+    ContractUpload upload, {
+    AbacusFileSyncMetadata? abacusMetadata,
+  }) async {
     String? fileData =
         upload.fileData.trim().isNotEmpty ? upload.fileData : null;
 
@@ -768,7 +886,7 @@ class ApiService {
       }
     }
 
-    return {
+    final payload = {
       'localId': upload.localId,
       'fileId': upload.fileId,
       'auctionId': upload.auctionId,
@@ -779,6 +897,12 @@ class ApiService {
       'signedAt': upload.signedAt?.toUtc().toIso8601String(),
       'lastModifiedUtc': upload.localLastModifiedUtc.toUtc().toIso8601String(),
     };
+
+    if (abacusMetadata != null) {
+      payload['abacusSync'] = abacusMetadata.toJson();
+    }
+
+    return payload;
   }
 
   Future<String?> _persistRemoteFile({

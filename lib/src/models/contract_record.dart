@@ -90,6 +90,23 @@ class ContractUpload {
 
   bool get hasServerReference => (fileId ?? 0) > 0;
 
+  bool get isGeneratedContractPdf {
+    if (fileType != UploadType.agreement) return false;
+
+    final normalizedKind = _normalizeGeneratedContractToken(kind);
+    if (normalizedKind == 'agreement' ||
+        normalizedKind == 'contract' ||
+        normalizedKind == 'generatedcontract') {
+      return true;
+    }
+
+    final normalizedName = _normalizeGeneratedContractToken('$fileName $path');
+    return normalizedName.contains('einlieferungsvertrag') ||
+        normalizedName.contains('consignorcontract') ||
+        normalizedName.contains('consignoragreement') ||
+        normalizedName.contains('provconsignoragreement');
+  }
+
   bool get needsSync {
     final server = serverLastModifiedUtc;
     if (server == null) return true;
@@ -189,6 +206,14 @@ class ContractUpload {
 
   static int? _toInt(Object? value) =>
       value is int ? value : int.tryParse(value?.toString() ?? '');
+
+  static String _normalizeGeneratedContractToken(String value) {
+    if (value.trim().isEmpty) return '';
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\.[a-z0-9]+$'), '')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
 }
 
 class ContractRecord {

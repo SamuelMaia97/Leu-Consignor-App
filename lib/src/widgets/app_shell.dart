@@ -530,7 +530,7 @@ class _Sidebar extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Consignor App',
+                  'C.O.I.N.S.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Color(0xFFDCE6F3),
