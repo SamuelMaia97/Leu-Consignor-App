@@ -4558,18 +4558,9 @@ class _SignatureStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _SignatureCaptureSection(
-          title: 'Consignment agreement',
-          dialogTitle: 'Signature Consignment Agreement',
-          strokes: draft.contractSignatureStrokes,
-          canvasSize: draft.contractSignatureCanvasSize,
-          saving: saving,
-          onChanged: onContractSignatureChanged,
-          onClear: onClearContractSignature,
-        ),
-        const SizedBox(height: 12),
-        _SignatureCaptureSection(
-          title: 'Annex A',
-          dialogTitle: 'Signature Annex A',
+          title: 'Signature Annex A (Declaration on the right of disposal)',
+          dialogTitle:
+              'Signature Annex A (Declaration on the right of disposal)',
           strokes: draft.annexASignatureStrokes,
           canvasSize: draft.annexASignatureCanvasSize,
           saving: saving,
@@ -4578,13 +4569,25 @@ class _SignatureStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _SignatureCaptureSection(
-          title: 'Annex C',
-          dialogTitle: 'Signature Annex C',
+          title:
+              'Signature Annex C (Information sheet on existing import and export regulations)',
+          dialogTitle:
+              'Signature Annex C (Information sheet on existing import and export regulations)',
           strokes: draft.annexCSignatureStrokes,
           canvasSize: draft.annexCSignatureCanvasSize,
           saving: saving,
           onChanged: onAnnexCSignatureChanged,
           onClear: onClearAnnexCSignature,
+        ),
+        const SizedBox(height: 12),
+        _SignatureCaptureSection(
+          title: 'Signature Consignment Agreement',
+          dialogTitle: 'Signature Consignment Agreement',
+          strokes: draft.contractSignatureStrokes,
+          canvasSize: draft.contractSignatureCanvasSize,
+          saving: saving,
+          onChanged: onContractSignatureChanged,
+          onClear: onClearContractSignature,
         ),
         const SizedBox(height: 12),
         SectionCard(
