@@ -4564,6 +4564,16 @@ class _SignatureStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _SignatureCaptureSection(
+          title: 'Signature Consignment Agreement',
+          dialogTitle: 'Signature Consignment Agreement',
+          strokes: draft.contractSignatureStrokes,
+          canvasSize: draft.contractSignatureCanvasSize,
+          saving: saving,
+          onChanged: onContractSignatureChanged,
+          onClear: onClearContractSignature,
+        ),
+        const SizedBox(height: 12),
+        _SignatureCaptureSection(
           title: 'Signature Annex A (Declaration on the right of disposal)',
           dialogTitle:
               'Signature Annex A (Declaration on the right of disposal)',
@@ -4584,16 +4594,6 @@ class _SignatureStep extends StatelessWidget {
           saving: saving,
           onChanged: onAnnexCSignatureChanged,
           onClear: onClearAnnexCSignature,
-        ),
-        const SizedBox(height: 12),
-        _SignatureCaptureSection(
-          title: 'Signature Consignment Agreement',
-          dialogTitle: 'Signature Consignment Agreement',
-          strokes: draft.contractSignatureStrokes,
-          canvasSize: draft.contractSignatureCanvasSize,
-          saving: saving,
-          onChanged: onContractSignatureChanged,
-          onClear: onClearContractSignature,
         ),
         const SizedBox(height: 12),
         SectionCard(
