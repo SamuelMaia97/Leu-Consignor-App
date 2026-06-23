@@ -26,6 +26,8 @@ enum AbacusDocumentKind {
   consignmentContract,
   passport,
   representativePassport,
+  idValidationReport,
+  representativeIdValidationReport,
   coinImage,
 }
 
@@ -34,6 +36,9 @@ extension AbacusDocumentKindX on AbacusDocumentKind {
         AbacusDocumentKind.consignmentContract => 'ConsignmentContract',
         AbacusDocumentKind.passport => 'Passport',
         AbacusDocumentKind.representativePassport => 'RepresentativePassport',
+        AbacusDocumentKind.idValidationReport => 'IdValidationReport',
+        AbacusDocumentKind.representativeIdValidationReport =>
+          'RepresentativeIdValidationReport',
         AbacusDocumentKind.coinImage => 'CoinImage',
       };
 }
@@ -126,14 +131,26 @@ class AbacusFileSyncMetadata {
 
     switch (upload.fileType) {
       case UploadType.passport:
-        final representative = upload.kind.trim() == 'RepresentativeId';
-        documentKind = representative
-            ? AbacusDocumentKind.representativePassport
-            : AbacusDocumentKind.passport;
+        final kind = upload.kind.trim();
+        final representative = kind == 'RepresentativeId' ||
+            kind == 'RepresentativeIdValidationReport';
+        final validationReport = kind == 'NaturalPersonIdValidationReport' ||
+            kind == 'RepresentativeIdValidationReport';
+        documentKind = validationReport
+            ? representative
+                ? AbacusDocumentKind.representativeIdValidationReport
+                : AbacusDocumentKind.idValidationReport
+            : representative
+                ? AbacusDocumentKind.representativePassport
+                : AbacusDocumentKind.passport;
         storage = AbacusStorageReference.passport;
-        label = representative
-            ? 'Representative_Passport_${normalizedConsignor}_$date'
-            : 'Passport_${normalizedConsignor}_$date';
+        label = validationReport
+            ? representative
+                ? 'Representative_Id_Validation_Report_${normalizedConsignor}_$date'
+                : 'Id_Validation_Report_${normalizedConsignor}_$date'
+            : representative
+                ? 'Representative_Passport_${normalizedConsignor}_$date'
+                : 'Passport_${normalizedConsignor}_$date';
         break;
 
       case UploadType.product:
@@ -163,6 +180,8 @@ class AbacusFileSyncMetadata {
       verifyReceipt: trigger.requiresDossierReceipt ||
           documentKind == AbacusDocumentKind.passport ||
           documentKind == AbacusDocumentKind.representativePassport ||
+          documentKind == AbacusDocumentKind.idValidationReport ||
+          documentKind == AbacusDocumentKind.representativeIdValidationReport ||
           documentKind == AbacusDocumentKind.coinImage,
     );
   }

@@ -470,7 +470,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       final captured = await _fileService.captureImage(
         context: context,
         type: type,
-        filePrefix: type == UploadType.passport ? 'id' : 'product',
+        filePrefix: _filePrefixFor(type),
       );
       if (captured != null) {
         paths = [captured];
@@ -486,6 +486,26 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
 
     if (paths.isEmpty) return;
     await _addLocalFiles(paths, type);
+  }
+
+  String _filePrefixFor(UploadType type) {
+    if (type == UploadType.passport) {
+      return 'id';
+    }
+
+    if (type == UploadType.product) {
+      return 'consignment_${_nextProductImageIndex()}';
+    }
+
+    return 'contract_file';
+  }
+
+  int _nextProductImageIndex() {
+    return _record.uploads
+            .where((upload) =>
+                !upload.isDeleted && upload.fileType == UploadType.product)
+            .length +
+        1;
   }
 
   Future<void> _addLocalFiles(

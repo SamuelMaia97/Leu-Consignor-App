@@ -27,6 +27,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_preview.dart';
 import '../utils/form_validators.dart';
+import '../utils/phone_number_parser.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/country_dropdown.dart';
 import '../widgets/multi_auction_select_field.dart';
@@ -440,10 +441,18 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     final next = index.clamp(0, _steps.length - 1);
     _dismissTextInput();
     setState(() => _step = next);
-    _controller.animateToPage(
+    final animation = _controller.animateToPage(
       next,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
+    );
+    _dismissTextInputAfterFrame();
+    unawaited(
+      animation.whenComplete(() {
+        if (mounted) {
+          _dismissTextInput();
+        }
+      }),
     );
     if (_steps[next] == _WizardStep.auctions) {
       unawaited(_ensureAuctionsAvailable());
@@ -451,8 +460,21 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }
 
   void _dismissTextInput() {
-    FocusManager.instance.primaryFocus?.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus(
+      disposition: UnfocusDisposition.scope,
+    );
+    if (mounted) {
+      FocusScope.of(context).unfocus(disposition: UnfocusDisposition.scope);
+    }
     unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+  }
+
+  void _dismissTextInputAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _dismissTextInput();
+      }
+    });
   }
 
   Future<void> _ensureAuctionsAvailable() async {
@@ -917,7 +939,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       UploadType.passport,
     );
 
-    if (importedImagePaths.isEmpty) {
+    final importedReportPaths = await _fileService.importFilesForUpload(
+      scanFiles.validationReportPaths,
+      UploadType.passport,
+    );
+
+    if (importedImagePaths.isEmpty && importedReportPaths.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No Penta scan files could be imported.')),
@@ -927,13 +954,20 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     setState(() {
       _draft.addFiles(importedImagePaths, UploadType.passport, kind: kind);
+      _draft.addFiles(
+        importedReportPaths,
+        UploadType.passport,
+        kind: _validationReportKindFor(kind),
+      );
     });
 
     if (!mounted) return;
+    final importedCount =
+        importedImagePaths.length + importedReportPaths.length;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Penta scan imported: ${importedImagePaths.length} file${importedImagePaths.length == 1 ? '' : 's'}.',
+          'Penta scan imported: $importedCount file${importedCount == 1 ? '' : 's'}.',
         ),
       ),
     );
@@ -1101,7 +1135,17 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       return null;
     }
 
-    return _PentaScanFiles(visibleImagePath: visibleImage.path);
+    final visibleImagePath = visibleImage.path;
+    final reportPaths = files
+        .where((file) => file.path != visibleImagePath)
+        .where(_isPentaValidationReportFile)
+        .map((file) => file.path)
+        .toList(growable: false);
+
+    return _PentaScanFiles(
+      visibleImagePath: visibleImagePath,
+      validationReportPaths: reportPaths,
+    );
   }
 
   bool _isPentaOutputFolder(String path) {
@@ -1114,6 +1158,32 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         name.endsWith('.jpeg') ||
         name.endsWith('.png') ||
         name.endsWith('.bmp');
+  }
+
+  bool _isPentaValidationReportFile(File file) {
+    if (_isImageFile(file)) return false;
+
+    final name = _fileNameFromPath(file.path).toLowerCase();
+    final looksLikeReport = name.contains('report') ||
+        name.contains('validation') ||
+        name.contains('analyze') ||
+        name.contains('analyse') ||
+        name.contains('result');
+    if (!looksLikeReport) return false;
+
+    return name.endsWith('.pdf') ||
+        name.endsWith('.html') ||
+        name.endsWith('.htm') ||
+        name.endsWith('.xml') ||
+        name.endsWith('.json') ||
+        name.endsWith('.txt') ||
+        name.endsWith('.csv');
+  }
+
+  String _validationReportKindFor(String kind) {
+    return kind == _representativeIdKind
+        ? _representativeIdValidationReportKind
+        : _ordererIdValidationReportKind;
   }
 
   bool _sameFileSnapshot(Map<String, int> left, Map<String, int> right) {
@@ -1729,36 +1799,46 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     final title = _isContractOnly ? 'Create contract' : 'New consignor';
     return AppShell(
       title: title,
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _StepIndicator(
-                  currentIndex: _step,
-                  steps: _steps,
-                  businessStepFor: _businessStepFor,
-                  labelFor: _stepLabelFor,
-                  onStepSelected: _saving ? null : _goToStep,
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _dismissTextInput(),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _StepIndicator(
+                    currentIndex: _step,
+                    steps: _steps,
+                    businessStepFor: _businessStepFor,
+                    labelFor: _stepLabelFor,
+                    onStepSelected: _saving ? null : _goToStep,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: _saving ? null : _close,
-                icon: const Icon(Icons.close_rounded),
-                label: const Text('Close'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: PageView(
-              controller: _controller,
-              physics: const NeverScrollableScrollPhysics(),
-              children: _steps.map(_buildStep).toList(growable: false),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: _saving ? null : _close,
+                  icon: const Icon(Icons.close_rounded),
+                  label: const Text('Close'),
+                ),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            Expanded(
+              child: PageView(
+                controller: _controller,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  for (var index = 0; index < _steps.length; index++)
+                    ExcludeFocus(
+                      excluding: index != _step,
+                      child: _buildStep(_steps[index]),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3941,9 +4021,11 @@ typedef _PentaScanRunner = Future<_PentaScanFiles> Function(
 class _PentaScanFiles {
   const _PentaScanFiles({
     required this.visibleImagePath,
+    this.validationReportPaths = const [],
   });
 
   final String visibleImagePath;
+  final List<String> validationReportPaths;
 }
 
 class _PentaScanCancelledException implements Exception {
@@ -4254,7 +4336,7 @@ class _FullReviewStep extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: saving ? null : onGeneratePdf,
                 icon: const Icon(Icons.picture_as_pdf_outlined),
-                label: const Text('Generate PDF'),
+                label: const Text('Generate Provisional PDF'),
               ),
               OutlinedButton.icon(
                 onPressed: onOpenPdf,
@@ -5330,7 +5412,13 @@ extension _WizardDraftReview on _WizardDraft {
         ),
         _ReviewLine('Nationality', nationalityName),
         _ReviewLine('Email', email),
-        _ReviewLine('Phone', '$phonePrefix $phone'),
+        _ReviewLine(
+          'Phone',
+          PhoneNumberParser.combine(
+            prefix: phonePrefix,
+            localNumber: phone,
+          ),
+        ),
         _ReviewLine(
           'Address',
           [
