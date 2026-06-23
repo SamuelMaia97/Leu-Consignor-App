@@ -65,7 +65,7 @@ class FormValidators {
 
   static String? ibanOrAccountNumber(String? value) {
     final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) return 'IBAN / Account Nr. is required';
+    if (trimmed.isEmpty) return 'IBAN / Account No is required';
 
     final compact = trimmed.replaceAll(RegExp(r'\s+'), '').toUpperCase();
     final looksLikeIban = RegExp(r'^[A-Z]{2}[0-9A-Z]+$').hasMatch(compact);

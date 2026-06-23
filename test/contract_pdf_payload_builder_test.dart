@@ -1,7 +1,11 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leu_consignor_app/src/domain/consignor_type.dart';
 import 'package:leu_consignor_app/src/models/consignor.dart';
 import 'package:leu_consignor_app/src/models/contract_record.dart';
+import 'package:leu_consignor_app/src/models/payment_option.dart';
 import 'package:leu_consignor_app/src/services/contract_pdf_service.dart';
 
 void main() {
@@ -105,6 +109,101 @@ void main() {
       expect(payload['consignmentCountryIsoCountryCode'], 'FRA');
       expect(payload['consignment_country'], 'France');
       expect(payload['CountryOfConsignment'], 'France');
+    });
+
+    test('emits PDF name, title, page numbers, and provisional flags',
+        () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          pdfName: 'COC-100_1-202606091435.pdf',
+        ),
+      );
+
+      expect(payload['pdfName'], 'COC-100_1-202606091435.pdf');
+      expect(payload['pdfTitle'], 'COC-100_1-202606091435');
+      expect(payload['documentTitle'], 'COC-100_1-202606091435');
+      expect(payload['includePageNumbers'], isTrue);
+      expect(payload['isProvisional'], isTrue);
+      expect(payload['watermarkText'], 'PROVISIONAL');
+      expect(payload['consignor_place_date'], '');
+      expect(payload['leu_place_date'], '');
+      expect(payload['annex_a_place_date'], '');
+      expect(payload['annex_c_place_date'], '');
+    });
+
+    test('emits desired payment method and country-specific address lines',
+        () async {
+      final consignor = _consignor(ConsignorType.naturalPerson)
+        ..paymentOption = PaymentOption.wise;
+
+      consignor.consignorAddress
+        ..streetAddress = 'Main Street'
+        ..streetNumber = '12'
+        ..postalCode = '10001'
+        ..city = 'New York'
+        ..adminRegion = 'NY'
+        ..countryIso3 = 'USA'
+        ..countryName = 'United States';
+
+      final payload = await builder.build(
+        consignor: consignor,
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['payment_method'], 'Wise');
+      expect(payload['payment_method_text'], 'WISE');
+      expect(payload['check_payment_wise'], '☑');
+      expect(payload['consignor_address_1'], '12 Main Street');
+      expect(
+          payload['consignor_address_2'], 'New York, NY 10001, United States');
+      expect(payload['consignor_address_3'], '');
+    });
+
+    test('emits agreement, Annex A, and Annex C signatures in order', () async {
+      final contractSignature = Uint8List.fromList([1, 2, 3]);
+      final annexASignature = Uint8List.fromList([4, 5, 6]);
+      final annexCSignature = Uint8List.fromList([7, 8, 9]);
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          signedAt: DateTime.utc(2026, 6, 9),
+        ),
+        signatureData: ContractSignatureData(
+          leuRepresentativeName: 'Yves Gunzenreiner',
+          leuRepresentativeSignatureAsset: '',
+          contractSignaturePng: contractSignature,
+          annexASignaturePng: annexASignature,
+          annexCSignaturePng: annexCSignature,
+        ),
+      );
+
+      final contractSignatureBase64 = base64Encode(contractSignature);
+      final annexASignatureBase64 = base64Encode(annexASignature);
+      final annexCSignatureBase64 = base64Encode(annexCSignature);
+      final signatureData = payload['signatureData'] as Map<String, dynamic>;
+
+      expect(payload['isProvisional'], isFalse);
+      expect(payload['watermarkText'], '');
+      expect(payload['consignor_signature_image'], contractSignatureBase64);
+      expect(payload['annex_a_signature_image'], annexASignatureBase64);
+      expect(payload['annex_c_signature_image'], annexCSignatureBase64);
+      expect(
+        signatureData['customerSignaturePngBase64'],
+        contractSignatureBase64,
+      );
+      expect(
+        signatureData['contractSignaturePngBase64'],
+        contractSignatureBase64,
+      );
+      expect(
+        signatureData['annexASignaturePngBase64'],
+        annexASignatureBase64,
+      );
+      expect(
+        signatureData['annexCSignaturePngBase64'],
+        annexCSignatureBase64,
+      );
     });
   });
 }

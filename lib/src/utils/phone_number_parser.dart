@@ -85,7 +85,11 @@ class PhoneNumberParser {
       );
     }
 
-    final splitPoint = digits.length > 10 ? 3 : digits.length > 9 ? 2 : 1;
+    final splitPoint = digits.length > 10
+        ? 3
+        : digits.length > 9
+            ? 2
+            : 1;
 
     return ParsedPhoneNumber(
       prefix: '+${digits.substring(0, splitPoint)}',
@@ -102,6 +106,12 @@ class PhoneNumberParser {
 
     if (normalizedPrefix.isEmpty) return normalizedNumber;
     if (normalizedNumber.isEmpty) return normalizedPrefix;
+
+    final parsedNumber = parse(normalizedNumber);
+    if (parsedNumber.prefix == normalizedPrefix &&
+        parsedNumber.localNumber.isNotEmpty) {
+      return normalizedNumber;
+    }
 
     return '$normalizedPrefix $normalizedNumber';
   }

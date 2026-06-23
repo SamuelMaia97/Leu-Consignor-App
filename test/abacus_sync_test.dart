@@ -59,14 +59,15 @@ void main() {
         ),
         consignorSubjectId: 120149,
         contractNumber: '12345',
-        eventUtc: DateTime.utc(2026, 6, 9),
+        eventUtc: DateTime.utc(2026, 6, 9, 14, 35),
         trigger: AbacusContractSyncEvent.manualSync,
       );
 
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'CoinImage');
-      expect(json['label'], 'Coin_temp_coin_1_20260609');
+      expect(json['label'], 'Consignment_1_202606091435');
+      expect(json['documentName'], 'Consignment_1_202606091435.png');
       expect(json['contentType'], 'image/png');
       expect((json['storage'] as Map)['abbreviation'], 'EINL');
     });

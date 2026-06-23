@@ -116,6 +116,7 @@ class AbacusFileSyncMetadata {
     final fileName = _effectiveFileName(upload);
     final lowerFileName = fileName.toLowerCase();
     final date = _compactDate(eventUtc);
+    final timestamp = _compactTimestamp(eventUtc);
     final normalizedConsignor = _safeToken(consignorSubjectId.toString());
     final extension = _extension(fileName);
 
@@ -138,10 +139,8 @@ class AbacusFileSyncMetadata {
       case UploadType.product:
         documentKind = AbacusDocumentKind.coinImage;
         storage = AbacusStorageReference.consignmentPhotos;
-        final lotOrTempId = _safeToken(
-          (upload.fileId ?? upload.auctionId)?.toString() ?? upload.localId,
-        );
-        label = 'Coin_${lotOrTempId}_$date';
+        final increment = _safeToken(_imageIncrement(upload));
+        label = 'Consignment_${increment}_$timestamp';
         break;
 
       case UploadType.agreement:
@@ -207,6 +206,27 @@ class AbacusFileSyncMetadata {
       utc.month.toString().padLeft(2, '0'),
       utc.day.toString().padLeft(2, '0'),
     ].join();
+  }
+
+  static String _compactTimestamp(DateTime value) {
+    final utc = value.toUtc();
+    return [
+      utc.year.toString().padLeft(4, '0'),
+      utc.month.toString().padLeft(2, '0'),
+      utc.day.toString().padLeft(2, '0'),
+      utc.hour.toString().padLeft(2, '0'),
+      utc.minute.toString().padLeft(2, '0'),
+    ].join();
+  }
+
+  static String _imageIncrement(ContractUpload upload) {
+    final explicit = upload.fileId ?? upload.auctionId;
+    if (explicit != null && explicit > 0) return explicit.toString();
+
+    final digitMatch = RegExp(r'(\d+)(?!.*\d)').firstMatch(upload.localId);
+    if (digitMatch != null) return digitMatch.group(1)!;
+
+    return upload.localId;
   }
 
   static String _safeToken(String value) {

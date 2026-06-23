@@ -15,5 +15,15 @@ void main() {
         '+49 89 1234 5678',
       );
     });
+
+    test('does not duplicate an existing country prefix', () {
+      expect(
+        PhoneNumberParser.combine(
+          prefix: '+41',
+          localNumber: '+41 44 123 45 67',
+        ),
+        '+41 44 123 45 67',
+      );
+    });
   });
 }
