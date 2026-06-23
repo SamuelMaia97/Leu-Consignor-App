@@ -111,6 +111,19 @@ void main() {
       expect(payload['CountryOfConsignment'], 'France');
     });
 
+    test('includes selected academic title in contract person names', () async {
+      final consignor = _consignor(ConsignorType.naturalPerson);
+      consignor.consignorInfo.title = 1;
+
+      final payload = await builder.build(
+        consignor: consignor,
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['consignor_full_name'], 'Dr. Muster Anna');
+      expect(payload['consignor_signature_name'], 'Dr. Muster Anna');
+    });
+
     test('emits PDF name, title, page numbers, and provisional flags',
         () async {
       final payload = await builder.build(

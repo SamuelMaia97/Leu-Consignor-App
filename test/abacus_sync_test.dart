@@ -50,6 +50,31 @@ void main() {
           '39c1d257-327c-bb79-0408-9be8b5a1dcca');
     });
 
+    test('targets Desko validation reports to the Passport dossier', () {
+      final metadata = AbacusFileSyncMetadata.forUpload(
+        upload: ContractUpload(
+          localId: 'report',
+          fileName: 'validation-report.pdf',
+          fileType: UploadType.passport,
+          kind: 'RepresentativeIdValidationReport',
+        ),
+        consignorSubjectId: 120149,
+        contractNumber: '12345',
+        eventUtc: DateTime.utc(2026, 6, 9),
+        trigger: AbacusContractSyncEvent.manualSync,
+      );
+
+      final json = metadata!.toJson();
+
+      expect(json['documentKind'], 'RepresentativeIdValidationReport');
+      expect(
+          json['label'], 'Representative_Id_Validation_Report_120149_20260609');
+      expect(json['documentName'],
+          'Representative_Id_Validation_Report_120149_20260609.pdf');
+      expect(json['verifyReceipt'], isTrue);
+      expect((json['storage'] as Map)['lookupText'], 'Passport');
+    });
+
     test('targets coin images to the consignment photos dossier', () {
       final metadata = AbacusFileSyncMetadata.forUpload(
         upload: ContractUpload(

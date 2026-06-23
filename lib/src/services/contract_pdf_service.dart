@@ -317,9 +317,11 @@ class ContractPdfPayloadBuilder {
         ownerIsLegal ? ownerOrEmpty?.tradingName ?? '' : '';
     final legalOwnerRepName =
         ownerIsLegal ? _personNameLastFirst(ownerOrEmpty!.consignorInfo) : '';
+    final consignorPersonName = _personNameLastFirst(consignor.consignorInfo);
+    final ownerPersonName = ownerOrEmpty == null
+        ? ''
+        : _personNameLastFirst(ownerOrEmpty.consignorInfo);
     final consignorName = _contractDisplayName(consignor);
-    final ownerName =
-        ownerOrEmpty == null ? '' : _contractDisplayName(ownerOrEmpty);
     final leuCompanyName = 'Leu Numismatik AG';
     final contractDate = isProvisional ? '' : _formatDate(record.signedAt);
 
@@ -337,7 +339,7 @@ class ContractPdfPayloadBuilder {
       'CountryOfConsignment': consignmentCountry,
       'country_of_consignment': consignmentCountry,
       'origin_country': originCountry,
-      'consignor_full_name': consignorName,
+      'consignor_full_name': consignorPersonName,
       'consignor_dob': _formatDate(consignor.consignorInfo.dateOfBirth),
       'consignor_nationality': consignor.consignorInfo.nationalityName,
       'consignor_address_1': _addressLine1(consignor.consignorAddress),
@@ -370,7 +372,7 @@ class ContractPdfPayloadBuilder {
       'representative_name': legalRepresentativeName,
       'representative_phone': legalRepresentativePhone,
       'representative_email': legalRepresentativeEmail,
-      'owner_full_name': ownerName,
+      'owner_full_name': ownerPersonName,
       'owner_dob': _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
       'owner_nationality': ownerOrEmpty?.consignorInfo.nationalityName ?? '',
       'owner_address_1':
@@ -418,7 +420,7 @@ class ContractPdfPayloadBuilder {
       'annex_a_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'annex_a_signature_name': consignorName,
       'annex_a_signer_name': consignorName,
-      'annex_a_owner_full_name': ownerIsLegal ? '' : ownerName,
+      'annex_a_owner_full_name': ownerIsLegal ? '' : ownerPersonName,
       'annex_a_owner_dob': ownerIsLegal
           ? ''
           : _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
@@ -618,11 +620,18 @@ class ContractPdfPayloadBuilder {
   }
 
   static String _personNameLastFirst(Person person) {
-    return [person.lastName, person.firstName]
+    return [_titleText(person.title), person.lastName, person.firstName]
         .map((part) => part.trim())
         .where((part) => part.isNotEmpty)
         .join(' ');
   }
+
+  static String _titleText(int? title) => switch (title) {
+        1 => 'Dr.',
+        5 => 'Prof.',
+        6 => 'Prof. Dr.',
+        _ => '',
+      };
 
   static String _resolvedPdfName(ContractRecord record) {
     final value = record.pdfName.trim();

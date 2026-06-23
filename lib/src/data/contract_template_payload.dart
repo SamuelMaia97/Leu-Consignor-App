@@ -83,6 +83,10 @@ class ContractRenderPayloadBuilder {
     final watermarkText = isProvisional ? 'PROVISIONAL' : '';
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
+    final consignorPersonName = _personNameLastFirst(consignor);
+    final authorizedRepresentativePersonName = authorizedRepresentative == null
+        ? ''
+        : _personNameLastFirst(authorizedRepresentative);
 
     final bankAccountValue = consignor.bankingDetails.accountNumber;
     final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
@@ -102,7 +106,7 @@ class ContractRenderPayloadBuilder {
       'pdfFileName': pdfFileName,
       'pdfTitle': pdfTitle,
       'documentTitle': pdfTitle,
-      'consignorFullName': _contractDisplayName(consignor),
+      'consignorFullName': consignorPersonName,
       'consignorDateOfBirth': _dateOrNull(consignor.consignorInfo.dateOfBirth),
       'consignorNationality': consignor.consignorInfo.nationalityName,
       'consignorAddress1': _addressLine1(consignor.consignorAddress),
@@ -115,13 +119,13 @@ class ContractRenderPayloadBuilder {
           ? consignor.tradingName
           : '',
       'representativeName': authorizedRepresentative == null
-          ? _contractDisplayName(consignor)
-          : _contractDisplayName(authorizedRepresentative),
+          ? consignorPersonName
+          : authorizedRepresentativePersonName,
       'consignorFunction':
           consignorType == ConsignorType.legalEntity ? 'Vertreter' : '',
       'ownerFullName': authorizedRepresentative == null
-          ? _contractDisplayName(consignor)
-          : _contractDisplayName(authorizedRepresentative),
+          ? consignorPersonName
+          : authorizedRepresentativePersonName,
       'ownerDateOfBirth':
           _dateOrNull(authorizedRepresentative?.consignorInfo.dateOfBirth),
       'ownerNationality':
@@ -324,15 +328,20 @@ class ContractRenderPayloadBuilder {
   static String _encodeBytes(Uint8List? bytes) =>
       bytes == null || bytes.isEmpty ? '' : base64Encode(bytes);
 
-  static String _contractDisplayName(Consignor consignor) {
-    if (consignor.usesTradingName && consignor.tradingName.trim().isNotEmpty) {
-      return consignor.tradingName.trim();
-    }
-    return [consignor.consignorInfo.lastName, consignor.consignorInfo.firstName]
-        .map((part) => part.trim())
-        .where((part) => part.isNotEmpty)
-        .join(' ');
+  static String _personNameLastFirst(Consignor consignor) {
+    return [
+      _titleText(consignor.consignorInfo.title),
+      consignor.consignorInfo.lastName,
+      consignor.consignorInfo.firstName,
+    ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' ');
   }
+
+  static String _titleText(int? title) => switch (title) {
+        1 => 'Dr.',
+        5 => 'Prof.',
+        6 => 'Prof. Dr.',
+        _ => '',
+      };
 
   static String _resolvedPdfName(ContractRecord record) {
     final value = record.pdfName.trim();

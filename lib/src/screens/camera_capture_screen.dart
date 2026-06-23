@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+
+import '../storage/local_store.dart';
 
 class CameraCaptureScreen extends StatefulWidget {
   const CameraCaptureScreen({
@@ -14,6 +18,9 @@ class CameraCaptureScreen extends StatefulWidget {
 }
 
 class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
+  static const _selectedCameraNameKey = 'cameraCapture.selectedCameraName';
+  static const _selectedCameraIndexKey = 'cameraCapture.selectedCameraIndex';
+
   CameraController? _controller;
   List<CameraDescription> _availableCameras = const [];
   int _selectedCameraIndex = 0;
@@ -47,10 +54,15 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         return;
       }
 
-      final preferredIndex = _preferredCameraIndex(cameras);
+      final preferredIndex =
+          _rememberedCameraIndex(cameras) ?? _preferredCameraIndex(cameras);
       _availableCameras = cameras;
 
-      await _selectCamera(preferredIndex, updateAvailableCameras: false);
+      await _selectCamera(
+        preferredIndex,
+        updateAvailableCameras: false,
+        rememberSelection: false,
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -74,9 +86,42 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
     return 0;
   }
 
+  int? _rememberedCameraIndex(List<CameraDescription> cameras) {
+    final box = LocalStore.instance.getBox(LocalStore.settingsBox);
+    final savedNameValue = box.get(_selectedCameraNameKey);
+    final savedName = savedNameValue is String ? savedNameValue.trim() : '';
+
+    if (savedName.isNotEmpty) {
+      final index = cameras.indexWhere(
+        (camera) => camera.name.trim() == savedName,
+      );
+      if (index >= 0) return index;
+    }
+
+    final savedIndexValue = box.get(_selectedCameraIndexKey);
+    final savedIndex = savedIndexValue is int
+        ? savedIndexValue
+        : int.tryParse(savedIndexValue?.toString() ?? '');
+    if (savedIndex != null && savedIndex >= 0 && savedIndex < cameras.length) {
+      return savedIndex;
+    }
+
+    return null;
+  }
+
+  Future<void> _rememberCameraSelection(
+    CameraDescription camera,
+    int index,
+  ) async {
+    final box = LocalStore.instance.getBox(LocalStore.settingsBox);
+    await box.put(_selectedCameraNameKey, camera.name.trim());
+    await box.put(_selectedCameraIndexKey, index);
+  }
+
   Future<void> _selectCamera(
     int cameraIndex, {
     bool updateAvailableCameras = true,
+    bool rememberSelection = true,
   }) async {
     if (cameraIndex < 0 || cameraIndex >= _availableCameras.length) {
       return;
@@ -135,6 +180,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
         _initializing = false;
         _error = null;
       });
+
+      if (rememberSelection) {
+        unawaited(_rememberCameraSelection(selectedCamera, safeIndex));
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -176,6 +225,13 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   }
 
   String _cameraLabel(CameraDescription camera, int index) {
+    final name = camera.name.trim();
+    if (name.isNotEmpty) return name;
+
+    return 'Camera ${index + 1}';
+  }
+
+  String _cameraDetail(CameraDescription camera, int index) {
     String direction;
     switch (camera.lensDirection) {
       case CameraLensDirection.front:
@@ -191,10 +247,10 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
     final name = camera.name.trim();
     if (name.isEmpty) {
-      return '$direction camera ${index + 1}';
+      return 'Camera ${index + 1} - reported as $direction';
     }
 
-    return '$direction camera ${index + 1}';
+    return 'Camera ${index + 1} - reported as $direction';
   }
 
   CameraDescription? get _selectedCamera {
@@ -242,7 +298,24 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Text(_cameraLabel(camera, index)),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_cameraLabel(camera, index)),
+                                Text(
+                                  _cameraDetail(camera, index),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -290,7 +363,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                                     if (selectedCamera != null) ...[
                                       const SizedBox(height: 12),
                                       Text(
-                                        'Using ${_cameraLabel(selectedCamera, _selectedCameraIndex).toLowerCase()}',
+                                        'Using ${_cameraLabel(selectedCamera, _selectedCameraIndex)}',
                                         style: Theme.of(context)
                                             .textTheme
                                             .bodySmall
