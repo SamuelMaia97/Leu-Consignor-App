@@ -438,6 +438,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   void _goToStep(int index) {
     final next = index.clamp(0, _steps.length - 1);
+    _dismissTextInput();
     setState(() => _step = next);
     _controller.animateToPage(
       next,
@@ -447,6 +448,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     if (_steps[next] == _WizardStep.auctions) {
       unawaited(_ensureAuctionsAvailable());
     }
+  }
+
+  void _dismissTextInput() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
   }
 
   Future<void> _ensureAuctionsAvailable() async {
