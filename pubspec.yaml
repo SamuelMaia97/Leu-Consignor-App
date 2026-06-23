@@ -1,7 +1,7 @@
 name: leu_consignor_app
 description: Leu Numismatik consignor / contract app.
 publish_to: 'none'
-version: 1.0.0+14
+version: 1.0.0+15
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
@@ -51,8 +51,8 @@ msix_config:
   publisher_display_name: Leu Numismatik AG
   identity_name: LeuNumismatik.ConsignorApp
   publisher: "CN=Leu Numismatik AG, O=Leu Numismatik AG, C=CH"
-  msix_version: 1.0.0.14
-  logo_path: assets/images/logo-without-text.png
+  msix_version: 1.0.0.15
+  logo_path: assets/images/app-icon-blue.png
   capabilities: internetClient, webcam
   output_path: build/windows/installer
   output_name: LeuConsignorApp
