@@ -80,6 +80,7 @@ class ContractRenderPayloadBuilder {
     final auctionDate = record.signedAt;
     final isProvisional = signatureData == null;
     final placeDate = isProvisional ? '' : _dateFormat.format(record.signedAt);
+    final watermarkText = isProvisional ? 'PROVISIONAL' : '';
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
 
@@ -91,7 +92,11 @@ class ContractRenderPayloadBuilder {
     return ContractRenderPayload({
       'consignorType': consignorType.apiName,
       'isProvisional': isProvisional,
-      'watermarkText': isProvisional ? 'PROVISIONAL' : '',
+      'watermarkText': watermarkText,
+      'watermark_text': watermarkText,
+      'pageWatermarkText': watermarkText,
+      'watermark': {'text': watermarkText},
+      'pageWatermark': {'text': watermarkText},
       'includePageNumbers': true,
       'pdfName': pdfFileName,
       'pdfFileName': pdfFileName,
@@ -158,6 +163,8 @@ class ContractRenderPayloadBuilder {
       'contractPlaceDate': placeDate,
       'leuPlaceDate': placeDate,
       'annexPlaceDate': placeDate,
+      'annexAPlaceDate': placeDate,
+      'annexCPlaceDate': placeDate,
       'leuRepresentativeName':
           signatureData?.leuRepresentativeName ?? 'Yves Gunzenreiner',
       'leuRepresentativeCompany': 'Leu Numismatik AG',

@@ -126,10 +126,21 @@ void main() {
       expect(payload['includePageNumbers'], isTrue);
       expect(payload['isProvisional'], isTrue);
       expect(payload['watermarkText'], 'PROVISIONAL');
+      expect(payload['watermark_text'], 'PROVISIONAL');
+      expect(payload['pageWatermarkText'], 'PROVISIONAL');
+      expect(payload['watermark'], {'text': 'PROVISIONAL'});
+      expect(payload['pageWatermark'], {'text': 'PROVISIONAL'});
       expect(payload['consignor_place_date'], '');
+      expect(payload['contract_place_date'], '');
+      expect(payload['contractPlaceDate'], '');
       expect(payload['leu_place_date'], '');
+      expect(payload['leuPlaceDate'], '');
       expect(payload['annex_a_place_date'], '');
+      expect(payload['annexAPlaceDate'], '');
+      expect(payload['annex_place_date'], '');
+      expect(payload['annexPlaceDate'], '');
       expect(payload['annex_c_place_date'], '');
+      expect(payload['annexCPlaceDate'], '');
     });
 
     test('emits desired payment method and country-specific address lines',
@@ -185,6 +196,10 @@ void main() {
 
       expect(payload['isProvisional'], isFalse);
       expect(payload['watermarkText'], '');
+      expect(payload['watermark_text'], '');
+      expect(payload['pageWatermarkText'], '');
+      expect(payload['watermark'], {'text': ''});
+      expect(payload['pageWatermark'], {'text': ''});
       expect(payload['consignor_signature_image'], contractSignatureBase64);
       expect(payload['annex_a_signature_image'], annexASignatureBase64);
       expect(payload['annex_c_signature_image'], annexCSignatureBase64);

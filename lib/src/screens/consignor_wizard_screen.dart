@@ -438,6 +438,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   void _goToStep(int index) {
     final next = index.clamp(0, _steps.length - 1);
+    _dismissTextInput();
     setState(() => _step = next);
     _controller.animateToPage(
       next,
@@ -447,6 +448,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     if (_steps[next] == _WizardStep.auctions) {
       unawaited(_ensureAuctionsAvailable());
     }
+  }
+
+  void _dismissTextInput() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
   }
 
   Future<void> _ensureAuctionsAvailable() async {
@@ -4558,6 +4564,16 @@ class _SignatureStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _SignatureCaptureSection(
+          title: 'Signature Consignment Agreement',
+          dialogTitle: 'Signature Consignment Agreement',
+          strokes: draft.contractSignatureStrokes,
+          canvasSize: draft.contractSignatureCanvasSize,
+          saving: saving,
+          onChanged: onContractSignatureChanged,
+          onClear: onClearContractSignature,
+        ),
+        const SizedBox(height: 12),
+        _SignatureCaptureSection(
           title: 'Signature Annex A (Declaration on the right of disposal)',
           dialogTitle:
               'Signature Annex A (Declaration on the right of disposal)',
@@ -4578,16 +4594,6 @@ class _SignatureStep extends StatelessWidget {
           saving: saving,
           onChanged: onAnnexCSignatureChanged,
           onClear: onClearAnnexCSignature,
-        ),
-        const SizedBox(height: 12),
-        _SignatureCaptureSection(
-          title: 'Signature Consignment Agreement',
-          dialogTitle: 'Signature Consignment Agreement',
-          strokes: draft.contractSignatureStrokes,
-          canvasSize: draft.contractSignatureCanvasSize,
-          saving: saving,
-          onChanged: onContractSignatureChanged,
-          onClear: onClearContractSignature,
         ),
         const SizedBox(height: 12),
         SectionCard(

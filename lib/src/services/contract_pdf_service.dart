@@ -112,6 +112,7 @@ class ContractPdfPayloadBuilder {
         ? ''
         : base64Encode(signatureData.annexCSignaturePng);
     final isProvisional = signatureData == null;
+    final watermarkText = isProvisional ? 'PROVISIONAL' : '';
 
     final attachments = <Map<String, dynamic>>[];
     for (final upload in record.uploads) {
@@ -228,7 +229,11 @@ class ContractPdfPayloadBuilder {
     return {
       'templateVersion': 'Einlieferungsvertrag',
       'isProvisional': isProvisional,
-      'watermarkText': isProvisional ? 'PROVISIONAL' : '',
+      'watermarkText': watermarkText,
+      'watermark_text': watermarkText,
+      'pageWatermarkText': watermarkText,
+      'watermark': {'text': watermarkText},
+      'pageWatermark': {'text': watermarkText},
       'includePageNumbers': true,
       'pdfName': pdfFileName,
       'pdfFileName': pdfFileName,
@@ -341,6 +346,8 @@ class ContractPdfPayloadBuilder {
       'consignor_phone': consignor.fullPhoneNumber,
       'consignor_email': consignor.emailAddress,
       'consignor_place_date': contractDate,
+      'contract_place_date': contractDate,
+      'contractPlaceDate': contractDate,
       'consignor_signature_image': contractSignatureBase64,
       'consignor_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'consignor_signature_name': consignorName,
@@ -392,6 +399,7 @@ class ContractPdfPayloadBuilder {
       'clearing_nr': consignor.bankingDetails.clearingNumber,
       'routing_nr': consignor.bankingDetails.routingNumber,
       'leu_place_date': contractDate,
+      'leuPlaceDate': contractDate,
       'leu_representative_company': leuCompanyName,
       'leu_representative_name': leuRepresentativeName,
       'leu_representative_function': leuRepresentativeFunction,
@@ -403,6 +411,9 @@ class ContractPdfPayloadBuilder {
       'annex_a_auction_name': auctionName,
       'annex_a_auction_date': _formatDate(auctionDate),
       'annex_a_place_date': contractDate,
+      'annexAPlaceDate': contractDate,
+      'annex_place_date': contractDate,
+      'annexPlaceDate': contractDate,
       'annex_a_signature_image': annexASignatureBase64,
       'annex_a_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'annex_a_signature_name': consignorName,
@@ -447,6 +458,7 @@ class ContractPdfPayloadBuilder {
       'annex_a_legal_email':
           ownerIsLegal ? ownerOrEmpty?.emailAddress ?? '' : '',
       'annex_c_place_date': contractDate,
+      'annexCPlaceDate': contractDate,
       'annex_c_signature_image': annexCSignatureBase64,
       'annex_c_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'annex_c_signature_name': consignorName,
