@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leu_consignor_app/src/domain/consignor_type.dart';
 import 'package:leu_consignor_app/src/models/consignor.dart';
@@ -155,6 +158,52 @@ void main() {
       expect(
           payload['consignor_address_2'], 'New York, NY 10001, United States');
       expect(payload['consignor_address_3'], '');
+    });
+
+    test('emits agreement, Annex A, and Annex C signatures in order', () async {
+      final contractSignature = Uint8List.fromList([1, 2, 3]);
+      final annexASignature = Uint8List.fromList([4, 5, 6]);
+      final annexCSignature = Uint8List.fromList([7, 8, 9]);
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          signedAt: DateTime.utc(2026, 6, 9),
+        ),
+        signatureData: ContractSignatureData(
+          leuRepresentativeName: 'Yves Gunzenreiner',
+          leuRepresentativeSignatureAsset: '',
+          contractSignaturePng: contractSignature,
+          annexASignaturePng: annexASignature,
+          annexCSignaturePng: annexCSignature,
+        ),
+      );
+
+      final contractSignatureBase64 = base64Encode(contractSignature);
+      final annexASignatureBase64 = base64Encode(annexASignature);
+      final annexCSignatureBase64 = base64Encode(annexCSignature);
+      final signatureData = payload['signatureData'] as Map<String, dynamic>;
+
+      expect(payload['isProvisional'], isFalse);
+      expect(payload['watermarkText'], '');
+      expect(payload['consignor_signature_image'], contractSignatureBase64);
+      expect(payload['annex_a_signature_image'], annexASignatureBase64);
+      expect(payload['annex_c_signature_image'], annexCSignatureBase64);
+      expect(
+        signatureData['customerSignaturePngBase64'],
+        contractSignatureBase64,
+      );
+      expect(
+        signatureData['contractSignaturePngBase64'],
+        contractSignatureBase64,
+      );
+      expect(
+        signatureData['annexASignaturePngBase64'],
+        annexASignatureBase64,
+      );
+      expect(
+        signatureData['annexCSignaturePngBase64'],
+        annexCSignatureBase64,
+      );
     });
   });
 }

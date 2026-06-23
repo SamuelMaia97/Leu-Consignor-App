@@ -131,8 +131,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       setState(() {
         _controller = controller;
         _selectedCameraIndex = safeIndex;
-        _mirrorPreview =
-            selectedCamera.lensDirection == CameraLensDirection.front;
+        _mirrorPreview = true;
         _initializing = false;
         _error = null;
       });
