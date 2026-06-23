@@ -9,20 +9,28 @@ import '../models/address.dart';
 import '../models/consignor.dart';
 import '../models/contract_record.dart';
 import '../models/payment_option.dart';
+import '../models/person.dart';
+import '../utils/address_formatter.dart';
 import 'api_service.dart';
 
 class ContractSignatureData {
   const ContractSignatureData({
     required this.leuRepresentativeName,
     required this.leuRepresentativeSignatureAsset,
-    required this.customerSignaturePng,
+    required this.contractSignaturePng,
+    required this.annexASignaturePng,
+    required this.annexCSignaturePng,
     this.leuRepresentativeFunction = 'CEO',
   });
 
   final String leuRepresentativeName;
   final String leuRepresentativeSignatureAsset;
-  final Uint8List customerSignaturePng;
+  final Uint8List contractSignaturePng;
+  final Uint8List annexASignaturePng;
+  final Uint8List annexCSignaturePng;
   final String leuRepresentativeFunction;
+
+  Uint8List get customerSignaturePng => contractSignaturePng;
 }
 
 /// Contract PDF generation now delegates the official document rendering to the
@@ -94,9 +102,16 @@ class ContractPdfPayloadBuilder {
         ? ''
         : await _assetAsBase64(signatureData.leuRepresentativeSignatureAsset);
 
-    final customerSignatureBase64 = signatureData == null
+    final contractSignatureBase64 = signatureData == null
         ? ''
-        : base64Encode(signatureData.customerSignaturePng);
+        : base64Encode(signatureData.contractSignaturePng);
+    final annexASignatureBase64 = signatureData == null
+        ? ''
+        : base64Encode(signatureData.annexASignaturePng);
+    final annexCSignatureBase64 = signatureData == null
+        ? ''
+        : base64Encode(signatureData.annexCSignaturePng);
+    final isProvisional = signatureData == null;
 
     final attachments = <Map<String, dynamic>>[];
     for (final upload in record.uploads) {
@@ -162,8 +177,9 @@ class ContractPdfPayloadBuilder {
         ? originCountry.trim()
         : consignor.consignorInfo.nationalityName;
     final representative = authorizedRepresentative;
-    final legalRepresentativeName =
-        representative?.displayName ?? consignor.consignorInfo.fullName;
+    final legalRepresentativeName = representative == null
+        ? _contractDisplayName(consignor)
+        : _contractDisplayName(representative);
     final legalRepresentativePhone =
         representative?.fullPhoneNumber ?? consignor.fullPhoneNumber;
     final legalRepresentativeEmail =
@@ -172,12 +188,15 @@ class ContractPdfPayloadBuilder {
     final ownerIsLegal = owner?.usesTradingName ?? false;
     final leuRepresentativeName = signatureData?.leuRepresentativeName ?? '';
     final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
-    final signerName = consignor.displayName;
+    final signerName = _contractDisplayName(consignor);
+    final pdfFileName = _resolvedPdfName(record);
+    final pdfTitle = _pdfTitle(pdfFileName);
     final templateValues = _templateValues(
       consignor: consignor,
       owner: owner,
       ownerIsLegal: ownerIsLegal,
       representedByAnotherParty: authorizedRepresentative != null,
+      isProvisional: isProvisional,
       record: record,
       scenario: scenario,
       paragraphVisibility: paragraphVisibility,
@@ -191,7 +210,9 @@ class ContractPdfPayloadBuilder {
       legalRepresentativeName: legalRepresentativeName,
       legalRepresentativePhone: legalRepresentativePhone,
       legalRepresentativeEmail: legalRepresentativeEmail,
-      customerSignatureBase64: customerSignatureBase64,
+      contractSignatureBase64: contractSignatureBase64,
+      annexASignatureBase64: annexASignatureBase64,
+      annexCSignatureBase64: annexCSignatureBase64,
       leuSignatureBase64: leuSignatureBase64,
     );
     final templateFlags = _templateFlags(
@@ -206,6 +227,13 @@ class ContractPdfPayloadBuilder {
 
     return {
       'templateVersion': 'Einlieferungsvertrag',
+      'isProvisional': isProvisional,
+      'watermarkText': isProvisional ? 'PROVISIONAL' : '',
+      'includePageNumbers': true,
+      'pdfName': pdfFileName,
+      'pdfFileName': pdfFileName,
+      'pdfTitle': pdfTitle,
+      'documentTitle': pdfTitle,
       'record': {
         'consignorId': _parseInt(consignor.id) ??
             consignor.systemReferenceConsignor.takeIfPositive ??
@@ -215,6 +243,8 @@ class ContractPdfPayloadBuilder {
         'auctionDate': auctionDate?.toUtc().toIso8601String(),
         'signedAt': record.signedAt.toUtc().toIso8601String(),
         'lastModifiedUtc': record.lastModifiedUtc.toUtc().toIso8601String(),
+        'pdfName': pdfFileName,
+        'pdfTitle': pdfTitle,
       },
       'consignor': consignor.toJson(),
       'authorizedRepresentative': authorizedRepresentative?.toJson(),
@@ -238,10 +268,11 @@ class ContractPdfPayloadBuilder {
       ...paragraphTopLevelFlags,
       ...templateValues,
       'signatureData': {
-        'customerSignaturePngBase64': customerSignatureBase64,
+        'customerSignaturePngBase64': contractSignatureBase64,
+        'contractSignaturePngBase64': contractSignatureBase64,
         'leuSignaturePngBase64': leuSignatureBase64,
-        'annexASignaturePngBase64': customerSignatureBase64,
-        'annexCSignaturePngBase64': customerSignatureBase64,
+        'annexASignaturePngBase64': annexASignatureBase64,
+        'annexCSignaturePngBase64': annexCSignatureBase64,
         'leuRepresentativeName': signatureData?.leuRepresentativeName ?? '',
         'leuRepresentativeFunction': leuRepresentativeFunction,
         'consignorSignerNameFunction': signerName,
@@ -256,6 +287,7 @@ class ContractPdfPayloadBuilder {
     required Consignor? owner,
     required bool ownerIsLegal,
     required bool representedByAnotherParty,
+    required bool isProvisional,
     required ContractRecord record,
     required _ContractRenderScenario scenario,
     required Map<String, bool> paragraphVisibility,
@@ -269,7 +301,9 @@ class ContractPdfPayloadBuilder {
     required String legalRepresentativeName,
     required String legalRepresentativePhone,
     required String legalRepresentativeEmail,
-    required String customerSignatureBase64,
+    required String contractSignatureBase64,
+    required String annexASignatureBase64,
+    required String annexCSignatureBase64,
     required String leuSignatureBase64,
   }) {
     final ownerOrEmpty = owner;
@@ -277,7 +311,12 @@ class ContractPdfPayloadBuilder {
     final legalOwnerCompany =
         ownerIsLegal ? ownerOrEmpty?.tradingName ?? '' : '';
     final legalOwnerRepName =
-        ownerIsLegal ? ownerOrEmpty?.consignorInfo.fullName ?? '' : '';
+        ownerIsLegal ? _personNameLastFirst(ownerOrEmpty!.consignorInfo) : '';
+    final consignorName = _contractDisplayName(consignor);
+    final ownerName =
+        ownerOrEmpty == null ? '' : _contractDisplayName(ownerOrEmpty);
+    final leuCompanyName = 'Leu Numismatik AG';
+    final contractDate = isProvisional ? '' : _formatDate(record.signedAt);
 
     final bankAccountValue = consignor.bankingDetails.accountNumber;
     final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
@@ -293,7 +332,7 @@ class ContractPdfPayloadBuilder {
       'CountryOfConsignment': consignmentCountry,
       'country_of_consignment': consignmentCountry,
       'origin_country': originCountry,
-      'consignor_full_name': consignor.displayName,
+      'consignor_full_name': consignorName,
       'consignor_dob': _formatDate(consignor.consignorInfo.dateOfBirth),
       'consignor_nationality': consignor.consignorInfo.nationalityName,
       'consignor_address_1': _addressLine1(consignor.consignorAddress),
@@ -301,11 +340,11 @@ class ContractPdfPayloadBuilder {
       'consignor_address_3': _addressLine3(consignor.consignorAddress),
       'consignor_phone': consignor.fullPhoneNumber,
       'consignor_email': consignor.emailAddress,
-      'consignor_place_date': _formatDate(record.signedAt),
-      'consignor_signature_image': customerSignatureBase64,
+      'consignor_place_date': contractDate,
+      'consignor_signature_image': contractSignatureBase64,
       'consignor_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
-      'consignor_signature_name': consignor.displayName,
-      'consignor_signer_name_function': consignor.displayName,
+      'consignor_signature_name': consignorName,
+      'consignor_signer_name_function': consignorName,
       'legal_entity_name': scenario.consignorType == ConsignorType.legalEntity
           ? consignor.tradingName
           : '',
@@ -324,7 +363,7 @@ class ContractPdfPayloadBuilder {
       'representative_name': legalRepresentativeName,
       'representative_phone': legalRepresentativePhone,
       'representative_email': legalRepresentativeEmail,
-      'owner_full_name': ownerOrEmpty?.displayName ?? '',
+      'owner_full_name': ownerName,
       'owner_dob': _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
       'owner_nationality': ownerOrEmpty?.consignorInfo.nationalityName ?? '',
       'owner_address_1':
@@ -335,6 +374,8 @@ class ContractPdfPayloadBuilder {
           ownerAddress == null ? '' : _addressLine3(ownerAddress),
       'owner_phone': ownerOrEmpty?.fullPhoneNumber ?? '',
       'owner_email': ownerOrEmpty?.emailAddress ?? '',
+      'payment_method': consignor.paymentOption.apiName,
+      'payment_method_text': consignor.paymentOption.label,
       'bank_name': consignor.bankingDetails.bankName,
       'bank_address_1': _addressLine1(consignor.bankingDetails.bankAddress),
       'bank_address_2': _addressLine2(consignor.bankingDetails.bankAddress),
@@ -350,21 +391,23 @@ class ContractPdfPayloadBuilder {
       'bic_swift': consignor.bankingDetails.bicSwift,
       'clearing_nr': consignor.bankingDetails.clearingNumber,
       'routing_nr': consignor.bankingDetails.routingNumber,
-      'leu_place_date': _formatDate(record.signedAt),
+      'leu_place_date': contractDate,
+      'leu_representative_company': leuCompanyName,
+      'leu_representative_name': leuRepresentativeName,
+      'leu_representative_function': leuRepresentativeFunction,
       'leu_representative_name_function': [
+        leuCompanyName,
         leuRepresentativeName,
-        leuRepresentativeFunction,
       ].where((part) => part.trim().isNotEmpty).join(' / '),
       'leu_signature_image': leuSignatureBase64,
       'annex_a_auction_name': auctionName,
       'annex_a_auction_date': _formatDate(auctionDate),
-      'annex_a_place_date': _formatDate(record.signedAt),
-      'annex_a_signature_image': customerSignatureBase64,
+      'annex_a_place_date': contractDate,
+      'annex_a_signature_image': annexASignatureBase64,
       'annex_a_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
-      'annex_a_signature_name': consignor.displayName,
-      'annex_a_signer_name': consignor.displayName,
-      'annex_a_owner_full_name':
-          ownerIsLegal ? '' : ownerOrEmpty?.displayName ?? '',
+      'annex_a_signature_name': consignorName,
+      'annex_a_signer_name': consignorName,
+      'annex_a_owner_full_name': ownerIsLegal ? '' : ownerName,
       'annex_a_owner_dob': ownerIsLegal
           ? ''
           : _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
@@ -403,11 +446,11 @@ class ContractPdfPayloadBuilder {
           ownerIsLegal ? ownerOrEmpty?.fullPhoneNumber ?? '' : '',
       'annex_a_legal_email':
           ownerIsLegal ? ownerOrEmpty?.emailAddress ?? '' : '',
-      'annex_c_place_date': _formatDate(record.signedAt),
-      'annex_c_signature_image': customerSignatureBase64,
+      'annex_c_place_date': contractDate,
+      'annex_c_signature_image': annexCSignatureBase64,
       'annex_c_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
-      'annex_c_signature_name': consignor.displayName,
-      'annex_c_signer_name': consignor.displayName,
+      'annex_c_signature_name': consignorName,
+      'annex_c_signer_name': consignorName,
       'attachment_id_natural_images': '',
       'attachment_commercial_register_images': '',
       'attachment_id_representative_images': '',
@@ -504,7 +547,7 @@ class ContractPdfPayloadBuilder {
       'Paragraf10': [false, true, false, false, false, false, true, false],
       'Paragraf11': [false, false, true, true, false, true, false, false],
       'Paragraf12': [false, false, false, false, true, false, false, true],
-      'Paragraf13': [true, true, true, true, false, true, true, true],
+      'Paragraf13': [true, true, true, true, true, true, true, true],
       'Paragraf14': [false, false, false, true, true, true, true, true],
       'Paragraf15': [false, true, true, true, true, false, true, true],
       'Paragraf16': [false, false, true, false, true, false, false, true],
@@ -544,23 +587,40 @@ class ContractPdfPayloadBuilder {
   static String _checkbox(bool checked) => checked ? '☑' : '☐';
 
   static String _addressLine1(Address address) {
-    final street = [address.streetAddress, address.streetNumber]
-        .where((part) => part.toString().trim().isNotEmpty)
-        .join(' ');
-    return street.trim();
+    return AddressFormatter.contractLine(address, 0);
   }
 
   static String _addressLine2(Address address) {
-    return address.streetAddressOptional.trim();
+    return AddressFormatter.contractLine(address, 1);
   }
 
   static String _addressLine3(Address address) {
-    final cityLine = [address.postalCode, address.city]
-        .where((part) => part.toString().trim().isNotEmpty)
+    return AddressFormatter.contractLine(address, 2);
+  }
+
+  static String _contractDisplayName(Consignor consignor) {
+    if (consignor.usesTradingName && consignor.tradingName.trim().isNotEmpty) {
+      return consignor.tradingName.trim();
+    }
+    return _personNameLastFirst(consignor.consignorInfo);
+  }
+
+  static String _personNameLastFirst(Person person) {
+    return [person.lastName, person.firstName]
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
         .join(' ');
-    return [cityLine, address.countryName]
-        .where((part) => part.toString().trim().isNotEmpty)
-        .join(', ');
+  }
+
+  static String _resolvedPdfName(ContractRecord record) {
+    final value = record.pdfName.trim();
+    return value.isEmpty ? 'consignor_contract.pdf' : value;
+  }
+
+  static String _pdfTitle(String fileName) {
+    final trimmed = fileName.trim();
+    if (trimmed.isEmpty) return 'Consignment Agreement';
+    return trimmed.replaceAll(RegExp(r'\.[^.]+$'), '');
   }
 
   Future<String> _assetAsBase64(String assetPath) async {

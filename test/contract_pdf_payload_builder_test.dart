@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:leu_consignor_app/src/domain/consignor_type.dart';
 import 'package:leu_consignor_app/src/models/consignor.dart';
 import 'package:leu_consignor_app/src/models/contract_record.dart';
+import 'package:leu_consignor_app/src/models/payment_option.dart';
 import 'package:leu_consignor_app/src/services/contract_pdf_service.dart';
 
 void main() {
@@ -105,6 +106,55 @@ void main() {
       expect(payload['consignmentCountryIsoCountryCode'], 'FRA');
       expect(payload['consignment_country'], 'France');
       expect(payload['CountryOfConsignment'], 'France');
+    });
+
+    test('emits PDF name, title, page numbers, and provisional flags',
+        () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          pdfName: 'COC-100_1-202606091435.pdf',
+        ),
+      );
+
+      expect(payload['pdfName'], 'COC-100_1-202606091435.pdf');
+      expect(payload['pdfTitle'], 'COC-100_1-202606091435');
+      expect(payload['documentTitle'], 'COC-100_1-202606091435');
+      expect(payload['includePageNumbers'], isTrue);
+      expect(payload['isProvisional'], isTrue);
+      expect(payload['watermarkText'], 'PROVISIONAL');
+      expect(payload['consignor_place_date'], '');
+      expect(payload['leu_place_date'], '');
+      expect(payload['annex_a_place_date'], '');
+      expect(payload['annex_c_place_date'], '');
+    });
+
+    test('emits desired payment method and country-specific address lines',
+        () async {
+      final consignor = _consignor(ConsignorType.naturalPerson)
+        ..paymentOption = PaymentOption.wise;
+
+      consignor.consignorAddress
+        ..streetAddress = 'Main Street'
+        ..streetNumber = '12'
+        ..postalCode = '10001'
+        ..city = 'New York'
+        ..adminRegion = 'NY'
+        ..countryIso3 = 'USA'
+        ..countryName = 'United States';
+
+      final payload = await builder.build(
+        consignor: consignor,
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['payment_method'], 'Wise');
+      expect(payload['payment_method_text'], 'WISE');
+      expect(payload['check_payment_wise'], '☑');
+      expect(payload['consignor_address_1'], '12 Main Street');
+      expect(
+          payload['consignor_address_2'], 'New York, NY 10001, United States');
+      expect(payload['consignor_address_3'], '');
     });
   });
 }

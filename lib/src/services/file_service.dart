@@ -64,9 +64,9 @@ class FileService {
       final picked = await _picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 72,
-        maxWidth: 1600,
-        maxHeight: 1600,
+        imageQuality: 95,
+        maxWidth: 4096,
+        maxHeight: 4096,
       );
 
       if (picked == null) {

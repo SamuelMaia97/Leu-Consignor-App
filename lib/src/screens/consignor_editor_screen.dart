@@ -1300,7 +1300,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                         key: const ValueKey('editor-field-iban'),
                         initialValue: _model.bankingDetails.accountNumber,
                         decoration: const InputDecoration(
-                          labelText: 'IBAN / Account Nr. *',
+                          labelText: 'IBAN / Account No *',
                         ),
                         validator: FormValidators.ibanOrAccountNumber,
                         onChanged: (value) =>

@@ -116,7 +116,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
 
       final controller = CameraController(
         selectedCamera,
-        ResolutionPreset.medium,
+        ResolutionPreset.max,
         enableAudio: false,
       );
 
@@ -316,8 +316,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                     const SizedBox(width: 12),
                     IconButton.outlined(
                       tooltip: 'Switch camera',
-                      onPressed:
-                          _initializing || _capturing ? null : _switchToNextCamera,
+                      onPressed: _initializing || _capturing
+                          ? null
+                          : _switchToNextCamera,
                       icon: const Icon(Icons.cameraswitch_outlined),
                     ),
                   ],

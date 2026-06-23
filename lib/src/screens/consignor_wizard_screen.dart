@@ -75,6 +75,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _LookupOption(value: 'de', label: 'German'),
   ];
 
+  static const List<PaymentOption> _paymentOptions = PaymentOption.values;
+
   final _controller = PageController();
   final _draft = _WizardDraft();
   final _representativeDraft = _WizardDraft(representativeMode: true);
@@ -838,7 +840,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       final captured = await _fileService.captureImage(
         context: context,
         type: type,
-        filePrefix: _filePrefixFor(type, kind),
+        filePrefix: _filePrefixFor(
+          type,
+          kind,
+          nextIndex:
+              type == UploadType.product ? _nextProductImageIndex() : null,
+        ),
       );
 
       paths = captured == null ? const [] : [captured];
@@ -903,15 +910,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       [scanFiles.visibleImagePath],
       UploadType.passport,
     );
-    final importedReportPaths = scanFiles.reportPdfPath == null
-        ? const <String>[]
-        : await _fileService.importFilesForUpload(
-            [scanFiles.reportPdfPath!],
-            UploadType.passport,
-          );
-    final importedPaths = [...importedImagePaths, ...importedReportPaths];
 
-    if (importedPaths.isEmpty) {
+    if (importedImagePaths.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No Penta scan files could be imported.')),
@@ -921,27 +921,16 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     setState(() {
       _draft.addFiles(importedImagePaths, UploadType.passport, kind: kind);
-      _draft.addFiles(
-        importedReportPaths,
-        UploadType.passport,
-        kind: _pentaValidationReportKindFor(kind),
-      );
     });
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Penta scan imported: ${importedPaths.length} file${importedPaths.length == 1 ? '' : 's'}.',
+          'Penta scan imported: ${importedImagePaths.length} file${importedImagePaths.length == 1 ? '' : 's'}.',
         ),
       ),
     );
-  }
-
-  String _pentaValidationReportKindFor(String kind) {
-    return kind == _representativeIdKind
-        ? _representativeIdValidationReportKind
-        : _ordererIdValidationReportKind;
   }
 
   Future<Set<String>> _pentaOutputFolders(Directory outputRoot) async {
@@ -990,7 +979,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         return scanFiles;
       }
 
-      onStatusChanged('Waiting for visible image and report...');
+      onStatusChanged('Waiting for visible image...');
       await Future<void>.delayed(const Duration(seconds: 1));
     }
 
@@ -1078,14 +1067,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     if (files.isEmpty) return null;
 
     File? visibleImage;
-    File? reportPdf;
-
     for (final file in files) {
       final name = _fileNameFromPath(file.path).toLowerCase();
       if (name == 'page1_visible.jpg') {
         visibleImage = file;
-      } else if (name.endsWith('.pdf') && name.startsWith('report_')) {
-        reportPdf = file;
       }
     }
 
@@ -1110,10 +1095,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       return null;
     }
 
-    return _PentaScanFiles(
-      visibleImagePath: visibleImage.path,
-      reportPdfPath: reportPdf?.path,
-    );
+    return _PentaScanFiles(visibleImagePath: visibleImage.path);
   }
 
   bool _isPentaOutputFolder(String path) {
@@ -1142,11 +1124,19 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     return parts.isEmpty ? path : parts.last;
   }
 
-  String _filePrefixFor(UploadType type, String kind) {
+  int _nextProductImageIndex() {
+    return _draft.productFiles.length + 1;
+  }
+
+  String _filePrefixFor(UploadType type, String kind, {int? nextIndex}) {
     if (type == UploadType.passport) {
       return kind == _representativeIdKind ? 'representative_id' : 'orderer_id';
     }
-    return type == UploadType.product ? 'product' : 'contract_file';
+    if (type == UploadType.product) {
+      final index = nextIndex == null ? '' : '_$nextIndex';
+      return 'consignment$index';
+    }
+    return 'contract_file';
   }
 
   void _removeFile(ContractUpload upload) {
@@ -1156,14 +1146,18 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     );
   }
 
-  ContractRecord _buildContract(String consignorId) {
+  ContractRecord _buildContract(
+    String consignorId, {
+    String? pdfPathOverride,
+    String? pdfNameOverride,
+  }) {
     final nowUtc = DateTime.now().toUtc();
+    final selectedAuctions = _chronologicalAuctions(_draft.selectedAuctions);
 
-    final auctionIds = _draft.selectedAuctions
-        .map((item) => item.auctionId)
-        .toList(growable: false);
+    final auctionIds =
+        selectedAuctions.map((item) => item.auctionId).toList(growable: false);
 
-    final auctionNames = _draft.selectedAuctions
+    final auctionNames = selectedAuctions
         .map((item) => _localizedAuctionDisplayName(
               item.displayName,
               _draft.correspondence,
@@ -1190,10 +1184,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       uploads.add(upload.copyWith(auctionId: firstAuctionId));
     }
 
-    final pdfPath = _generatedPdfPath?.trim() ?? '';
-    String? pdfName;
+    final pdfPath = pdfPathOverride?.trim() ?? _generatedPdfPath?.trim() ?? '';
+    String? pdfName = pdfNameOverride?.trim();
 
-    if (pdfPath.isNotEmpty) {
+    if ((pdfName == null || pdfName.isEmpty) && pdfPath.isNotEmpty) {
       final pdfFile = File(pdfPath);
       pdfName = pdfFile.uri.pathSegments.isEmpty
           ? 'consignor_contract.pdf'
@@ -1237,47 +1231,53 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     required bool includeSignatures,
   }) {
     final prefix = includeSignatures ? '' : _unsignedContractPrefix;
-    final auctionPart = _auctionCodePart(record.auctionDisplayNames);
-    final auctionSuffix = auctionPart.isEmpty ? '' : ' ($auctionPart)';
     return '$prefix'
-        'Consignor-Agreement$auctionSuffix ${_todayDatePart()}.pdf';
+        'COC-${_contractUniqueNumber(record)}-${_timestampMinutePart()}.pdf';
   }
 
-  String _auctionCodePart(List<String> auctionNames) {
-    final codes = auctionNames
-        .map(_auctionCode)
-        .where((value) => value.trim().isNotEmpty)
-        .toList(growable: false);
-    return codes.join(' & ');
+  List<AuctionOption> _chronologicalAuctions(List<AuctionOption> auctions) {
+    final sorted = auctions.toList(growable: false)
+      ..sort((a, b) {
+        final numberComparison =
+            _auctionSortNumber(a).compareTo(_auctionSortNumber(b));
+        if (numberComparison != 0) return numberComparison;
+        return a.auctionId.compareTo(b.auctionId);
+      });
+    return sorted;
   }
 
-  String _auctionCode(String value) {
-    final normalized = value.trim();
-    if (normalized.isEmpty) return '';
+  int _auctionSortNumber(AuctionOption auction) {
+    if (auction.auctionNumber > 0) return auction.auctionNumber;
 
-    final webMatch = RegExp(
-      r'\bWeb\s+(?:Auction|Auktion)\s*(\d+)\b',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    if (webMatch != null) return 'WA${webMatch.group(1)}';
+    final match = RegExp(r'\b(\d+)\b').firstMatch(auction.displayName);
+    if (match != null) {
+      return int.tryParse(match.group(1)!) ?? auction.auctionId;
+    }
 
-    final auctionMatch = RegExp(
-      r'\b(?:Auction|Auktion)\s*(\d+)\b',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    if (auctionMatch != null) return 'A${auctionMatch.group(1)}';
-
-    return normalized
-        .replaceAll(RegExp(r'[\\/:*?"<>|]+'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    return auction.auctionId;
   }
 
-  String _todayDatePart() {
+  String _contractUniqueNumber(ContractRecord record) {
+    final source = record.systemReferenceContract > 0
+        ? record.systemReferenceContract.toString()
+        : record.id;
+    final safe = source
+        .trim()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
+    return safe.isEmpty
+        ? DateTime.now().microsecondsSinceEpoch.toString()
+        : safe;
+  }
+
+  String _timestampMinutePart() {
     final now = DateTime.now();
-    return '${now.year.toString().padLeft(4, '0')}-'
-        '${now.month.toString().padLeft(2, '0')}-'
-        '${now.day.toString().padLeft(2, '0')}';
+    return '${now.year.toString().padLeft(4, '0')}'
+        '${now.month.toString().padLeft(2, '0')}'
+        '${now.day.toString().padLeft(2, '0')}'
+        '${now.hour.toString().padLeft(2, '0')}'
+        '${now.minute.toString().padLeft(2, '0')}';
   }
 
   Future<Consignor> _saveConsignorLocal({required bool draft}) async {
@@ -1323,24 +1323,37 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   Future<ContractSignatureData?> _buildSignatureData() async {
     final signer = _draft.leuSigner;
-    if (signer == null || !_draft.hasCustomerSignature) return null;
+    if (signer == null || !_draft.signatureReady) return null;
 
-    final customerSignature = await _renderCustomerSignaturePng();
-    if (customerSignature == null) return null;
+    final contractSignature = await _renderSignaturePng(
+      _draft.contractSignatureStrokes,
+    );
+    final annexASignature = await _renderSignaturePng(
+      _draft.annexASignatureStrokes,
+    );
+    final annexCSignature = await _renderSignaturePng(
+      _draft.annexCSignatureStrokes,
+    );
+
+    if (contractSignature == null ||
+        annexASignature == null ||
+        annexCSignature == null) {
+      return null;
+    }
 
     return ContractSignatureData(
       leuRepresentativeName: signer.displayName,
       leuRepresentativeSignatureAsset: signer.assetPath,
-      customerSignaturePng: customerSignature,
+      contractSignaturePng: contractSignature,
+      annexASignaturePng: annexASignature,
+      annexCSignaturePng: annexCSignature,
     );
   }
 
-  Future<Uint8List?> _renderCustomerSignaturePng() async {
-    if (!_draft.hasCustomerSignature) return null;
-
+  Future<Uint8List?> _renderSignaturePng(List<List<Offset>> strokes) async {
     const outputWidth = 900.0;
     const outputHeight = 300.0;
-    final signatureBounds = _signatureBounds(_draft.customerSignatureStrokes);
+    final signatureBounds = _signatureBounds(strokes);
     if (signatureBounds == null) return null;
 
     final recorder = ui.PictureRecorder();
@@ -1366,7 +1379,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           signatureBounds.top * scale,
     );
 
-    for (final stroke in _draft.customerSignatureStrokes) {
+    for (final stroke in strokes) {
       if (stroke.length < 2) continue;
       final path = ui.Path()
         ..moveTo(
@@ -1435,18 +1448,25 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     if (includeSignatures && signatureData == null) {
       throw Exception(
-        'Choose who will sign the PDF and add the customer signature first.',
+        'Choose who will sign the PDF and add all required signatures first.',
       );
     }
 
-    final output = await _fileService.getSuggestedPdfPath(
-      _contractPdfName(record, includeSignatures: includeSignatures),
+    final desiredPdfName =
+        _contractPdfName(record, includeSignatures: includeSignatures);
+    final output = await _fileService.getSuggestedPdfPath(desiredPdfName);
+    final outputFileName = File(output).uri.pathSegments.isEmpty
+        ? desiredPdfName
+        : File(output).uri.pathSegments.last;
+    final outputRecord = _buildContract(
+      consignor.id,
+      pdfNameOverride: outputFileName,
     );
 
     return _pdfService.buildContractPdf(
       apiService: apiService,
       consignor: consignor,
-      record: record,
+      record: outputRecord,
       outputPath: output,
       authorizedRepresentative: authorizedRepresentative,
       signatureData: signatureData,
@@ -1484,18 +1504,50 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
   }
 
-  void _updateCustomerSignature(List<List<Offset>> strokes, Size size) {
+  void _updateContractSignature(List<List<Offset>> strokes, Size size) {
     setState(() {
-      _draft.customerSignatureStrokes = strokes;
-      _draft.customerSignatureCanvasSize = size;
+      _draft.contractSignatureStrokes = strokes;
+      _draft.contractSignatureCanvasSize = size;
       _generatedPdfIncludesSignatures = false;
     });
   }
 
-  void _clearCustomerSignature() {
+  void _updateAnnexASignature(List<List<Offset>> strokes, Size size) {
     setState(() {
-      _draft.customerSignatureStrokes = <List<Offset>>[];
-      _draft.customerSignatureCanvasSize = Size.zero;
+      _draft.annexASignatureStrokes = strokes;
+      _draft.annexASignatureCanvasSize = size;
+      _generatedPdfIncludesSignatures = false;
+    });
+  }
+
+  void _updateAnnexCSignature(List<List<Offset>> strokes, Size size) {
+    setState(() {
+      _draft.annexCSignatureStrokes = strokes;
+      _draft.annexCSignatureCanvasSize = size;
+      _generatedPdfIncludesSignatures = false;
+    });
+  }
+
+  void _clearContractSignature() {
+    setState(() {
+      _draft.contractSignatureStrokes = <List<Offset>>[];
+      _draft.contractSignatureCanvasSize = Size.zero;
+      _generatedPdfIncludesSignatures = false;
+    });
+  }
+
+  void _clearAnnexASignature() {
+    setState(() {
+      _draft.annexASignatureStrokes = <List<Offset>>[];
+      _draft.annexASignatureCanvasSize = Size.zero;
+      _generatedPdfIncludesSignatures = false;
+    });
+  }
+
+  void _clearAnnexCSignature() {
+    setState(() {
+      _draft.annexCSignatureStrokes = <List<Offset>>[];
+      _draft.annexCSignatureCanvasSize = Size.zero;
       _generatedPdfIncludesSignatures = false;
     });
   }
@@ -1547,7 +1599,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Choose who will sign the PDF and add the customer signature first.',
+            'Choose who will sign the PDF and add all required signatures first.',
           ),
         ),
       );
@@ -1868,8 +1920,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           generatedPdfPath: _generatedPdfPath,
           onBack: _back,
           onSignerChanged: _selectLeuSigner,
-          onSignatureChanged: _updateCustomerSignature,
-          onClearSignature: _clearCustomerSignature,
+          onContractSignatureChanged: _updateContractSignature,
+          onAnnexASignatureChanged: _updateAnnexASignature,
+          onAnnexCSignatureChanged: _updateAnnexCSignature,
+          onClearContractSignature: _clearContractSignature,
+          onClearAnnexASignature: _clearAnnexASignature,
+          onClearAnnexCSignature: _clearAnnexCSignature,
           onGeneratePdf: () => _generatePdf(includeSignatures: true),
           onOpenPdf:
               _generatedPdfPath == null || !_generatedPdfIncludesSignatures
@@ -1956,6 +2012,7 @@ class _WizardDraft {
   String bankName = '';
   String iban = '';
   bool isIban = true;
+  PaymentOption paymentOption = PaymentOption.bankTransfer;
   String bicSwift = '';
   String clearingNumber = '';
   String routingNumber = '';
@@ -1995,13 +2052,29 @@ class _WizardDraft {
   List<AuctionOption> selectedAuctions = const [];
   final List<ContractUpload> uploads = [];
   _LeuSigner? leuSigner;
-  List<List<Offset>> customerSignatureStrokes = <List<Offset>>[];
-  Size customerSignatureCanvasSize = Size.zero;
+  List<List<Offset>> contractSignatureStrokes = <List<Offset>>[];
+  Size contractSignatureCanvasSize = Size.zero;
+  List<List<Offset>> annexASignatureStrokes = <List<Offset>>[];
+  Size annexASignatureCanvasSize = Size.zero;
+  List<List<Offset>> annexCSignatureStrokes = <List<Offset>>[];
+  Size annexCSignatureCanvasSize = Size.zero;
 
-  bool get hasCustomerSignature =>
-      customerSignatureStrokes.any((stroke) => stroke.length > 1);
+  bool get hasContractSignature =>
+      contractSignatureStrokes.any((stroke) => stroke.length > 1);
 
-  bool get signatureReady => leuSigner != null && hasCustomerSignature;
+  bool get hasAnnexASignature =>
+      annexASignatureStrokes.any((stroke) => stroke.length > 1);
+
+  bool get hasAnnexCSignature =>
+      annexCSignatureStrokes.any((stroke) => stroke.length > 1);
+
+  bool get hasCustomerSignature => hasContractSignature;
+
+  bool get signatureReady =>
+      leuSigner != null &&
+      hasContractSignature &&
+      hasAnnexASignature &&
+      hasAnnexCSignature;
 
   bool get isLegalEntity => consignorType == ConsignorType.legalEntity;
 
@@ -2092,6 +2165,7 @@ class _WizardDraft {
         'bankName': bankName,
         'iban': iban,
         'isIban': isIban,
+        'paymentOption': paymentOption.apiName,
         'bicSwift': bicSwift,
         'clearingNumber': clearingNumber,
         'routingNumber': routingNumber,
@@ -2140,17 +2214,30 @@ class _WizardDraft {
             .toList(),
         'uploads': uploads.map((upload) => upload.toJson()).toList(),
         'leuSigner': leuSigner?.name,
-        'customerSignatureCanvasSize': {
-          'width': customerSignatureCanvasSize.width,
-          'height': customerSignatureCanvasSize.height,
+        'contractSignatureCanvasSize': {
+          'width': contractSignatureCanvasSize.width,
+          'height': contractSignatureCanvasSize.height,
         },
-        'customerSignatureStrokes': customerSignatureStrokes
-            .map(
-              (stroke) => stroke
-                  .map((point) => {'dx': point.dx, 'dy': point.dy})
-                  .toList(),
-            )
-            .toList(),
+        'contractSignatureStrokes':
+            _signatureStrokesToJson(contractSignatureStrokes),
+        'annexASignatureCanvasSize': {
+          'width': annexASignatureCanvasSize.width,
+          'height': annexASignatureCanvasSize.height,
+        },
+        'annexASignatureStrokes':
+            _signatureStrokesToJson(annexASignatureStrokes),
+        'annexCSignatureCanvasSize': {
+          'width': annexCSignatureCanvasSize.width,
+          'height': annexCSignatureCanvasSize.height,
+        },
+        'annexCSignatureStrokes':
+            _signatureStrokesToJson(annexCSignatureStrokes),
+        'customerSignatureCanvasSize': {
+          'width': contractSignatureCanvasSize.width,
+          'height': contractSignatureCanvasSize.height,
+        },
+        'customerSignatureStrokes':
+            _signatureStrokesToJson(contractSignatureStrokes),
       };
 
   void restoreFromResumeJson(Map<String, dynamic> json) {
@@ -2198,6 +2285,9 @@ class _WizardDraft {
     bankName = _toString(json['bankName']);
     iban = _toString(json['iban']);
     isIban = _toBool(json['isIban']) ?? true;
+    paymentOption = json.containsKey('paymentOption')
+        ? PaymentOptionX.fromAny(json['paymentOption'])
+        : PaymentOption.bankTransfer;
     bicSwift = _toString(json['bicSwift']);
     clearingNumber = _toString(json['clearingNumber']);
     routingNumber = _toString(json['routingNumber']);
@@ -2254,32 +2344,21 @@ class _WizardDraft {
 
     leuSigner = _leuSignerFromName(_stringOrNull(json['leuSigner']));
 
-    final sizeJson = json['customerSignatureCanvasSize'];
-    if (sizeJson is Map) {
-      customerSignatureCanvasSize = Size(
-        _toDouble(sizeJson['width']) ?? 0,
-        _toDouble(sizeJson['height']) ?? 0,
-      );
-    } else {
-      customerSignatureCanvasSize = Size.zero;
-    }
-
-    customerSignatureStrokes =
-        (((json['customerSignatureStrokes'] as List?) ?? const [])
-            .whereType<List>()
-            .map(
-              (stroke) => stroke
-                  .whereType<Map>()
-                  .map(
-                    (point) => Offset(
-                      _toDouble(point['dx']) ?? 0,
-                      _toDouble(point['dy']) ?? 0,
-                    ),
-                  )
-                  .toList(),
-            )
-            .where((stroke) => stroke.isNotEmpty)
-            .toList());
+    contractSignatureCanvasSize = _signatureSizeFromJson(
+      json['contractSignatureCanvasSize'] ??
+          json['customerSignatureCanvasSize'],
+    );
+    contractSignatureStrokes = _signatureStrokesFromJson(
+      json['contractSignatureStrokes'] ?? json['customerSignatureStrokes'],
+    );
+    annexASignatureCanvasSize =
+        _signatureSizeFromJson(json['annexASignatureCanvasSize']);
+    annexASignatureStrokes =
+        _signatureStrokesFromJson(json['annexASignatureStrokes']);
+    annexCSignatureCanvasSize =
+        _signatureSizeFromJson(json['annexCSignatureCanvasSize']);
+    annexCSignatureStrokes =
+        _signatureStrokesFromJson(json['annexCSignatureStrokes']);
   }
 
   static _LeuSigner? _leuSignerFromName(String? name) {
@@ -2313,6 +2392,44 @@ class _WizardDraft {
     if (text == 'true') return true;
     if (text == 'false') return false;
     return null;
+  }
+
+  static List<List<Map<String, double>>> _signatureStrokesToJson(
+    List<List<Offset>> strokes,
+  ) {
+    return strokes
+        .map(
+          (stroke) => stroke
+              .map((point) => {'dx': point.dx, 'dy': point.dy})
+              .toList(growable: false),
+        )
+        .toList(growable: false);
+  }
+
+  static Size _signatureSizeFromJson(Object? value) {
+    if (value is! Map) return Size.zero;
+    return Size(
+      _toDouble(value['width']) ?? 0,
+      _toDouble(value['height']) ?? 0,
+    );
+  }
+
+  static List<List<Offset>> _signatureStrokesFromJson(Object? value) {
+    return (((value as List?) ?? const [])
+        .whereType<List>()
+        .map(
+          (stroke) => stroke
+              .whereType<Map>()
+              .map(
+                (point) => Offset(
+                  _toDouble(point['dx']) ?? 0,
+                  _toDouble(point['dy']) ?? 0,
+                ),
+              )
+              .toList(growable: false),
+        )
+        .where((stroke) => stroke.isNotEmpty)
+        .toList(growable: false));
   }
 
   void applyPrefill(Consignor prefill) {
@@ -2357,6 +2474,7 @@ class _WizardDraft {
     bankName = prefill.bankingDetails.bankName;
     iban = prefill.bankingDetails.accountNumber;
     isIban = prefill.bankingDetails.isIban;
+    paymentOption = prefill.paymentOption;
     bicSwift = prefill.bankingDetails.bicSwift;
     clearingNumber = prefill.bankingDetails.clearingNumber;
     routingNumber = prefill.bankingDetails.routingNumber;
@@ -2434,6 +2552,7 @@ class _WizardDraft {
     bankName = '';
     iban = '';
     isIban = true;
+    paymentOption = PaymentOption.bankTransfer;
     bicSwift = '';
     clearingNumber = '';
     routingNumber = '';
@@ -2482,8 +2601,10 @@ class _WizardDraft {
     if (isLegalEntity) requireText(eori, 'EORI');
     if (vatLiability) requireText(vatNumber, 'VAT number');
 
-    requireText(iban, 'IBAN / Account Nr.');
-    requireText(bankName, 'Bank name');
+    if (paymentOption == PaymentOption.bankTransfer) {
+      requireText(iban, 'IBAN / Account No');
+      requireText(bankName, 'Bank name');
+    }
 
     return missing
         .map((field) => field.trim())
@@ -2505,7 +2626,7 @@ class _WizardDraft {
     }
     consignor.systemReferenceConsignor = systemReferenceConsignor;
     consignor.systemReferenceCustomer = systemReferenceCustomer;
-    consignor.paymentOption = PaymentOption.bankTransfer;
+    consignor.paymentOption = paymentOption;
     consignor.existingCustomerId = existingCustomerId;
     consignor.existingCustomerLabel = existingCustomerLabel;
     consignor.consignorType = consignorType;
@@ -3398,21 +3519,38 @@ class _ConsignorDetailsForm extends StatelessWidget {
         if (includeBanking) ...[
           const SizedBox(height: 16),
           SectionCard(
-            title: 'Bank transfer details',
+            title: 'Payment details',
             child: _ResponsiveFormGrid(
               children: [
+                SearchableSelectFormField<PaymentOption>(
+                  key: ValueKey('$_keyPrefix-field-payment-method'),
+                  label: 'Desired payment method *',
+                  items: _ConsignorWizardScreenState._paymentOptions,
+                  itemLabel: (item) => item.label,
+                  initialValue: draft.paymentOption,
+                  validator: (value) =>
+                      value == null ? 'Payment method is required' : null,
+                  onChanged: (value) {
+                    draft.paymentOption = value ?? PaymentOption.pending;
+                    onChanged();
+                  },
+                ),
                 TextFormField(
                   key: ValueKey('$_keyPrefix-field-iban'),
                   initialValue: draft.iban,
                   decoration: InputDecoration(
-                    labelText: 'IBAN / Account Nr. *',
+                    labelText: draft.paymentOption == PaymentOption.bankTransfer
+                        ? 'IBAN / Account No *'
+                        : 'IBAN / Account No',
                     suffixIcon: IconButton(
                       tooltip: 'Auto-fill bank data',
                       onPressed: onLookupIbanPressed,
                       icon: const Icon(Icons.travel_explore_rounded),
                     ),
                   ),
-                  validator: FormValidators.ibanOrAccountNumber,
+                  validator: draft.paymentOption == PaymentOption.bankTransfer
+                      ? FormValidators.ibanOrAccountNumber
+                      : null,
                   onChanged: (value) => draft.iban = value,
                 ),
                 TextFormField(
@@ -3420,9 +3558,15 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
                   ),
                   initialValue: draft.bankName,
-                  decoration: const InputDecoration(labelText: 'Bank name *'),
-                  validator: (value) =>
-                      FormValidators.requiredText(value, 'Bank name'),
+                  decoration: InputDecoration(
+                    labelText: draft.paymentOption == PaymentOption.bankTransfer
+                        ? 'Bank name *'
+                        : 'Bank name',
+                  ),
+                  validator: draft.paymentOption == PaymentOption.bankTransfer
+                      ? (value) =>
+                          FormValidators.requiredText(value, 'Bank name')
+                      : null,
                   onChanged: (value) => draft.bankName = value,
                 ),
                 TextFormField(
@@ -3440,6 +3584,12 @@ class _ConsignorDetailsForm extends StatelessWidget {
                       const InputDecoration(labelText: 'Clearing number'),
                   onChanged: (value) => draft.clearingNumber = value,
                 ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-routing-number'),
+                  initialValue: draft.routingNumber,
+                  decoration: const InputDecoration(labelText: 'Routing No'),
+                  onChanged: (value) => draft.routingNumber = value,
+                ),
                 CountryDropdown(
                   key: ValueKey(
                     '$_keyPrefix-field-bank-country-${draft.bankCountryIso3}',
@@ -3450,6 +3600,60 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   onChanged: (country) {
                     draft.bankCountryIso3 = country?.iso3 ?? '';
                     draft.bankCountryName = country?.name ?? '';
+                    onChanged();
+                  },
+                ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-bank-address-street'),
+                  initialValue: draft.bankAddressStreet,
+                  decoration: const InputDecoration(labelText: 'Bank street'),
+                  onChanged: (value) => draft.bankAddressStreet = value,
+                ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-bank-address-number'),
+                  initialValue: draft.bankAddressStreetNumber,
+                  decoration:
+                      const InputDecoration(labelText: 'Bank house number'),
+                  onChanged: (value) => draft.bankAddressStreetNumber = value,
+                ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-bank-address-line-2'),
+                  initialValue: draft.bankAddressStreetAddressOptional,
+                  decoration:
+                      const InputDecoration(labelText: 'Bank address line 2'),
+                  onChanged: (value) =>
+                      draft.bankAddressStreetAddressOptional = value,
+                ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-bank-address-postal-code'),
+                  initialValue: draft.bankAddressPostalCode,
+                  decoration:
+                      const InputDecoration(labelText: 'Bank postal code'),
+                  onChanged: (value) => draft.bankAddressPostalCode = value,
+                ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-bank-address-city'),
+                  initialValue: draft.bankAddressCity,
+                  decoration: const InputDecoration(labelText: 'Bank city'),
+                  onChanged: (value) => draft.bankAddressCity = value,
+                ),
+                TextFormField(
+                  key: ValueKey('$_keyPrefix-field-bank-address-region'),
+                  initialValue: draft.bankAddressAdminRegion,
+                  decoration:
+                      const InputDecoration(labelText: 'Bank state / region'),
+                  onChanged: (value) => draft.bankAddressAdminRegion = value,
+                ),
+                CountryDropdown(
+                  key: ValueKey(
+                    '$_keyPrefix-field-bank-country-${draft.bankAddressCountryIso3}',
+                  ),
+                  label: 'Bank address country',
+                  value: draft.bankAddressCountryIso3,
+                  countries: countries,
+                  onChanged: (country) {
+                    draft.bankAddressCountryIso3 = country?.iso3 ?? '';
+                    draft.bankAddressCountryName = country?.name ?? '';
                     onChanged();
                   },
                 ),
@@ -3731,11 +3935,9 @@ typedef _PentaScanRunner = Future<_PentaScanFiles> Function(
 class _PentaScanFiles {
   const _PentaScanFiles({
     required this.visibleImagePath,
-    this.reportPdfPath,
   });
 
   final String visibleImagePath;
-  final String? reportPdfPath;
 }
 
 class _PentaScanCancelledException implements Exception {
@@ -4302,8 +4504,12 @@ class _SignatureStep extends StatelessWidget {
     required this.generatedPdfPath,
     required this.onBack,
     required this.onSignerChanged,
-    required this.onSignatureChanged,
-    required this.onClearSignature,
+    required this.onContractSignatureChanged,
+    required this.onAnnexASignatureChanged,
+    required this.onAnnexCSignatureChanged,
+    required this.onClearContractSignature,
+    required this.onClearAnnexASignature,
+    required this.onClearAnnexCSignature,
     required this.onGeneratePdf,
     required this.onOpenPdf,
     required this.onSubmit,
@@ -4314,8 +4520,15 @@ class _SignatureStep extends StatelessWidget {
   final String? generatedPdfPath;
   final VoidCallback onBack;
   final ValueChanged<_LeuSigner> onSignerChanged;
-  final void Function(List<List<Offset>> strokes, Size size) onSignatureChanged;
-  final VoidCallback onClearSignature;
+  final void Function(List<List<Offset>> strokes, Size size)
+      onContractSignatureChanged;
+  final void Function(List<List<Offset>> strokes, Size size)
+      onAnnexASignatureChanged;
+  final void Function(List<List<Offset>> strokes, Size size)
+      onAnnexCSignatureChanged;
+  final VoidCallback onClearContractSignature;
+  final VoidCallback onClearAnnexASignature;
+  final VoidCallback onClearAnnexCSignature;
   final VoidCallback onGeneratePdf;
   final VoidCallback? onOpenPdf;
   final VoidCallback onSubmit;
@@ -4344,27 +4557,34 @@ class _SignatureStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        SectionCard(
-          title: 'Customer signature',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('The customer signs inside the box below.'),
-              const SizedBox(height: 12),
-              _SignaturePad(
-                initialStrokes: draft.customerSignatureStrokes,
-                initialCanvasSize: draft.customerSignatureCanvasSize,
-                enabled: !saving,
-                onChanged: onSignatureChanged,
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: saving ? null : onClearSignature,
-                icon: const Icon(Icons.clear_rounded),
-                label: const Text('Clear signature'),
-              ),
-            ],
-          ),
+        _SignatureCaptureSection(
+          title: 'Consignment agreement',
+          dialogTitle: 'Signature Consignment Agreement',
+          strokes: draft.contractSignatureStrokes,
+          canvasSize: draft.contractSignatureCanvasSize,
+          saving: saving,
+          onChanged: onContractSignatureChanged,
+          onClear: onClearContractSignature,
+        ),
+        const SizedBox(height: 12),
+        _SignatureCaptureSection(
+          title: 'Annex A',
+          dialogTitle: 'Signature Annex A',
+          strokes: draft.annexASignatureStrokes,
+          canvasSize: draft.annexASignatureCanvasSize,
+          saving: saving,
+          onChanged: onAnnexASignatureChanged,
+          onClear: onClearAnnexASignature,
+        ),
+        const SizedBox(height: 12),
+        _SignatureCaptureSection(
+          title: 'Annex C',
+          dialogTitle: 'Signature Annex C',
+          strokes: draft.annexCSignatureStrokes,
+          canvasSize: draft.annexCSignatureCanvasSize,
+          saving: saving,
+          onChanged: onAnnexCSignatureChanged,
+          onClear: onClearAnnexCSignature,
         ),
         const SizedBox(height: 12),
         SectionCard(
@@ -4409,14 +4629,61 @@ class _SignatureStep extends StatelessWidget {
   }
 }
 
+class _SignatureCaptureSection extends StatelessWidget {
+  const _SignatureCaptureSection({
+    required this.title,
+    required this.dialogTitle,
+    required this.strokes,
+    required this.canvasSize,
+    required this.saving,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final String title;
+  final String dialogTitle;
+  final List<List<Offset>> strokes;
+  final Size canvasSize;
+  final bool saving;
+  final void Function(List<List<Offset>> strokes, Size size) onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: title,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SignaturePad(
+            dialogTitle: dialogTitle,
+            initialStrokes: strokes,
+            initialCanvasSize: canvasSize,
+            enabled: !saving,
+            onChanged: onChanged,
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: saving ? null : onClear,
+            icon: const Icon(Icons.clear_rounded),
+            label: const Text('Clear signature'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SignaturePad extends StatefulWidget {
   const _SignaturePad({
+    required this.dialogTitle,
     required this.initialStrokes,
     required this.initialCanvasSize,
     required this.enabled,
     required this.onChanged,
   });
 
+  final String dialogTitle;
   final List<List<Offset>> initialStrokes;
   final Size initialCanvasSize;
   final bool enabled;
@@ -4434,6 +4701,7 @@ class _SignaturePadState extends State<_SignaturePad> {
       context: context,
       barrierDismissible: false,
       builder: (context) => _SignatureDialog(
+        title: widget.dialogTitle,
         initialStrokes: widget.initialStrokes,
         initialCanvasSize: widget.initialCanvasSize,
       ),
@@ -4532,10 +4800,12 @@ class _SignatureDialogResult {
 
 class _SignatureDialog extends StatefulWidget {
   const _SignatureDialog({
+    required this.title,
     required this.initialStrokes,
     required this.initialCanvasSize,
   });
 
+  final String title;
   final List<List<Offset>> initialStrokes;
   final Size initialCanvasSize;
 
@@ -4598,7 +4868,7 @@ class _SignatureDialogState extends State<_SignatureDialog> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Customer signature',
+                      widget.title,
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
@@ -5065,10 +5335,22 @@ extension _WizardDraftReview on _WizardDraft {
         ),
         _ReviewLine('VAT number', vatNumber),
         _ReviewLine('EORI', eori),
-        _ReviewLine('IBAN / Account Nr.', iban),
+        _ReviewLine('Payment method', paymentOption.label),
+        _ReviewLine('IBAN / Account No', iban),
         _ReviewLine('BIC / SWIFT', bicSwift),
         _ReviewLine('Clearing number', clearingNumber),
-        _ReviewLine('Routing number', routingNumber),
+        _ReviewLine('Routing No', routingNumber),
+        _ReviewLine(
+          'Bank address',
+          [
+            bankAddressStreet,
+            bankAddressStreetNumber,
+            bankAddressStreetAddressOptional,
+            '$bankAddressPostalCode $bankAddressCity',
+            bankAddressAdminRegion,
+            bankAddressCountryName,
+          ].where((part) => part.trim().isNotEmpty).join(', '),
+        ),
         _ReviewLine('Correspondence', _correspondenceLabel),
       ];
 }
