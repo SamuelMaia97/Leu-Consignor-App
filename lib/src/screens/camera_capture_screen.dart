@@ -19,6 +19,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
   int _selectedCameraIndex = 0;
   bool _initializing = true;
   bool _capturing = false;
+  bool _mirrorPreview = false;
   String? _error;
 
   @override
@@ -130,6 +131,8 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
       setState(() {
         _controller = controller;
         _selectedCameraIndex = safeIndex;
+        _mirrorPreview =
+            selectedCamera.lensDirection == CameraLensDirection.front;
         _initializing = false;
         _error = null;
       });
@@ -279,7 +282,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                                         child: AspectRatio(
                                           aspectRatio:
                                               controller.value.aspectRatio,
-                                          child: CameraPreview(controller),
+                                          child: _mirroredPreview(
+                                            controller,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -323,6 +328,18 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
                     ),
                   ],
                   const SizedBox(width: 12),
+                  IconButton.outlined(
+                    tooltip: _mirrorPreview
+                        ? 'Use normal preview'
+                        : 'Mirror preview',
+                    onPressed: _initializing || _capturing
+                        ? null
+                        : () {
+                            setState(() => _mirrorPreview = !_mirrorPreview);
+                          },
+                    icon: const Icon(Icons.flip),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: _initializing || _error != null || _capturing
@@ -344,6 +361,17 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _mirroredPreview(CameraController controller) {
+    final preview = CameraPreview(controller);
+    if (!_mirrorPreview) return preview;
+
+    return Transform(
+      alignment: Alignment.center,
+      transform: Matrix4.identity()..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
+      child: preview,
     );
   }
 }
