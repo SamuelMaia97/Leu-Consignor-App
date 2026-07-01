@@ -8,6 +8,44 @@ import 'package:open_filex/open_filex.dart';
 import '../models/contract_record.dart';
 import '../screens/camera_capture_screen.dart';
 import '../storage/local_store.dart';
+import '../widgets/phone_capture_dialog.dart';
+import 'phone_capture_service.dart';
+
+class PhoneCaptureFileTarget {
+  const PhoneCaptureFileTarget({
+    required this.id,
+    required this.label,
+    required this.type,
+    required this.filePrefix,
+    this.kind = '',
+  });
+
+  final String id;
+  final String label;
+  final UploadType type;
+  final String filePrefix;
+  final String kind;
+
+  PhoneCaptureTarget toCaptureTarget() {
+    return PhoneCaptureTarget(
+      id: id,
+      label: label,
+      filePrefix: filePrefix,
+    );
+  }
+}
+
+class PhoneCaptureFileResult {
+  const PhoneCaptureFileResult({
+    required this.path,
+    required this.type,
+    this.kind = '',
+  });
+
+  final String path;
+  final UploadType type;
+  final String kind;
+}
 
 class FileService {
   final ImagePicker _picker = ImagePicker();
@@ -108,6 +146,94 @@ class FileService {
 
     final imported = await importFilesForUpload(paths, type);
     return imported.isEmpty ? null : imported.first;
+  }
+
+  Future<List<String>> captureImagesWithPhone({
+    required BuildContext context,
+    required UploadType type,
+    required String filePrefix,
+    required String targetLabel,
+  }) async {
+    const targetId = 'capture';
+    final results = await captureImagesWithPhoneTargets(
+      context: context,
+      initialTargetId: targetId,
+      targets: [
+        PhoneCaptureFileTarget(
+          id: targetId,
+          label: targetLabel,
+          type: type,
+          filePrefix: filePrefix,
+        ),
+      ],
+    );
+
+    return results.map((result) => result.path).toList(growable: false);
+  }
+
+  Future<List<PhoneCaptureFileResult>> captureImagesWithPhoneTargets({
+    required BuildContext context,
+    required List<PhoneCaptureFileTarget> targets,
+    String? initialTargetId,
+  }) async {
+    if (targets.isEmpty) {
+      return const [];
+    }
+
+    final uploads = await PhoneCaptureDialog.capture(
+      context: context,
+      targets: targets.map((target) => target.toCaptureTarget()).toList(),
+      initialTargetId: initialTargetId,
+    );
+
+    if (uploads.isEmpty) {
+      return const [];
+    }
+
+    final results = <PhoneCaptureFileResult>[];
+    for (final target in targets) {
+      final targetUploads = uploads
+          .where((upload) => upload.targetId == target.id)
+          .toList(growable: false);
+
+      if (targetUploads.isEmpty) {
+        continue;
+      }
+
+      final importedPaths = await importFilesForUpload(
+        targetUploads.map((upload) => upload.path).toList(growable: false),
+        target.type,
+      );
+
+      results.addAll(
+        importedPaths.map(
+          (path) => PhoneCaptureFileResult(
+            path: path,
+            type: target.type,
+            kind: target.kind,
+          ),
+        ),
+      );
+    }
+
+    for (final upload in uploads) {
+      try {
+        final sourceFile = File(upload.path);
+        final sourceDirectory = sourceFile.parent;
+        if (await sourceFile.exists() &&
+            !results.any((result) => result.path == sourceFile.path)) {
+          await sourceFile.delete();
+        }
+        if (await sourceDirectory.exists() &&
+            await sourceDirectory.list().isEmpty) {
+          await sourceDirectory.delete();
+        }
+      } catch (_) {
+        // Temporary phone capture cleanup is best-effort.
+      }
+    }
+
+    return results;
   }
 
   Future<void> open(String path) async {

@@ -56,6 +56,7 @@ class FilePreview {
     );
   }
 
-  static final RegExp _imagePattern = RegExp(r'\.(jpg|jpeg|png|webp|gif|bmp)$');
+  static final RegExp _imagePattern =
+      RegExp(r'\.(jpg|jpeg|png|webp|gif|bmp|heic|heif)$');
   static final RegExp _wordPattern = RegExp(r'\.(doc|docx|rtf)$');
 }

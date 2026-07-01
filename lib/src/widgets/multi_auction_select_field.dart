@@ -18,6 +18,8 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
           builder: (field) {
             String labelFor(AuctionOption auction) =>
                 itemLabel?.call(auction) ?? auction.displayName;
+            final sortedItems = items.toList(growable: false)
+              ..sort(MultiAuctionSelectField._compareAuctions);
 
             Future<void> openPicker() async {
               if (!enabled) return;
@@ -34,15 +36,22 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
 
                   return StatefulBuilder(
                     builder: (context, setSheetState) {
-                      final filtered = items.where((item) {
+                      final filtered = sortedItems.where((item) {
                         return labelFor(item)
                             .toLowerCase()
                             .contains(query.toLowerCase());
                       }).toList(growable: false);
 
-                      List<AuctionOption> buildSelection() => items
+                      List<AuctionOption> buildSelection() => sortedItems
                           .where((item) => selectedIds.contains(item.auctionId))
                           .toList(growable: false);
+
+                      void submitSingleMatch() {
+                        if (filtered.length != 1) return;
+                        setSheetState(() {
+                          selectedIds.add(filtered.single.auctionId);
+                        });
+                      }
 
                       return SafeArea(
                         child: Padding(
@@ -60,12 +69,14 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
                                 TextField(
                                   autofocus: true,
                                   decoration: InputDecoration(
-                                    prefixIcon: const Icon(Icons.search_rounded),
+                                    prefixIcon:
+                                        const Icon(Icons.search_rounded),
                                     labelText: label,
                                     hintText: hintText ?? 'Search auctions',
                                   ),
                                   onChanged: (value) =>
                                       setSheetState(() => query = value),
+                                  onSubmitted: (_) => submitSingleMatch(),
                                 ),
                                 const SizedBox(height: 12),
                                 Expanded(
@@ -82,11 +93,13 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
                                               value: checked,
                                               title: Text(labelFor(item)),
                                               controlAffinity:
-                                                  ListTileControlAffinity.leading,
+                                                  ListTileControlAffinity
+                                                      .leading,
                                               onChanged: (value) {
                                                 setSheetState(() {
                                                   if (value ?? false) {
-                                                    selectedIds.add(item.auctionId);
+                                                    selectedIds
+                                                        .add(item.auctionId);
                                                   } else {
                                                     selectedIds.remove(
                                                       item.auctionId,
@@ -133,7 +146,9 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
               onChanged(next);
             }
 
-            final value = field.value ?? const <AuctionOption>[];
+            final value = (field.value ?? const <AuctionOption>[])
+                .toList(growable: false)
+              ..sort(MultiAuctionSelectField._compareAuctions);
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -168,18 +183,21 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
                           (auction) => FilterChip(
                             label: Text(labelFor(auction)),
                             labelStyle: TextStyle(
-                              color: Theme.of(field.context).colorScheme.onSurface,
+                              color:
+                                  Theme.of(field.context).colorScheme.onSurface,
                               fontWeight: FontWeight.w600,
                             ),
-                            backgroundColor: Theme.of(field.context)
-                                .colorScheme
-                                .surface,
+                            backgroundColor:
+                                Theme.of(field.context).colorScheme.surface,
                             side: BorderSide(
                               color: Theme.of(field.context).dividerColor,
                             ),
-                            onSelected: enabled ? (_) => removeAuction(auction) : null,
-                            deleteIcon: const Icon(Icons.close_rounded, size: 18),
-                            onDeleted: enabled ? () => removeAuction(auction) : null,
+                            onSelected:
+                                enabled ? (_) => removeAuction(auction) : null,
+                            deleteIcon:
+                                const Icon(Icons.close_rounded, size: 18),
+                            onDeleted:
+                                enabled ? () => removeAuction(auction) : null,
                           ),
                         )
                         .toList(growable: false),
@@ -194,5 +212,20 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
     return value == null || value.isEmpty
         ? 'Select at least one auction'
         : null;
+  }
+
+  static int _compareAuctions(AuctionOption a, AuctionOption b) {
+    final byNumber = _sortNumber(a).compareTo(_sortNumber(b));
+    if (byNumber != 0) return byNumber;
+    return a.auctionId.compareTo(b.auctionId);
+  }
+
+  static int _sortNumber(AuctionOption auction) {
+    if (auction.auctionNumber > 0) return auction.auctionNumber;
+    final match = RegExp(r'\b(\d+)\b').firstMatch(auction.displayName);
+    if (match != null) {
+      return int.tryParse(match.group(1) ?? '') ?? auction.auctionId;
+    }
+    return auction.auctionId;
   }
 }

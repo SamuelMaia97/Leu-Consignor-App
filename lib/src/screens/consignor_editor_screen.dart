@@ -16,6 +16,7 @@ import '../models/sync_status.dart';
 import '../services/api_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/banking_rules.dart';
 import '../utils/form_validators.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/country_dropdown.dart';
@@ -49,6 +50,8 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     _LookupOption(value: 'de', label: 'German'),
   ];
 
+  static const List<PaymentOption> _paymentOptions = PaymentOption.values;
+
   final _formKey = GlobalKey<FormState>();
   final Object _leaveGuardToken = Object();
 
@@ -72,11 +75,14 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     if (_initialized) return;
 
     final state = context.read<AppState>();
+    final consignorId = widget.consignorId;
+
     _model = _isNew
         ? _buildEmptyConsignor()
-        : (state.consignorById(widget.consignorId!) ?? _buildEmptyConsignor());
+        : (consignorId == null
+            ? _buildEmptyConsignor()
+            : state.consignorById(consignorId) ?? _buildEmptyConsignor());
 
-    _model.paymentOption = PaymentOption.bankTransfer;
     _useExistingCustomer = _isNew && _model.existingCustomerId != null;
     _existingCustomerSearchController = TextEditingController(
       text: _model.existingCustomerLabel ?? '',
@@ -161,8 +167,18 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       'existingCustomer': _useExistingCustomer,
       'existingCustomerId': _model.existingCustomerId,
       'existingCustomerLabel': _model.existingCustomerLabel,
+      'paymentOption': _model.paymentOption.apiName,
       'bankName': _model.bankingDetails.bankName,
       'accountNumber': _model.bankingDetails.accountNumber,
+      'bankCountryIso3': _model.bankingDetails.bankCountryIso3,
+      'bankCountryName': _model.bankingDetails.bankCountryName,
+      'bicSwift': _model.bankingDetails.bicSwift,
+      'clearingNumber': _model.bankingDetails.clearingNumber,
+      'routingNumber': _model.bankingDetails.routingNumber,
+      'bankAddressStreet': _model.bankingDetails.bankAddress.streetAddress,
+      'bankAddressPostalCode': _model.bankingDetails.bankAddress.postalCode,
+      'bankAddressCity': _model.bankingDetails.bankAddress.city,
+      'bankAddressAdminRegion': _model.bankingDetails.bankAddress.adminRegion,
     };
 
     return jsonEncode(snapshot);
@@ -637,7 +653,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
   }
 
   void _normalizeModelBeforeSave() {
-    _model.paymentOption = PaymentOption.bankTransfer;
     if (!_useExistingCustomer) {
       _model.clearExistingCustomerSelection();
     }
@@ -647,6 +662,12 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     _model.phoneNumber = _model.phoneNumber.trim();
     _model.emailAddress = _model.emailAddress.trim();
     _model.vatNumber = _model.vatNumber.trim();
+    if (_model.consignorType == ConsignorType.naturalPerson) {
+      _model.vatLiability = false;
+      _model.vatNumber = '';
+    } else if (!_model.vatLiability) {
+      _model.vatNumber = '';
+    }
     _model.eori = _model.eori.trim();
     _model.correspondence = _model.correspondence?.trim();
 
@@ -671,7 +692,39 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     _model.bankingDetails.isIban = _looksLikeIban(normalizedAccountNumber);
     _model.bankingDetails.bankName = _model.bankingDetails.bankName.trim();
     _model.bankingDetails.bicSwift = _model.bankingDetails.bicSwift.trim();
-    _model.bankingDetails.clearingNumber = '';
+    _model.bankingDetails.clearingNumber =
+        _model.bankingDetails.clearingNumber.trim();
+    _model.bankingDetails.routingNumber =
+        _model.bankingDetails.routingNumber.trim();
+    _model.bankingDetails.bankCountryIso3 =
+        _model.bankingDetails.bankCountryIso3.trim();
+    _model.bankingDetails.bankCountryName =
+        _model.bankingDetails.bankCountryName.trim();
+    final requiresIbanOnly = BankingRules.requiresIbanOnly(
+      countryIso3: _model.bankingDetails.bankCountryIso3,
+      countryName: _model.bankingDetails.bankCountryName,
+    );
+    if (requiresIbanOnly) {
+      _model.bankingDetails.bankName = '';
+      _model.bankingDetails.bicSwift = '';
+      _model.bankingDetails.clearingNumber = '';
+      _model.bankingDetails.routingNumber = '';
+    }
+    _model.bankingDetails.bankAddress.streetAddress = requiresIbanOnly
+        ? ''
+        : _model.bankingDetails.bankAddress.streetAddress.trim();
+    _model.bankingDetails.bankAddress.streetNumber = '';
+    _model.bankingDetails.bankAddress.streetAddressOptional = '';
+    _model.bankingDetails.bankAddress.postalCode = requiresIbanOnly
+        ? ''
+        : _model.bankingDetails.bankAddress.postalCode.trim();
+    _model.bankingDetails.bankAddress.city =
+        requiresIbanOnly ? '' : _model.bankingDetails.bankAddress.city.trim();
+    _model.bankingDetails.bankAddress.adminRegion = requiresIbanOnly
+        ? ''
+        : _model.bankingDetails.bankAddress.adminRegion.trim();
+    _model.bankingDetails.bankAddress.countryIso3 = '';
+    _model.bankingDetails.bankAddress.countryName = '';
   }
 
   String _normalizeBankAccountNumber(String value) {
@@ -745,6 +798,14 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     final phonePrefixes = state.phonePrefixes;
     final syncing = !_isNew && state.isSyncingConsignor(_model.id);
     final showSyncButton = !_isNew && _model.needsSync;
+    final auditUsername = _model.lastEditedByUsername?.trim() ?? '';
+    final isIndividual = _model.consignorType == ConsignorType.naturalPerson;
+    final showVatFields = !isIndividual;
+    final bankTransfer = _model.paymentOption == PaymentOption.bankTransfer;
+    final requiresIbanOnly = BankingRules.requiresIbanOnly(
+      countryIso3: _model.bankingDetails.bankCountryIso3,
+      countryName: _model.bankingDetails.bankCountryName,
+    );
     final bottomActions = _buildBottomActions(
       showSyncButton: showSyncButton,
       syncing: syncing,
@@ -811,10 +872,10 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                     ),
                   ],
                 ),
-                if (_model.lastEditedByUsername != null) ...[
+                if (auditUsername.isNotEmpty) ...[
                   const SizedBox(height: 10),
                   _AuditText(
-                    username: _model.lastEditedByUsername!,
+                    username: auditUsername,
                     editedAtUtc: _model.lastEditedAtUtc,
                   ),
                 ],
@@ -904,9 +965,14 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                           ],
                           selected: {_model.consignorType},
                           showSelectedIcon: false,
-                          onSelectionChanged: (selection) => setState(
-                            () => _model.consignorType = selection.single,
-                          ),
+                          onSelectionChanged: (selection) => setState(() {
+                            _model.consignorType = selection.single;
+                            if (_model.consignorType ==
+                                ConsignorType.naturalPerson) {
+                              _model.vatLiability = false;
+                              _model.vatNumber = '';
+                            }
+                          }),
                         ),
                       ),
                       const SizedBox(height: 18),
@@ -1155,65 +1221,76 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                   icon: Icons.account_balance_wallet_outlined,
                   child: Column(
                     children: [
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final stack = constraints.maxWidth < 760;
-                          final vatToggle = Container(
-                            key: const ValueKey('editor-field-vat-toggle'),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: context.palette.brandSoft
-                                  .withValues(alpha: 0.45),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: context.palette.border),
-                            ),
-                            child: CheckboxListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: const Text('VAT obligatory'),
-                              subtitle: const Text(
-                                'When enabled, a VAT number is required.',
+                      if (showVatFields) ...[
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final stack = constraints.maxWidth < 760;
+                            final vatToggle = Container(
+                              key: const ValueKey('editor-field-vat-toggle'),
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: context.palette.brandSoft
+                                    .withValues(alpha: 0.45),
+                                borderRadius: BorderRadius.circular(18),
+                                border:
+                                    Border.all(color: context.palette.border),
                               ),
-                              value: _model.vatLiability,
-                              onChanged: (value) => setState(
-                                () => _model.vatLiability = value ?? false,
+                              child: CheckboxListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: const Text('VAT obligatory'),
+                                subtitle: const Text(
+                                  'When enabled, a VAT number is required.',
+                                ),
+                                value: _model.vatLiability,
+                                onChanged: (value) => setState(() {
+                                  _model.vatLiability = value ?? false;
+                                  if (!_model.vatLiability) {
+                                    _model.vatNumber = '';
+                                  }
+                                }),
                               ),
-                            ),
-                          );
+                            );
 
-                          final vatNumber = TextFormField(
-                            key: const ValueKey('editor-field-vat-number'),
-                            initialValue: _model.vatNumber,
-                            decoration:
-                                const InputDecoration(labelText: 'VAT number'),
-                            validator: (value) => _model.vatLiability
-                                ? FormValidators.requiredText(
-                                    value,
-                                    'VAT number',
-                                  )
-                                : null,
-                            onChanged: (value) => _model.vatNumber = value,
-                          );
+                            final vatNumber = TextFormField(
+                              key: const ValueKey('editor-field-vat-number'),
+                              initialValue: _model.vatNumber,
+                              decoration: const InputDecoration(
+                                labelText: 'VAT number',
+                              ),
+                              validator: (value) => _model.vatLiability
+                                  ? FormValidators.requiredText(
+                                      value,
+                                      'VAT number',
+                                    )
+                                  : null,
+                              onChanged: (value) => _model.vatNumber = value,
+                            );
 
-                          if (stack) {
-                            return Column(
+                            if (stack) {
+                              return Column(
+                                children: [
+                                  vatToggle,
+                                  if (_model.vatLiability) ...[
+                                    const SizedBox(height: 16),
+                                    vatNumber,
+                                  ],
+                                ],
+                              );
+                            }
+
+                            return Row(
                               children: [
-                                vatToggle,
-                                const SizedBox(height: 16),
-                                vatNumber,
+                                Expanded(child: vatToggle),
+                                if (_model.vatLiability) ...[
+                                  const SizedBox(width: 16),
+                                  Expanded(child: vatNumber),
+                                ],
                               ],
                             );
-                          }
-
-                          return Row(
-                            children: [
-                              Expanded(child: vatToggle),
-                              const SizedBox(width: 16),
-                              Expanded(child: vatNumber),
-                            ],
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       _ResponsiveFormGrid(
                         children: [
                           SearchableSelectFormField<_LookupOption<String>>(
@@ -1255,7 +1332,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             key: const ValueKey(
                               'editor-field-ancient-coins-subscribed',
                             ),
-                            title: 'Ancient coins subscribed',
+                            title: 'Catalogue Ancient coins',
                             subtitle: 'Collector preference.',
                             value: _model.ancientCoinsSubscribed,
                             onChanged: (value) => setState(
@@ -1266,7 +1343,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             key: const ValueKey(
                               'editor-field-world-coins-subscribed',
                             ),
-                            title: 'Medieval and Modern Coins',
+                            title: 'Catalogue Medieval and Modern coins',
                             subtitle: 'Collector preference.',
                             value: _model.worldCoinsSubscribed,
                             onChanged: (value) => setState(
@@ -1280,40 +1357,137 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                 ),
                 const SizedBox(height: 18),
                 SectionCard(
-                  title: 'Bank transfer details',
+                  title: 'Payment details',
                   subtitle:
-                      'The consignor app supports bank transfer only. IBAN or account number and bank name are required.',
+                      'Bank name and extended bank address details are optional.',
                   icon: Icons.account_balance_outlined,
                   child: _ResponsiveFormGrid(
                     children: [
-                      TextFormField(
-                        key: const ValueKey('editor-field-bank-name'),
-                        initialValue: _model.bankingDetails.bankName,
-                        decoration:
-                            const InputDecoration(labelText: 'Bank name *'),
+                      SearchableSelectFormField<PaymentOption>(
+                        key: const ValueKey('editor-field-payment-method'),
+                        label: 'Desired payment method *',
+                        items: _paymentOptions,
+                        itemLabel: (item) => item.label,
+                        initialValue: _model.paymentOption,
                         validator: (value) =>
-                            FormValidators.requiredText(value, 'Bank name'),
-                        onChanged: (value) =>
-                            _model.bankingDetails.bankName = value,
+                            value == null ? 'Payment method is required' : null,
+                        onChanged: (value) => setState(
+                          () => _model.paymentOption =
+                              value ?? PaymentOption.pending,
+                        ),
+                      ),
+                      CountryDropdown(
+                        key: ValueKey(
+                          'editor-field-bank-country-${_model.bankingDetails.bankCountryIso3}',
+                        ),
+                        label: 'Bank country',
+                        value: _model.bankingDetails.bankCountryIso3,
+                        countries: countries,
+                        hintText: 'Search bank country',
+                        onChanged: (country) => setState(() {
+                          _model.bankingDetails.bankCountryIso3 =
+                              country?.iso3 ?? '';
+                          _model.bankingDetails.bankCountryName =
+                              country?.name ?? '';
+                        }),
                       ),
                       TextFormField(
                         key: const ValueKey('editor-field-iban'),
                         initialValue: _model.bankingDetails.accountNumber,
-                        decoration: const InputDecoration(
-                          labelText: 'IBAN / Account No *',
+                        decoration: InputDecoration(
+                          labelText: BankingRules.accountLabel(
+                            bankTransfer: bankTransfer,
+                            requiresIbanOnly: requiresIbanOnly,
+                          ),
                         ),
-                        validator: FormValidators.ibanOrAccountNumber,
+                        validator: (value) => BankingRules.validateAccount(
+                          value: value,
+                          bankTransfer: bankTransfer,
+                          requiresIbanOnly: requiresIbanOnly,
+                        ),
                         onChanged: (value) =>
                             _model.bankingDetails.accountNumber = value,
                       ),
-                      TextFormField(
-                        key: const ValueKey('editor-field-bic-swift'),
-                        initialValue: _model.bankingDetails.bicSwift,
-                        decoration:
-                            const InputDecoration(labelText: 'BIC / SWIFT'),
-                        onChanged: (value) =>
-                            _model.bankingDetails.bicSwift = value,
-                      ),
+                      if (!requiresIbanOnly) ...[
+                        TextFormField(
+                          key: const ValueKey('editor-field-bank-name'),
+                          initialValue: _model.bankingDetails.bankName,
+                          decoration:
+                              const InputDecoration(labelText: 'Bank name'),
+                          onChanged: (value) =>
+                              _model.bankingDetails.bankName = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey('editor-field-bic-swift'),
+                          initialValue: _model.bankingDetails.bicSwift,
+                          decoration:
+                              const InputDecoration(labelText: 'BIC / SWIFT'),
+                          onChanged: (value) =>
+                              _model.bankingDetails.bicSwift = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey('editor-field-clearing-number'),
+                          initialValue: _model.bankingDetails.clearingNumber,
+                          decoration: const InputDecoration(
+                            labelText: 'Clearing number',
+                          ),
+                          onChanged: (value) =>
+                              _model.bankingDetails.clearingNumber = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey('editor-field-routing-number'),
+                          initialValue: _model.bankingDetails.routingNumber,
+                          decoration:
+                              const InputDecoration(labelText: 'Routing No'),
+                          onChanged: (value) =>
+                              _model.bankingDetails.routingNumber = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey(
+                            'editor-field-bank-address-street',
+                          ),
+                          initialValue:
+                              _model.bankingDetails.bankAddress.streetAddress,
+                          decoration:
+                              const InputDecoration(labelText: 'Bank street'),
+                          onChanged: (value) => _model
+                              .bankingDetails.bankAddress.streetAddress = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey(
+                            'editor-field-bank-address-postal-code',
+                          ),
+                          initialValue:
+                              _model.bankingDetails.bankAddress.postalCode,
+                          decoration: const InputDecoration(
+                            labelText: 'Bank postal code',
+                          ),
+                          onChanged: (value) => _model
+                              .bankingDetails.bankAddress.postalCode = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey(
+                            'editor-field-bank-address-city',
+                          ),
+                          initialValue: _model.bankingDetails.bankAddress.city,
+                          decoration:
+                              const InputDecoration(labelText: 'Bank city'),
+                          onChanged: (value) =>
+                              _model.bankingDetails.bankAddress.city = value,
+                        ),
+                        TextFormField(
+                          key: const ValueKey(
+                            'editor-field-bank-address-region',
+                          ),
+                          initialValue:
+                              _model.bankingDetails.bankAddress.adminRegion,
+                          decoration: const InputDecoration(
+                            labelText: 'Bank state / region',
+                          ),
+                          onChanged: (value) => _model
+                              .bankingDetails.bankAddress.adminRegion = value,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1817,11 +1991,17 @@ class _ResponsiveFormGrid extends StatelessWidget {
           spacing: spacing,
           runSpacing: spacing,
           children: children
+              .asMap()
+              .entries
               .map(
-                (child) => SizedBox(
-                  key: child.key == null ? null : ValueKey<Object?>(child.key),
+                (entry) => SizedBox(
+                  key: entry.value.key == null
+                      ? null
+                      : ValueKey<Object?>(
+                          'responsive-grid-${entry.key}-${entry.value.key}',
+                        ),
                   width: itemWidth,
-                  child: child,
+                  child: entry.value,
                 ),
               )
               .toList(growable: false),

@@ -22,6 +22,15 @@ import '../widgets/multi_auction_select_field.dart';
 import '../widgets/section_card.dart';
 
 const _unsignedContractPrefix = 'PROV-';
+const _ordererIdKind = 'NaturalPersonId';
+const _representativeIdKind = 'RepresentativeId';
+const _phoneTargetConsignorId = 'consignor-identification';
+const _phoneTargetRepresentativeId = 'representative-identification';
+const _phoneTargetProductPictures = 'product-pictures';
+const _consignorIdentificationLabel = 'Identification of the Consignor';
+const _representativeIdentificationLabel =
+    'Identification of the Authorized Representative';
+const _productPicturesLabel = 'Product pictures';
 
 enum _UnsavedChangesAction { save, addToDraft, closeWithoutSaving, cancel }
 
@@ -61,12 +70,15 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     if (_initialized) return;
 
     final state = context.read<AppState>();
-    _record = widget.contractId != null
-        ? (state.contractById(widget.contractId!) ??
+    final contractId = widget.contractId;
+    final auctionId = widget.auctionId;
+
+    _record = contractId != null
+        ? (state.contractById(contractId) ??
             ContractRecord.empty(widget.consignorId))
-        : widget.auctionId == null
+        : auctionId == null
             ? ContractRecord.empty(widget.consignorId)
-            : state.contractForAuction(widget.consignorId, widget.auctionId!);
+            : state.contractForAuction(widget.consignorId, auctionId);
 
     _lastPersistedRecordId = _record.id;
     _captureSnapshot();
@@ -459,6 +471,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     UploadType type, {
     required bool imagesOnly,
     bool fromCamera = false,
+    String kind = '',
   }) async {
     if (_record.auctionId == null) {
       _showSnack('Select at least one auction before adding files.');
@@ -470,7 +483,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       final captured = await _fileService.captureImage(
         context: context,
         type: type,
-        filePrefix: _filePrefixFor(type),
+        filePrefix: _filePrefixFor(type, kind: kind),
       );
       if (captured != null) {
         paths = [captured];
@@ -485,11 +498,44 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     }
 
     if (paths.isEmpty) return;
-    await _addLocalFiles(paths, type);
+    await _addLocalFiles(paths, type, kind: kind);
   }
 
-  String _filePrefixFor(UploadType type) {
+  Future<void> _captureWithPhone({
+    required String initialTargetId,
+  }) async {
+    if (_record.auctionId == null) {
+      _showSnack('Select at least one auction before adding files.');
+      return;
+    }
+
+    final results = await _fileService.captureImagesWithPhoneTargets(
+      context: context,
+      initialTargetId: initialTargetId,
+      targets: _phoneCaptureTargets(),
+    );
+
+    if (results.isEmpty) {
+      return;
+    }
+
+    for (final result in results) {
+      await _addLocalFiles(
+        [result.path],
+        result.type,
+        kind: result.kind,
+      );
+    }
+  }
+
+  String _filePrefixFor(UploadType type, {String kind = ''}) {
     if (type == UploadType.passport) {
+      if (kind == _representativeIdKind) {
+        return 'representative_id';
+      }
+      if (kind == _ordererIdKind) {
+        return 'orderer_id';
+      }
       return 'id';
     }
 
@@ -498,6 +544,37 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     }
 
     return 'contract_file';
+  }
+
+  List<PhoneCaptureFileTarget> _phoneCaptureTargets() {
+    return [
+      PhoneCaptureFileTarget(
+        id: _phoneTargetConsignorId,
+        label: _consignorIdentificationLabel,
+        type: UploadType.passport,
+        kind: _ordererIdKind,
+        filePrefix: _filePrefixFor(
+          UploadType.passport,
+          kind: _ordererIdKind,
+        ),
+      ),
+      PhoneCaptureFileTarget(
+        id: _phoneTargetRepresentativeId,
+        label: _representativeIdentificationLabel,
+        type: UploadType.passport,
+        kind: _representativeIdKind,
+        filePrefix: _filePrefixFor(
+          UploadType.passport,
+          kind: _representativeIdKind,
+        ),
+      ),
+      PhoneCaptureFileTarget(
+        id: _phoneTargetProductPictures,
+        label: _productPicturesLabel,
+        type: UploadType.product,
+        filePrefix: 'consignment',
+      ),
+    ];
   }
 
   int _nextProductImageIndex() {
@@ -749,6 +826,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     final state = context.watch<AppState>();
     final consignor = state.consignorById(widget.consignorId);
     final auctions = state.auctions;
+    final auditUsername = _record.lastEditedByUsername?.trim() ?? '';
 
     if (consignor == null) {
       return AppShell(
@@ -823,10 +901,10 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                 ),
               ],
             ),
-            if (_record.lastEditedByUsername != null) ...[
+            if (auditUsername.isNotEmpty) ...[
               const SizedBox(height: 10),
               _AuditText(
-                username: _record.lastEditedByUsername!,
+                username: auditUsername,
                 editedAtUtc: _record.lastEditedAtUtc,
               ),
             ],
@@ -926,6 +1004,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                 imagesOnly: true,
                 fromCamera: true,
               ),
+              onPhoneCapture: () => _captureWithPhone(
+                initialTargetId: _phoneTargetConsignorId,
+              ),
               onOpen: _fileService.open,
               onReplace: _replaceUpload,
               onDelete: _deleteUpload,
@@ -946,6 +1027,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                 UploadType.product,
                 imagesOnly: true,
                 fromCamera: true,
+              ),
+              onPhoneCapture: () => _captureWithPhone(
+                initialTargetId: _phoneTargetProductPictures,
               ),
               onOpen: _fileService.open,
               onReplace: _replaceUpload,
@@ -1056,6 +1140,7 @@ class _UploadSection extends StatelessWidget {
     required this.uploads,
     required this.onAddFiles,
     this.onCapture,
+    this.onPhoneCapture,
     required this.onOpen,
     required this.onReplace,
     required this.onDelete,
@@ -1066,6 +1151,7 @@ class _UploadSection extends StatelessWidget {
   final List<ContractUpload> uploads;
   final VoidCallback onAddFiles;
   final VoidCallback? onCapture;
+  final VoidCallback? onPhoneCapture;
   final bool showReplaceButton;
   final Future<void> Function(String path) onOpen;
   final Future<void> Function(ContractUpload upload) onReplace;
@@ -1079,21 +1165,27 @@ class _UploadSection extends StatelessWidget {
       icon: Icons.attach_file_outlined,
       child: Column(
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
                 onPressed: onAddFiles,
                 icon: const Icon(Icons.upload_file_outlined),
                 label: const Text('Add file'),
               ),
-              if (onCapture != null) ...[
-                const SizedBox(width: 8),
+              if (onCapture != null)
                 OutlinedButton.icon(
                   onPressed: onCapture,
                   icon: const Icon(Icons.photo_camera_outlined),
                   label: const Text('Capture'),
                 ),
-              ],
+              if (onPhoneCapture != null)
+                OutlinedButton.icon(
+                  onPressed: onPhoneCapture,
+                  icon: const Icon(Icons.qr_code_2_outlined),
+                  label: const Text('Capture with phone'),
+                ),
             ],
           ),
           const SizedBox(height: 12),

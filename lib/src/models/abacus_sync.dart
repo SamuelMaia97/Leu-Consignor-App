@@ -267,6 +267,8 @@ class AbacusFileSyncMetadata {
       return 'image/jpeg';
     }
     if (lowerFileName.endsWith('.webp')) return 'image/webp';
+    if (lowerFileName.endsWith('.heic')) return 'image/heic';
+    if (lowerFileName.endsWith('.heif')) return 'image/heif';
     return 'application/octet-stream';
   }
 }

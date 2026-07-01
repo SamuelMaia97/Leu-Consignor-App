@@ -121,14 +121,15 @@ class ContractPdfPayloadBuilder {
 
       final fileData = await _uploadFileData(upload);
       if (fileData.trim().isEmpty) continue;
+      final fileName = _uploadFileName(upload);
 
       attachments.add({
         'localId': upload.localId,
         'fileId': upload.fileId ?? 0,
         'auctionId': upload.auctionId ?? record.auctionId,
         'fileType': upload.fileType.apiValue,
-        'kind': upload.kind.trim().isEmpty ? null : upload.kind.trim(),
-        'fileName': _uploadFileName(upload),
+        'kind': _uploadKind(upload, fileName),
+        'fileName': fileName,
         'fileData': fileData,
         'isDeleted': upload.isDeleted,
         'signedAt': upload.signedAt?.toUtc().toIso8601String(),
@@ -272,6 +273,7 @@ class ContractPdfPayloadBuilder {
       'templateFlags': templateFlags,
       ...paragraphTopLevelFlags,
       ...templateValues,
+      ..._blockFlagAliases(templateFlags),
       'signatureData': {
         'customerSignaturePngBase64': contractSignatureBase64,
         'contractSignaturePngBase64': contractSignatureBase64,
@@ -498,11 +500,36 @@ class ContractPdfPayloadBuilder {
     };
 
     for (final blockName in _blockMarkerNames) {
+      values.putIfAbsent(blockName, () => false);
+      values['show_$blockName'] = values[blockName] == true;
       values['${blockName}_start'] = '';
       values['${blockName}_end'] = '';
     }
 
     return values;
+  }
+
+  Map<String, dynamic> _blockFlagAliases(Map<String, bool> templateFlags) {
+    const aliases = {
+      'blockAttachIdNatural': 'block_attach_id_natural',
+      'blockAttachCommercialRegister': 'block_attach_commercial_register',
+      'blockAttachIdRepresentative': 'block_attach_id_representative',
+      'blockAttachRegisterLegal': 'block_attach_register_legal',
+      'blockAnnexASelfOwnerStatement': 'block_annex_a_self_owner_statement',
+      'blockAnnexANaturalOwnerDetails': 'block_annex_a_natural_owner_details',
+      'blockAnnexALegalOwnerDetails': 'block_annex_a_legal_owner_details',
+      'blockAnnexALegalRepresentativeCapacity':
+          'block_annex_a_legal_representative_capacity',
+      'blockAnnexAProvenanceSelf': 'block_annex_a_provenance_self',
+      'blockAnnexAProvenanceOnBehalf': 'block_annex_a_provenance_on_behalf',
+    };
+
+    return {
+      for (final entry in aliases.entries) ...{
+        entry.value: templateFlags[entry.key] ?? false,
+        'show_${entry.value}': templateFlags[entry.key] ?? false,
+      },
+    };
   }
 
   Map<String, bool> _templateFlags({
@@ -678,6 +705,34 @@ class ContractPdfPayloadBuilder {
     final slash = normalized.lastIndexOf('/');
     if (slash < 0 || slash == normalized.length - 1) return normalized;
     return normalized.substring(slash + 1);
+  }
+
+  String? _uploadKind(ContractUpload upload, String fileName) {
+    final explicit = upload.kind.trim();
+    if (explicit.isNotEmpty) return explicit;
+    if (upload.fileType == UploadType.agreement) {
+      return 'CommercialRegister';
+    }
+    if (upload.fileType == UploadType.passport) {
+      return 'IdDocument';
+    }
+    if (_isImageFileName(fileName)) {
+      return 'UploadedImage';
+    }
+    if (fileName.toLowerCase().endsWith('.pdf')) {
+      return 'UploadedPdf';
+    }
+    return null;
+  }
+
+  bool _isImageFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.heic') ||
+        lower.endsWith('.heif');
   }
 
   String _auctionName(ContractRecord record, String? correspondence) {

@@ -72,6 +72,12 @@ class ContractRenderPayloadBuilder {
     final consignorType = consignor.consignorType;
     final includeAnnexA =
         !consignorIsOwner || consignorType == ConsignorType.legalEntity;
+    final hasCommercialRegisterAttachment =
+        record.registrationFiles.isNotEmpty &&
+            consignorType != ConsignorType.naturalPerson;
+    final hasLegalEntityRegisterAttachment =
+        record.registrationFiles.isNotEmpty &&
+            consignorType == ConsignorType.legalEntity;
     final leuSignature = await _readAssetAsBase64(
         signatureData?.leuRepresentativeSignatureAsset);
     final contractSignature = _encodeBytes(signatureData?.contractSignaturePng);
@@ -180,12 +186,18 @@ class ContractRenderPayloadBuilder {
       'annexCConsignorSignatureBase64Png': annexCSignature,
       'hasNaturalPersonIdAttachment':
           hasOrdererIdAttachment && consignorType != ConsignorType.legalEntity,
-      'hasCommercialRegisterAttachment': record.registrationFiles.isNotEmpty &&
-          consignorType != ConsignorType.naturalPerson,
+      'hasCommercialRegisterAttachment': hasCommercialRegisterAttachment,
       'hasRepresentativeIdAttachment':
           authorizedRepresentative != null && hasRepresentativeIdAttachment,
-      'hasLegalEntityRegisterAttachment': record.registrationFiles.isNotEmpty &&
-          consignorType == ConsignorType.legalEntity,
+      'hasLegalEntityRegisterAttachment': hasLegalEntityRegisterAttachment,
+      'block_attach_commercial_register': hasCommercialRegisterAttachment,
+      'show_block_attach_commercial_register': hasCommercialRegisterAttachment,
+      'block_attach_commercial_register_start': '',
+      'block_attach_commercial_register_end': '',
+      'block_attach_register_legal': hasLegalEntityRegisterAttachment,
+      'show_block_attach_register_legal': hasLegalEntityRegisterAttachment,
+      'block_attach_register_legal_start': '',
+      'block_attach_register_legal_end': '',
       'hasAnnexAAttachment': includeAnnexA,
       'hasAnnexBAttachment': record.productFiles.isNotEmpty,
       'hasAnnexCAttachment': true,
@@ -242,7 +254,7 @@ class ContractRenderPayloadBuilder {
       return 'IdDocument';
     }
     if (type == UploadType.agreement) {
-      return lower.endsWith('.pdf') ? 'UploadedPdf' : 'CommercialRegister';
+      return 'CommercialRegister';
     }
     if (lower.endsWith('.pdf')) {
       return 'UploadedPdf';
@@ -284,6 +296,8 @@ class ContractRenderPayloadBuilder {
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
     if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.heic')) return 'image/heic';
+    if (lower.endsWith('.heif')) return 'image/heif';
     return 'application/octet-stream';
   }
 
@@ -291,7 +305,9 @@ class ContractRenderPayloadBuilder {
       lowerFileName.endsWith('.png') ||
       lowerFileName.endsWith('.jpg') ||
       lowerFileName.endsWith('.jpeg') ||
-      lowerFileName.endsWith('.webp');
+      lowerFileName.endsWith('.webp') ||
+      lowerFileName.endsWith('.heic') ||
+      lowerFileName.endsWith('.heif');
 
   static String _fileName(String path) {
     final normalized = path.replaceAll('\\\\', '/');
