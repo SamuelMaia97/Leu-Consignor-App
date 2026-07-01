@@ -29,6 +29,7 @@ dependencies:
   crypto: ^3.0.6
   url_launcher: ^6.3.2
   iban_to_bic: ^2.2.0
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
@@ -53,7 +54,7 @@ msix_config:
   publisher: "CN=Leu Numismatik AG, O=Leu Numismatik AG, C=CH"
   msix_version: 1.0.0.18
   logo_path: assets/images/app-icon-blue.png
-  capabilities: internetClient, webcam
+  capabilities: internetClient, internetClientServer, privateNetworkClientServer, webcam
   output_path: build/windows/installer
   output_name: LeuConsignorApp
   certificate_path: certs/LeuConsignorAppTestCert.pfx

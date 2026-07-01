@@ -26,6 +26,7 @@ import '../services/file_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_preview.dart';
+import '../utils/banking_rules.dart';
 import '../utils/form_validators.dart';
 import '../utils/phone_number_parser.dart';
 import '../widgets/app_shell.dart';
@@ -39,6 +40,13 @@ const _representativeIdKind = 'RepresentativeId';
 const _ordererIdValidationReportKind = 'NaturalPersonIdValidationReport';
 const _representativeIdValidationReportKind =
     'RepresentativeIdValidationReport';
+const _phoneTargetConsignorId = 'consignor-identification';
+const _phoneTargetRepresentativeId = 'representative-identification';
+const _phoneTargetProductPictures = 'product-pictures';
+const _consignorIdentificationLabel = 'Identification of the Consignor';
+const _representativeIdentificationLabel =
+    'Identification of the Authorized Representative';
+const _productPicturesLabel = 'Product pictures';
 const _pentaOutputRootPath = r'C:\CoinContracts';
 const _pentaScanTimeout = Duration(minutes: 2);
 const _unsignedContractPrefix = 'PROV-';
@@ -114,9 +122,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           _WizardStep.existingCustomer,
           _WizardStep.auctions,
           _WizardStep.representative,
-          _WizardStep.identityFiles,
+          _WizardStep.pictures,
           if (_requiresCommercialRegisterFiles) _WizardStep.registrationFiles,
-          _WizardStep.productFiles,
           _WizardStep.fullReview,
           _WizardStep.signatures,
         ]
@@ -128,9 +135,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           if (_draft.createContract) ...[
             _WizardStep.auctions,
             _WizardStep.representative,
-            _WizardStep.identityFiles,
+            _WizardStep.pictures,
             if (_requiresCommercialRegisterFiles) _WizardStep.registrationFiles,
-            _WizardStep.productFiles,
             _WizardStep.fullReview,
             _WizardStep.signatures,
           ],
@@ -160,11 +166,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _WizardStep.contractDecision => 4,
       _WizardStep.auctions => 5,
       _WizardStep.representative => 6,
-      _WizardStep.identityFiles => 7,
+      _WizardStep.pictures => 7,
       _WizardStep.registrationFiles => 8,
-      _WizardStep.productFiles => 9,
-      _WizardStep.fullReview => 10,
-      _WizardStep.signatures => 11,
+      _WizardStep.fullReview => 9,
+      _WizardStep.signatures => 10,
     };
   }
 
@@ -176,9 +181,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _WizardStep.contractDecision => 'Contract',
       _WizardStep.auctions => 'Consignment',
       _WizardStep.representative => 'Representative',
-      _WizardStep.identityFiles => 'Picture ID',
+      _WizardStep.pictures => 'Pictures',
       _WizardStep.registrationFiles => 'Register',
-      _WizardStep.productFiles => 'Pictures',
       _WizardStep.fullReview => 'Review',
       _WizardStep.signatures => 'Sign',
     };
@@ -389,6 +393,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   _WizardStep? _wizardStepFromName(String? name) {
     if (name == null || name.trim().isEmpty) return null;
+    if (name == 'identityFiles' || name == 'productFiles') {
+      return _WizardStep.pictures;
+    }
     for (final step in _WizardStep.values) {
       if (step.name == name) return step;
     }
@@ -893,6 +900,30 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     setState(() => _draft.addFiles(paths, type, kind: kind));
   }
 
+  Future<void> _captureWithPhone({
+    required String initialTargetId,
+  }) async {
+    final results = await _fileService.captureImagesWithPhoneTargets(
+      context: context,
+      initialTargetId: initialTargetId,
+      targets: _phoneCaptureTargets(),
+    );
+
+    if (results.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      for (final result in results) {
+        _draft.addFiles(
+          [result.path],
+          result.type,
+          kind: result.kind,
+        );
+      }
+    });
+  }
+
   Future<void> _scanWithPenta(String kind) async {
     final outputRoot = Directory(_pentaOutputRootPath);
     if (!await outputRoot.exists()) {
@@ -1213,6 +1244,35 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       return 'consignment$index';
     }
     return 'contract_file';
+  }
+
+  List<PhoneCaptureFileTarget> _phoneCaptureTargets() {
+    return [
+      PhoneCaptureFileTarget(
+        id: _phoneTargetConsignorId,
+        label: _consignorIdentificationLabel,
+        type: UploadType.passport,
+        kind: _ordererIdKind,
+        filePrefix: _filePrefixFor(UploadType.passport, _ordererIdKind),
+      ),
+      if (_requiresRepresentativeDetails)
+        PhoneCaptureFileTarget(
+          id: _phoneTargetRepresentativeId,
+          label: _representativeIdentificationLabel,
+          type: UploadType.passport,
+          kind: _representativeIdKind,
+          filePrefix: _filePrefixFor(
+            UploadType.passport,
+            _representativeIdKind,
+          ),
+        ),
+      PhoneCaptureFileTarget(
+        id: _phoneTargetProductPictures,
+        label: _productPicturesLabel,
+        type: UploadType.product,
+        filePrefix: 'consignment',
+      ),
+    ];
   }
 
   void _removeFile(ContractUpload upload) {
@@ -1935,9 +1995,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             onNext: _next,
           ),
         ),
-      _WizardStep.identityFiles => _IdentityFilesStep(
+      _WizardStep.pictures => _PicturesStep(
           ordererFiles: _draft.ordererIdFiles,
           representativeFiles: _draft.representativeIdFiles,
+          productFiles: _draft.productFiles,
+          showRepresentativePictures: _requiresRepresentativeDetails,
+          onCaptureWithPhone: () => _captureWithPhone(
+            initialTargetId: _phoneTargetConsignorId,
+          ),
           onAddOrderer: () =>
               _addFiles(UploadType.passport, kind: _ordererIdKind),
           onCaptureOrderer: () => _addFiles(
@@ -1955,6 +2020,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           ),
           onPentaScanRepresentative: () =>
               _scanWithPenta(_representativeIdKind),
+          onAddProduct: () => _addFiles(UploadType.product),
+          onCaptureProduct: () =>
+              _addFiles(UploadType.product, fromCamera: true),
           onOpen: _fileService.open,
           onRemove: _removeFile,
           onBack: _back,
@@ -1964,16 +2032,6 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           title: 'Commercial register',
           files: _draft.registrationFiles,
           onAdd: () => _addFiles(UploadType.agreement),
-          onOpen: _fileService.open,
-          onRemove: _removeFile,
-          onBack: _back,
-          onNext: _next,
-        ),
-      _WizardStep.productFiles => _FileStep(
-          title: 'Product pictures',
-          files: _draft.productFiles,
-          onAdd: () => _addFiles(UploadType.product),
-          onCapture: () => _addFiles(UploadType.product, fromCamera: true),
           onOpen: _fileService.open,
           onRemove: _removeFile,
           onBack: _back,
@@ -2030,9 +2088,8 @@ enum _WizardStep {
   contractDecision,
   auctions,
   representative,
-  identityFiles,
+  pictures,
   registrationFiles,
-  productFiles,
   fullReview,
   signatures,
 }
@@ -2685,11 +2742,12 @@ class _WizardDraft {
     requireText(city, 'City');
     requireText(countryIso3, 'Country');
     if (isLegalEntity) requireText(eori, 'EORI');
-    if (vatLiability) requireText(vatNumber, 'VAT number');
+    if (consignorType != ConsignorType.naturalPerson && vatLiability) {
+      requireText(vatNumber, 'VAT number');
+    }
 
     if (paymentOption == PaymentOption.bankTransfer) {
       requireText(iban, 'IBAN / Account No');
-      requireText(bankName, 'Bank name');
     }
 
     return missing
@@ -2725,8 +2783,10 @@ class _WizardDraft {
     consignor.consignorInfo.dateOfBirth = dateOfBirth;
     consignor.consignorInfo.nationalityIso3 = nationalityIso3;
     consignor.consignorInfo.nationalityName = nationalityName;
-    consignor.vatLiability = vatLiability;
-    consignor.vatNumber = vatNumber.trim();
+    final showVatFields = consignorType != ConsignorType.naturalPerson;
+    final effectiveVatLiability = showVatFields && vatLiability;
+    consignor.vatLiability = effectiveVatLiability;
+    consignor.vatNumber = effectiveVatLiability ? vatNumber.trim() : '';
     consignor.eori = eori.trim();
     consignor.phonePrefix = phonePrefix.trim();
     consignor.phonePrefixOriginId = phonePrefixOriginId;
@@ -2741,27 +2801,32 @@ class _WizardDraft {
     consignor.consignorAddress.adminRegion = adminRegion.trim();
     consignor.consignorAddress.countryIso3 = countryIso3;
     consignor.consignorAddress.countryName = countryName;
-    consignor.bankingDetails.bankName = bankName.trim();
+    final requiresIbanOnly = BankingRules.requiresIbanOnly(
+      countryIso3: bankCountryIso3,
+      countryName: bankCountryName,
+    );
+    consignor.bankingDetails.bankName = requiresIbanOnly ? '' : bankName.trim();
     consignor.bankingDetails.accountNumber = iban.trim();
     consignor.bankingDetails.isIban = _looksLikeIban(iban);
-    consignor.bankingDetails.bicSwift = bicSwift.trim();
-    consignor.bankingDetails.clearingNumber = clearingNumber.trim();
-    consignor.bankingDetails.routingNumber = routingNumber.trim();
+    consignor.bankingDetails.bicSwift = requiresIbanOnly ? '' : bicSwift.trim();
+    consignor.bankingDetails.clearingNumber =
+        requiresIbanOnly ? '' : clearingNumber.trim();
+    consignor.bankingDetails.routingNumber =
+        requiresIbanOnly ? '' : routingNumber.trim();
     consignor.bankingDetails.bankCountryIso3 = bankCountryIso3;
     consignor.bankingDetails.bankCountryName = bankCountryName;
     consignor.bankingDetails.bankAddress.streetAddress =
-        bankAddressStreet.trim();
-    consignor.bankingDetails.bankAddress.streetNumber =
-        bankAddressStreetNumber.trim();
-    consignor.bankingDetails.bankAddress.streetAddressOptional =
-        bankAddressStreetAddressOptional.trim();
+        requiresIbanOnly ? '' : bankAddressStreet.trim();
+    consignor.bankingDetails.bankAddress.streetNumber = '';
+    consignor.bankingDetails.bankAddress.streetAddressOptional = '';
     consignor.bankingDetails.bankAddress.postalCode =
-        bankAddressPostalCode.trim();
-    consignor.bankingDetails.bankAddress.city = bankAddressCity.trim();
+        requiresIbanOnly ? '' : bankAddressPostalCode.trim();
+    consignor.bankingDetails.bankAddress.city =
+        requiresIbanOnly ? '' : bankAddressCity.trim();
     consignor.bankingDetails.bankAddress.adminRegion =
-        bankAddressAdminRegion.trim();
-    consignor.bankingDetails.bankAddress.countryIso3 = bankAddressCountryIso3;
-    consignor.bankingDetails.bankAddress.countryName = bankAddressCountryName;
+        requiresIbanOnly ? '' : bankAddressAdminRegion.trim();
+    consignor.bankingDetails.bankAddress.countryIso3 = '';
+    consignor.bankingDetails.bankAddress.countryName = '';
     consignor.bankingDetails.beneficiary.firstName =
         beneficiaryFirstName.trim();
     consignor.bankingDetails.beneficiary.lastName = beneficiaryLastName.trim();
@@ -3300,6 +3365,14 @@ class _ConsignorDetailsForm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final countries = context.watch<AppState>().countries;
+    final isIndividual = draft.consignorType == ConsignorType.naturalPerson;
+    final showVatFields = !isIndividual;
+    final bankTransfer = draft.paymentOption == PaymentOption.bankTransfer;
+    final requiresIbanOnly = BankingRules.requiresIbanOnly(
+      countryIso3: draft.bankCountryIso3,
+      countryName: draft.bankCountryName,
+    );
+
     return Column(
       children: [
         SectionCard(
@@ -3315,6 +3388,10 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 includeSoleProprietor: !draft.representativeMode,
                 onChanged: (value) {
                   draft.consignorType = value;
+                  if (value == ConsignorType.naturalPerson) {
+                    draft.vatLiability = false;
+                    draft.vatNumber = '';
+                  }
                   if (!draft.representativeMode &&
                       value == ConsignorType.legalEntity) {
                     draft.coinsOwnedByConsignor = false;
@@ -3529,16 +3606,20 @@ class _ConsignorDetailsForm extends StatelessWidget {
             children: [
               _ResponsiveFormGrid(
                 children: [
-                  _BooleanCard(
-                    key: ValueKey('$_keyPrefix-field-vat-liability'),
-                    title: 'VAT obligatory',
-                    value: draft.vatLiability,
-                    onChanged: (value) {
-                      draft.vatLiability = value;
-                      onChanged();
-                    },
-                  ),
-                  if (draft.isLegalEntity)
+                  if (showVatFields)
+                    _BooleanCard(
+                      key: ValueKey('$_keyPrefix-field-vat-liability'),
+                      title: 'VAT obligatory',
+                      value: draft.vatLiability,
+                      onChanged: (value) {
+                        draft.vatLiability = value;
+                        if (!value) {
+                          draft.vatNumber = '';
+                        }
+                        onChanged();
+                      },
+                    ),
+                  if (showVatFields && draft.vatLiability)
                     TextFormField(
                       key: ValueKey('$_keyPrefix-field-vat-number'),
                       initialValue: draft.vatNumber,
@@ -3581,7 +3662,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-ancient-coins-subscribed'),
-                    title: 'Ancient coins subscribed',
+                    title: 'Catalogue Ancient coins',
                     value: draft.ancientCoinsSubscribed,
                     onChanged: (value) {
                       draft.ancientCoinsSubscribed = value;
@@ -3590,7 +3671,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-world-coins-subscribed'),
-                    title: 'Medieval and Modern Coins',
+                    title: 'Catalogue Medieval and Modern coins',
                     value: draft.worldCoinsSubscribed,
                     onChanged: (value) {
                       draft.worldCoinsSubscribed = value;
@@ -3621,61 +3702,6 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     onChanged();
                   },
                 ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-iban'),
-                  initialValue: draft.iban,
-                  decoration: InputDecoration(
-                    labelText: draft.paymentOption == PaymentOption.bankTransfer
-                        ? 'IBAN / Account No *'
-                        : 'IBAN / Account No',
-                    suffixIcon: IconButton(
-                      tooltip: 'Auto-fill bank data',
-                      onPressed: onLookupIbanPressed,
-                      icon: const Icon(Icons.travel_explore_rounded),
-                    ),
-                  ),
-                  validator: draft.paymentOption == PaymentOption.bankTransfer
-                      ? FormValidators.ibanOrAccountNumber
-                      : null,
-                  onChanged: (value) => draft.iban = value,
-                ),
-                TextFormField(
-                  key: ValueKey(
-                    '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
-                  ),
-                  initialValue: draft.bankName,
-                  decoration: InputDecoration(
-                    labelText: draft.paymentOption == PaymentOption.bankTransfer
-                        ? 'Bank name *'
-                        : 'Bank name',
-                  ),
-                  validator: draft.paymentOption == PaymentOption.bankTransfer
-                      ? (value) =>
-                          FormValidators.requiredText(value, 'Bank name')
-                      : null,
-                  onChanged: (value) => draft.bankName = value,
-                ),
-                TextFormField(
-                  key: ValueKey(
-                    '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
-                  ),
-                  initialValue: draft.bicSwift,
-                  decoration: const InputDecoration(labelText: 'BIC / SWIFT'),
-                  onChanged: (value) => draft.bicSwift = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-clearing-number'),
-                  initialValue: draft.clearingNumber,
-                  decoration:
-                      const InputDecoration(labelText: 'Clearing number'),
-                  onChanged: (value) => draft.clearingNumber = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-routing-number'),
-                  initialValue: draft.routingNumber,
-                  decoration: const InputDecoration(labelText: 'Routing No'),
-                  onChanged: (value) => draft.routingNumber = value,
-                ),
                 CountryDropdown(
                   key: ValueKey(
                     '$_keyPrefix-field-bank-country-${draft.bankCountryIso3}',
@@ -3690,59 +3716,86 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   },
                 ),
                 TextFormField(
-                  key: ValueKey('$_keyPrefix-field-bank-address-street'),
-                  initialValue: draft.bankAddressStreet,
-                  decoration: const InputDecoration(labelText: 'Bank street'),
-                  onChanged: (value) => draft.bankAddressStreet = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-bank-address-number'),
-                  initialValue: draft.bankAddressStreetNumber,
-                  decoration:
-                      const InputDecoration(labelText: 'Bank house number'),
-                  onChanged: (value) => draft.bankAddressStreetNumber = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-bank-address-line-2'),
-                  initialValue: draft.bankAddressStreetAddressOptional,
-                  decoration:
-                      const InputDecoration(labelText: 'Bank address line 2'),
-                  onChanged: (value) =>
-                      draft.bankAddressStreetAddressOptional = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-bank-address-postal-code'),
-                  initialValue: draft.bankAddressPostalCode,
-                  decoration:
-                      const InputDecoration(labelText: 'Bank postal code'),
-                  onChanged: (value) => draft.bankAddressPostalCode = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-bank-address-city'),
-                  initialValue: draft.bankAddressCity,
-                  decoration: const InputDecoration(labelText: 'Bank city'),
-                  onChanged: (value) => draft.bankAddressCity = value,
-                ),
-                TextFormField(
-                  key: ValueKey('$_keyPrefix-field-bank-address-region'),
-                  initialValue: draft.bankAddressAdminRegion,
-                  decoration:
-                      const InputDecoration(labelText: 'Bank state / region'),
-                  onChanged: (value) => draft.bankAddressAdminRegion = value,
-                ),
-                CountryDropdown(
-                  key: ValueKey(
-                    '$_keyPrefix-field-bank-country-${draft.bankAddressCountryIso3}',
+                  key: ValueKey('$_keyPrefix-field-iban'),
+                  initialValue: draft.iban,
+                  decoration: InputDecoration(
+                    labelText: BankingRules.accountLabel(
+                      bankTransfer: bankTransfer,
+                      requiresIbanOnly: requiresIbanOnly,
+                    ),
+                    suffixIcon: IconButton(
+                      tooltip: 'Auto-fill bank data',
+                      onPressed: onLookupIbanPressed,
+                      icon: const Icon(Icons.travel_explore_rounded),
+                    ),
                   ),
-                  label: 'Bank address country',
-                  value: draft.bankAddressCountryIso3,
-                  countries: countries,
-                  onChanged: (country) {
-                    draft.bankAddressCountryIso3 = country?.iso3 ?? '';
-                    draft.bankAddressCountryName = country?.name ?? '';
-                    onChanged();
-                  },
+                  validator: (value) => BankingRules.validateAccount(
+                    value: value,
+                    bankTransfer: bankTransfer,
+                    requiresIbanOnly: requiresIbanOnly,
+                  ),
+                  onChanged: (value) => draft.iban = value,
                 ),
+                if (!requiresIbanOnly) ...[
+                  TextFormField(
+                    key: ValueKey(
+                      '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
+                    ),
+                    initialValue: draft.bankName,
+                    decoration: const InputDecoration(labelText: 'Bank name'),
+                    onChanged: (value) => draft.bankName = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey(
+                      '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
+                    ),
+                    initialValue: draft.bicSwift,
+                    decoration: const InputDecoration(labelText: 'BIC / SWIFT'),
+                    onChanged: (value) => draft.bicSwift = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-clearing-number'),
+                    initialValue: draft.clearingNumber,
+                    decoration:
+                        const InputDecoration(labelText: 'Clearing number'),
+                    onChanged: (value) => draft.clearingNumber = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-routing-number'),
+                    initialValue: draft.routingNumber,
+                    decoration: const InputDecoration(labelText: 'Routing No'),
+                    onChanged: (value) => draft.routingNumber = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-bank-address-street'),
+                    initialValue: draft.bankAddressStreet,
+                    decoration: const InputDecoration(labelText: 'Bank street'),
+                    onChanged: (value) => draft.bankAddressStreet = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey(
+                      '$_keyPrefix-field-bank-address-postal-code',
+                    ),
+                    initialValue: draft.bankAddressPostalCode,
+                    decoration:
+                        const InputDecoration(labelText: 'Bank postal code'),
+                    onChanged: (value) => draft.bankAddressPostalCode = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-bank-address-city'),
+                    initialValue: draft.bankAddressCity,
+                    decoration: const InputDecoration(labelText: 'Bank city'),
+                    onChanged: (value) => draft.bankAddressCity = value,
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-bank-address-region'),
+                    initialValue: draft.bankAddressAdminRegion,
+                    decoration: const InputDecoration(
+                      labelText: 'Bank state / region',
+                    ),
+                    onChanged: (value) => draft.bankAddressAdminRegion = value,
+                  ),
+                ],
               ],
             ),
           ),
@@ -3866,10 +3919,12 @@ class _AuctionStep extends StatelessWidget {
           SectionCard(
             title: 'Country of Consignment',
             child: CountryDropdown(
-              label: 'Country of Consignment',
+              label: 'Country of Consignment *',
               value: draft.consignmentCountryIso3,
               countries: countries,
               hintText: 'Search Country of Consignment',
+              validator: (value) =>
+                  value == null ? 'Country of Consignment is required' : null,
               onChanged: onConsignmentCountryChanged,
             ),
           ),
@@ -3886,7 +3941,6 @@ class _FileStep extends StatelessWidget {
     required this.title,
     required this.files,
     required this.onAdd,
-    this.onCapture,
     required this.onOpen,
     required this.onRemove,
     required this.onBack,
@@ -3896,7 +3950,6 @@ class _FileStep extends StatelessWidget {
   final String title;
   final List<ContractUpload> files;
   final VoidCallback onAdd;
-  final VoidCallback? onCapture;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
   final VoidCallback onBack;
@@ -3922,12 +3975,6 @@ class _FileStep extends StatelessWidget {
                     icon: const Icon(Icons.upload_file_outlined),
                     label: const Text('Add file'),
                   ),
-                  if (onCapture != null)
-                    OutlinedButton.icon(
-                      onPressed: onCapture,
-                      icon: const Icon(Icons.photo_camera_outlined),
-                      label: const Text('Capture'),
-                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -3951,16 +3998,21 @@ class _FileStep extends StatelessWidget {
   }
 }
 
-class _IdentityFilesStep extends StatelessWidget {
-  const _IdentityFilesStep({
+class _PicturesStep extends StatelessWidget {
+  const _PicturesStep({
     required this.ordererFiles,
     required this.representativeFiles,
+    required this.productFiles,
+    required this.showRepresentativePictures,
+    required this.onCaptureWithPhone,
     required this.onAddOrderer,
     required this.onCaptureOrderer,
     required this.onPentaScanOrderer,
     required this.onAddRepresentative,
     required this.onCaptureRepresentative,
     required this.onPentaScanRepresentative,
+    required this.onAddProduct,
+    required this.onCaptureProduct,
     required this.onOpen,
     required this.onRemove,
     required this.onBack,
@@ -3969,12 +4021,17 @@ class _IdentityFilesStep extends StatelessWidget {
 
   final List<ContractUpload> ordererFiles;
   final List<ContractUpload> representativeFiles;
+  final List<ContractUpload> productFiles;
+  final bool showRepresentativePictures;
+  final VoidCallback onCaptureWithPhone;
   final VoidCallback onAddOrderer;
   final VoidCallback onCaptureOrderer;
   final VoidCallback onPentaScanOrderer;
   final VoidCallback onAddRepresentative;
   final VoidCallback onCaptureRepresentative;
   final VoidCallback onPentaScanRepresentative;
+  final VoidCallback onAddProduct;
+  final VoidCallback onCaptureProduct;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
   final VoidCallback onBack;
@@ -3984,7 +4041,16 @@ class _IdentityFilesStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text('Picture ID', style: Theme.of(context).textTheme.headlineSmall),
+        Text('Pictures', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 16),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton.icon(
+            onPressed: onCaptureWithPhone,
+            icon: const Icon(Icons.qr_code_2_outlined),
+            label: const Text('Capture with phone'),
+          ),
+        ),
         const SizedBox(height: 16),
         _FileUploadSection(
           title: 'Identification of the Consignor',
@@ -3995,13 +4061,24 @@ class _IdentityFilesStep extends StatelessWidget {
           onOpen: onOpen,
           onRemove: onRemove,
         ),
+        if (showRepresentativePictures) ...[
+          const SizedBox(height: 12),
+          _FileUploadSection(
+            title: 'Identification of the Authorized Representative',
+            files: representativeFiles,
+            onAdd: onAddRepresentative,
+            onCapture: onCaptureRepresentative,
+            onPentaScan: onPentaScanRepresentative,
+            onOpen: onOpen,
+            onRemove: onRemove,
+          ),
+        ],
         const SizedBox(height: 12),
         _FileUploadSection(
-          title: 'Identification of the Authorized Representative',
-          files: representativeFiles,
-          onAdd: onAddRepresentative,
-          onCapture: onCaptureRepresentative,
-          onPentaScan: onPentaScanRepresentative,
+          title: 'Product pictures',
+          files: productFiles,
+          onAdd: onAddProduct,
+          onCapture: onCaptureProduct,
           onOpen: onOpen,
           onRemove: onRemove,
         ),
@@ -4157,7 +4234,7 @@ class _FileUploadSection extends StatelessWidget {
     required this.files,
     required this.onAdd,
     required this.onCapture,
-    required this.onPentaScan,
+    this.onPentaScan,
     required this.onOpen,
     required this.onRemove,
   });
@@ -4166,7 +4243,7 @@ class _FileUploadSection extends StatelessWidget {
   final List<ContractUpload> files;
   final VoidCallback onAdd;
   final VoidCallback onCapture;
-  final VoidCallback onPentaScan;
+  final VoidCallback? onPentaScan;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
 
@@ -4191,11 +4268,12 @@ class _FileUploadSection extends StatelessWidget {
                 icon: const Icon(Icons.photo_camera_outlined),
                 label: const Text('Capture'),
               ),
-              OutlinedButton.icon(
-                onPressed: onPentaScan,
-                icon: const Icon(Icons.document_scanner_outlined),
-                label: const Text('Penta Scan'),
-              ),
+              if (onPentaScan != null)
+                OutlinedButton.icon(
+                  onPressed: onPentaScan,
+                  icon: const Icon(Icons.document_scanner_outlined),
+                  label: const Text('Penta Scan'),
+                ),
             ],
           ),
           const SizedBox(height: 12),
@@ -5441,11 +5519,8 @@ extension _WizardDraftReview on _WizardDraft {
           'Bank address',
           [
             bankAddressStreet,
-            bankAddressStreetNumber,
-            bankAddressStreetAddressOptional,
             '$bankAddressPostalCode $bankAddressCity',
             bankAddressAdminRegion,
-            bankAddressCountryName,
           ].where((part) => part.trim().isNotEmpty).join(', '),
         ),
         _ReviewLine('Correspondence', _correspondenceLabel),
@@ -5589,11 +5664,17 @@ class _ResponsiveFormGrid extends StatelessWidget {
           spacing: 16,
           runSpacing: 16,
           children: children
+              .asMap()
+              .entries
               .map(
-                (child) => SizedBox(
-                  key: child.key == null ? null : ValueKey<Object?>(child.key),
+                (entry) => SizedBox(
+                  key: entry.value.key == null
+                      ? null
+                      : ValueKey<Object?>(
+                          'responsive-grid-${entry.key}-${entry.value.key}',
+                        ),
                   width: width,
-                  child: child,
+                  child: entry.value,
                 ),
               )
               .toList(growable: false),

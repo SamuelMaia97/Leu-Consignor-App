@@ -54,7 +54,7 @@ class _LeuAppState extends State<LeuApp> {
       GoRoute(
         path: '/contracts/:id',
         builder: (_, state) => ContractsOverviewScreen(
-          consignorId: state.pathParameters['id']!,
+          consignorId: state.pathParameters['id'] ?? '',
         ),
       ),
       GoRoute(
@@ -67,7 +67,7 @@ class _LeuAppState extends State<LeuApp> {
       GoRoute(
         path: '/contracts/:id/:auctionId',
         builder: (_, state) => ContractEditorScreen(
-          consignorId: state.pathParameters['id']!,
+          consignorId: state.pathParameters['id'] ?? '',
           auctionId: int.tryParse(state.pathParameters['auctionId'] ?? ''),
         ),
       ),
@@ -82,7 +82,7 @@ class _LeuAppState extends State<LeuApp> {
       GoRoute(
         path: '/contracts/:id/record/:contractId',
         builder: (_, state) => ContractEditorScreen(
-          consignorId: state.pathParameters['id']!,
+          consignorId: state.pathParameters['id'] ?? '',
           contractId: state.pathParameters['contractId'],
         ),
       ),

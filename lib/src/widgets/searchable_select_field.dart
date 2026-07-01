@@ -32,6 +32,11 @@ class SearchableSelectFormField<T> extends FormField<T> {
                         return labelValue.contains(query.toLowerCase());
                       }).toList(growable: false);
 
+                      void submitSingleMatch() {
+                        if (filtered.length != 1) return;
+                        Navigator.of(sheetContext).pop(filtered.single);
+                      }
+
                       return SafeArea(
                         child: Padding(
                           padding: EdgeInsets.only(
@@ -53,6 +58,7 @@ class SearchableSelectFormField<T> extends FormField<T> {
                                 ),
                                 onChanged: (value) =>
                                     setSheetState(() => query = value),
+                                onSubmitted: (_) => submitSingleMatch(),
                               ),
                               const SizedBox(height: 12),
                               Flexible(

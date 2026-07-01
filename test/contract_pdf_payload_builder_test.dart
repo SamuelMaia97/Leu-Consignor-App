@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -182,6 +183,44 @@ void main() {
       expect(
           payload['consignor_address_2'], 'New York, NY 10001, United States');
       expect(payload['consignor_address_3'], '');
+    });
+
+    test('emits commercial register block aliases and attachment kind',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('commercial_register_test_');
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final registerFile = File('${tempDir.path}/register.pdf');
+      await registerFile.writeAsBytes([1, 2, 3], flush: true);
+
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.legalEntity),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          uploads: [
+            ContractUpload(
+              localId: 'register',
+              fileName: 'register.pdf',
+              fileType: UploadType.agreement,
+              path: registerFile.path,
+            ),
+          ],
+        ),
+      );
+
+      final attachments = payload['attachments'] as List<dynamic>;
+
+      expect(payload['block_attach_commercial_register'], isTrue);
+      expect(payload['show_block_attach_commercial_register'], isTrue);
+      expect(
+        payload['templateFlags'],
+        containsPair('blockAttachCommercialRegister', true),
+      );
+      expect(attachments.single, containsPair('kind', 'CommercialRegister'));
     });
 
     test('emits agreement, Annex A, and Annex C signatures in order', () async {
