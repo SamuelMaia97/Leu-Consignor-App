@@ -13,16 +13,25 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
     String Function(AuctionOption auction)? itemLabel,
     super.validator,
     bool enabled = true,
+    String? disabledMessage,
   }) : super(
           initialValue: selected,
           builder: (field) {
             String labelFor(AuctionOption auction) =>
                 itemLabel?.call(auction) ?? auction.displayName;
             final sortedItems = items.toList(growable: false)
-              ..sort(MultiAuctionSelectField._compareAuctions);
+              ..sort(MultiAuctionSelectField._compareAuctionsNewestFirst);
 
             Future<void> openPicker() async {
-              if (!enabled) return;
+              if (!enabled) {
+                final message = disabledMessage?.trim();
+                if (message != null && message.isNotEmpty) {
+                  ScaffoldMessenger.of(field.context).showSnackBar(
+                    SnackBar(content: Text(message)),
+                  );
+                }
+                return;
+              }
 
               final picked = await showModalBottomSheet<List<AuctionOption>>(
                 context: field.context,
@@ -148,7 +157,7 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
 
             final value = (field.value ?? const <AuctionOption>[])
                 .toList(growable: false)
-              ..sort(MultiAuctionSelectField._compareAuctions);
+              ..sort(MultiAuctionSelectField._compareAuctionsNewestFirst);
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -214,10 +223,10 @@ class MultiAuctionSelectField extends FormField<List<AuctionOption>> {
         : null;
   }
 
-  static int _compareAuctions(AuctionOption a, AuctionOption b) {
-    final byNumber = _sortNumber(a).compareTo(_sortNumber(b));
+  static int _compareAuctionsNewestFirst(AuctionOption a, AuctionOption b) {
+    final byNumber = _sortNumber(b).compareTo(_sortNumber(a));
     if (byNumber != 0) return byNumber;
-    return a.auctionId.compareTo(b.auctionId);
+    return b.auctionId.compareTo(a.auctionId);
   }
 
   static int _sortNumber(AuctionOption auction) {

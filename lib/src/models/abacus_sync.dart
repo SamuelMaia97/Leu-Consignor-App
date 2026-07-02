@@ -149,8 +149,8 @@ class AbacusFileSyncMetadata {
                 ? 'Representative_Id_Validation_Report_${normalizedConsignor}_$date'
                 : 'Id_Validation_Report_${normalizedConsignor}_$date'
             : representative
-                ? 'Representative_Passport_${normalizedConsignor}_$date'
-                : 'Passport_${normalizedConsignor}_$date';
+                ? 'representative-passport${_passportSideSuffix(fileName)}'
+                : 'passport${_passportSideSuffix(fileName)}';
         break;
 
       case UploadType.product:
@@ -164,7 +164,7 @@ class AbacusFileSyncMetadata {
         if (!lowerFileName.endsWith('.pdf')) return null;
         documentKind = AbacusDocumentKind.consignmentContract;
         storage = AbacusStorageReference.consignmentContract;
-        label = 'Consignment_Contract_${_safeToken(contractNumber)}';
+        label = _safeToken(contractNumber);
         break;
     }
 
@@ -236,6 +236,19 @@ class AbacusFileSyncMetadata {
       utc.hour.toString().padLeft(2, '0'),
       utc.minute.toString().padLeft(2, '0'),
     ].join();
+  }
+
+  static String _passportSideSuffix(String fileName) {
+    final normalized = fileName.toLowerCase();
+    if (RegExp(r'(^|[_\-\s])(1|front|obverse)([_\-\s.]|$)')
+        .hasMatch(normalized)) {
+      return '-1';
+    }
+    if (RegExp(r'(^|[_\-\s])(2|back|reverse)([_\-\s.]|$)')
+        .hasMatch(normalized)) {
+      return '-2';
+    }
+    return '';
   }
 
   static String _imageIncrement(ContractUpload upload) {

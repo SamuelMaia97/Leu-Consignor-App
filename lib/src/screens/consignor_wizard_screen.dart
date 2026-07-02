@@ -49,7 +49,6 @@ const _representativeIdentificationLabel =
 const _productPicturesLabel = 'Product pictures';
 const _pentaOutputRootPath = r'C:\CoinContracts';
 const _pentaScanTimeout = Duration(minutes: 2);
-const _unsignedContractPrefix = 'PROV-';
 
 class ConsignorWizardScreen extends StatefulWidget {
   const ConsignorWizardScreen({
@@ -966,7 +965,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
 
     final importedImagePaths = await _fileService.importFilesForUpload(
-      [scanFiles.visibleImagePath],
+      scanFiles.visibleImagePaths,
       UploadType.passport,
     );
 
@@ -1137,44 +1136,30 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   _PentaScanFiles? _selectPentaScanFiles(List<File> files) {
     if (files.isEmpty) return null;
 
-    File? visibleImage;
-    for (final file in files) {
-      final name = _fileNameFromPath(file.path).toLowerCase();
-      if (name == 'page1_visible.jpg') {
-        visibleImage = file;
-      }
-    }
-
-    if (visibleImage == null) {
-      final imageFiles = files.where(_isImageFile).toList()
-        ..sort((a, b) {
-          final aName = _fileNameFromPath(a.path).toLowerCase();
-          final bName = _fileNameFromPath(b.path).toLowerCase();
-          final aScore =
-              aName.contains('visible') && !aName.contains('portrait') ? 0 : 1;
-          final bScore =
-              bName.contains('visible') && !bName.contains('portrait') ? 0 : 1;
-          return aScore.compareTo(bScore);
-        });
-
-      if (imageFiles.isNotEmpty) {
-        visibleImage = imageFiles.first;
-      }
-    }
-
-    if (visibleImage == null) {
+    final imageFiles = files.where(_isImageFile).toList(growable: false);
+    if (imageFiles.isEmpty) {
       return null;
     }
 
-    final visibleImagePath = visibleImage.path;
+    final visibleImages = imageFiles
+        .where((file) => _isPentaVisiblePageImage(file))
+        .toList(growable: false);
+
+    final selectedImages = (visibleImages.isNotEmpty
+        ? visibleImages
+        : imageFiles)
+      ..sort(_comparePentaImageFiles);
+    final visibleImagePaths =
+        selectedImages.map((file) => file.path).toList(growable: false);
+    final visibleImagePathSet = visibleImagePaths.toSet();
     final reportPaths = files
-        .where((file) => file.path != visibleImagePath)
+        .where((file) => !visibleImagePathSet.contains(file.path))
         .where(_isPentaValidationReportFile)
         .map((file) => file.path)
         .toList(growable: false);
 
     return _PentaScanFiles(
-      visibleImagePath: visibleImagePath,
+      visibleImagePaths: visibleImagePaths,
       validationReportPaths: reportPaths,
     );
   }
@@ -1189,6 +1174,33 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         name.endsWith('.jpeg') ||
         name.endsWith('.png') ||
         name.endsWith('.bmp');
+  }
+
+  bool _isPentaVisiblePageImage(File file) {
+    final name = _fileNameFromPath(file.path).toLowerCase();
+    return name.contains('visible') && !name.contains('portrait');
+  }
+
+  int _comparePentaImageFiles(File a, File b) {
+    final aName = _fileNameFromPath(a.path).toLowerCase();
+    final bName = _fileNameFromPath(b.path).toLowerCase();
+    final byPage = _pentaPageNumber(aName).compareTo(_pentaPageNumber(bName));
+    if (byPage != 0) return byPage;
+    return aName.compareTo(bName);
+  }
+
+  int _pentaPageNumber(String fileName) {
+    final pageMatch = RegExp(r'page\D*(\d+)').firstMatch(fileName);
+    if (pageMatch != null) {
+      return int.tryParse(pageMatch.group(1)!) ?? 0;
+    }
+
+    final anyNumberMatch = RegExp(r'\d+').firstMatch(fileName);
+    if (anyNumberMatch != null) {
+      return int.tryParse(anyNumberMatch.group(0)!) ?? 0;
+    }
+
+    return 0;
   }
 
   bool _isPentaValidationReportFile(File file) {
@@ -1366,54 +1378,55 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     ContractRecord record, {
     required bool includeSignatures,
   }) {
-    final prefix = includeSignatures ? '' : _unsignedContractPrefix;
-    return '$prefix'
-        'COC-${_contractUniqueNumber(record)}-${_timestampMinutePart()}.pdf';
+    return '${_contractNumber(record)}.pdf';
   }
 
   List<AuctionOption> _chronologicalAuctions(List<AuctionOption> auctions) {
-    final sorted = auctions.toList(growable: false)
-      ..sort((a, b) {
-        final numberComparison =
-            _auctionSortNumber(a).compareTo(_auctionSortNumber(b));
-        if (numberComparison != 0) return numberComparison;
-        return a.auctionId.compareTo(b.auctionId);
-      });
-    return sorted;
+    return _chronologicalAuctionOptions(auctions);
   }
 
-  int _auctionSortNumber(AuctionOption auction) {
-    if (auction.auctionNumber > 0) return auction.auctionNumber;
+  String _contractNumber(ContractRecord record) {
+    final existing = _existingContractNumber(record);
+    if (existing != null) return existing;
 
-    final match = RegExp(r'\b(\d+)\b').firstMatch(auction.displayName);
-    if (match != null) {
-      return int.tryParse(match.group(1)!) ?? auction.auctionId;
+    final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
+    final next = _nextContractSequenceForYear(year);
+    return 'COC-$year-$next';
+  }
+
+  String? _existingContractNumber(ContractRecord record) {
+    final candidates = <String>[
+      record.pdfName,
+      ...record.uploads.map((upload) => upload.fileName),
+      if (_activeContractId != null) _activeContractId!,
+    ];
+    final pattern = RegExp(r'\bCOC-\d{2}-\d+\b', caseSensitive: false);
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(0)!.toUpperCase();
     }
-
-    return auction.auctionId;
+    return null;
   }
 
-  String _contractUniqueNumber(ContractRecord record) {
-    final source = record.systemReferenceContract > 0
-        ? record.systemReferenceContract.toString()
-        : record.id;
-    final safe = source
-        .trim()
-        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
-        .replaceAll(RegExp(r'-+'), '-')
-        .replaceAll(RegExp(r'^-|-$'), '');
-    return safe.isEmpty
-        ? DateTime.now().microsecondsSinceEpoch.toString()
-        : safe;
-  }
-
-  String _timestampMinutePart() {
-    final now = DateTime.now();
-    return '${now.year.toString().padLeft(4, '0')}'
-        '${now.month.toString().padLeft(2, '0')}'
-        '${now.day.toString().padLeft(2, '0')}'
-        '${now.hour.toString().padLeft(2, '0')}'
-        '${now.minute.toString().padLeft(2, '0')}';
+  int _nextContractSequenceForYear(String year) {
+    final pattern = RegExp('\\bCOC-$year-(\\d+)\\b', caseSensitive: false);
+    var maxSequence = 0;
+    for (final contract in context.read<AppState>().contracts) {
+      final candidates = <String>[
+        contract.pdfName,
+        contract.id,
+        ...contract.uploads.map((upload) => upload.fileName),
+      ];
+      for (final candidate in candidates) {
+        final match = pattern.firstMatch(candidate);
+        if (match == null) continue;
+        final value = int.tryParse(match.group(1) ?? '');
+        if (value != null && value > maxSequence) {
+          maxSequence = value;
+        }
+      }
+    }
+    return maxSequence + 1;
   }
 
   Future<Consignor> _saveConsignorLocal({required bool draft}) async {
@@ -1963,6 +1976,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             draft: _draft,
             auctions: state.auctions,
             countries: state.countries,
+            hasValidToken: state.hasValidToken,
             onAuctionsChanged: (value) =>
                 setState(() => _draft.selectedAuctions = value),
             onConsignmentCountryChanged: (country) {
@@ -2081,6 +2095,28 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }
 }
 
+List<AuctionOption> _chronologicalAuctionOptions(List<AuctionOption> auctions) {
+  final sorted = auctions.toList(growable: false)
+    ..sort((a, b) {
+      final numberComparison =
+          _auctionSortNumber(a).compareTo(_auctionSortNumber(b));
+      if (numberComparison != 0) return numberComparison;
+      return a.auctionId.compareTo(b.auctionId);
+    });
+  return sorted;
+}
+
+int _auctionSortNumber(AuctionOption auction) {
+  if (auction.auctionNumber > 0) return auction.auctionNumber;
+
+  final match = RegExp(r'\b(\d+)\b').firstMatch(auction.displayName);
+  if (match != null) {
+    return int.tryParse(match.group(1)!) ?? auction.auctionId;
+  }
+
+  return auction.auctionId;
+}
+
 enum _WizardStep {
   existingCustomer,
   consignorType,
@@ -2188,6 +2224,8 @@ class _WizardDraft {
   String references = '';
   double creditLimit = 0;
   double? discount;
+  double? consignmentFeeFloorAuction;
+  double? consignmentFeeWebAuction;
   String commissionRate = '10';
   String consignmentCountryIso3 = '';
   String consignmentCountryName = '';
@@ -2342,6 +2380,8 @@ class _WizardDraft {
         'references': references,
         'creditLimit': creditLimit,
         'discount': discount,
+        'consignmentFeeFloorAuction': consignmentFeeFloorAuction,
+        'consignmentFeeWebAuction': consignmentFeeWebAuction,
         'commissionRate': commissionRate,
         'consignmentCountryIso3': consignmentCountryIso3,
         'consignmentCountryName': consignmentCountryName,
@@ -2470,6 +2510,8 @@ class _WizardDraft {
     references = _toString(json['references']);
     creditLimit = _toDouble(json['creditLimit']) ?? 0;
     discount = _toDouble(json['discount']);
+    consignmentFeeFloorAuction = _toDouble(json['consignmentFeeFloorAuction']);
+    consignmentFeeWebAuction = _toDouble(json['consignmentFeeWebAuction']);
     commissionRate = _toString(json['commissionRate']);
     consignmentCountryIso3 = _toString(json['consignmentCountryIso3']);
     consignmentCountryName = _toString(json['consignmentCountryName']);
@@ -2658,6 +2700,8 @@ class _WizardDraft {
     references = prefill.references;
     creditLimit = prefill.creditLimit;
     discount = prefill.discount;
+    consignmentFeeFloorAuction = prefill.consignmentFeeFloorAuction;
+    consignmentFeeWebAuction = prefill.consignmentFeeWebAuction;
     formRevision++;
   }
 
@@ -2742,10 +2786,6 @@ class _WizardDraft {
     requireText(city, 'City');
     requireText(countryIso3, 'Country');
     if (isLegalEntity) requireText(eori, 'EORI');
-    if (consignorType != ConsignorType.naturalPerson && vatLiability) {
-      requireText(vatNumber, 'VAT number');
-    }
-
     if (paymentOption == PaymentOption.bankTransfer) {
       requireText(iban, 'IBAN / Account No');
     }
@@ -2784,7 +2824,7 @@ class _WizardDraft {
     consignor.consignorInfo.nationalityIso3 = nationalityIso3;
     consignor.consignorInfo.nationalityName = nationalityName;
     final showVatFields = consignorType != ConsignorType.naturalPerson;
-    final effectiveVatLiability = showVatFields && vatLiability;
+    final effectiveVatLiability = showVatFields && vatNumber.trim().isNotEmpty;
     consignor.vatLiability = effectiveVatLiability;
     consignor.vatNumber = effectiveVatLiability ? vatNumber.trim() : '';
     consignor.eori = eori.trim();
@@ -2847,14 +2887,16 @@ class _WizardDraft {
     consignor.bankingDetails.beneficiaryAddress.countryName =
         beneficiaryAddressCountryName;
     consignor.correspondence = correspondence;
-    consignor.checkedByLeu = checkedByLeu;
+    consignor.checkedByLeu = true;
     consignor.newsletterSubscribed = newsletterSubscribed;
     consignor.ancientCoinsSubscribed = ancientCoinsSubscribed;
     consignor.worldCoinsSubscribed = worldCoinsSubscribed;
-    consignor.collectingArea = collectingArea.trim();
+    consignor.collectingArea = '';
     consignor.references = references.trim();
-    consignor.creditLimit = creditLimit;
+    consignor.creditLimit = 500000;
     consignor.discount = discount;
+    consignor.consignmentFeeFloorAuction = consignmentFeeFloorAuction;
+    consignor.consignmentFeeWebAuction = consignmentFeeWebAuction;
     consignor.ensureGeneratedCredentials();
     return consignor;
   }
@@ -3601,34 +3643,21 @@ class _ConsignorDetailsForm extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         SectionCard(
-          title: 'VAT and preferences',
+          title: showVatFields ? 'VAT and preferences' : 'Preferences',
           child: Column(
             children: [
               _ResponsiveFormGrid(
                 children: [
                   if (showVatFields)
-                    _BooleanCard(
-                      key: ValueKey('$_keyPrefix-field-vat-liability'),
-                      title: 'VAT obligatory',
-                      value: draft.vatLiability,
-                      onChanged: (value) {
-                        draft.vatLiability = value;
-                        if (!value) {
-                          draft.vatNumber = '';
-                        }
-                        onChanged();
-                      },
-                    ),
-                  if (showVatFields && draft.vatLiability)
                     TextFormField(
                       key: ValueKey('$_keyPrefix-field-vat-number'),
                       initialValue: draft.vatNumber,
                       decoration:
                           const InputDecoration(labelText: 'VAT number'),
-                      validator: (value) => draft.vatLiability
-                          ? FormValidators.requiredText(value, 'VAT number')
-                          : null,
-                      onChanged: (value) => draft.vatNumber = value,
+                      onChanged: (value) {
+                        draft.vatNumber = value;
+                        draft.vatLiability = value.trim().isNotEmpty;
+                      },
                     ),
                   SearchableSelectFormField<_LookupOption<String>>(
                     key: ValueKey('$_keyPrefix-field-correspondence'),
@@ -3641,15 +3670,6 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     validator: (value) =>
                         value == null ? 'Correspondence is required' : null,
                     onChanged: (value) => draft.correspondence = value?.value,
-                  ),
-                  _BooleanCard(
-                    key: ValueKey('$_keyPrefix-field-checked-by-leu'),
-                    title: 'Checked by Leu',
-                    value: draft.checkedByLeu,
-                    onChanged: (value) {
-                      draft.checkedByLeu = value;
-                      onChanged();
-                    },
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-newsletter-subscribed'),
@@ -3678,6 +3698,57 @@ class _ConsignorDetailsForm extends StatelessWidget {
                       onChanged();
                     },
                   ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        SectionCard(
+          title: 'Terms',
+          child: _ResponsiveFormGrid(
+            children: [
+              TextFormField(
+                key: ValueKey(
+                  '$_keyPrefix-field-consignment-fee-floor-auction',
+                ),
+                initialValue:
+                    _formatNullablePercent(draft.consignmentFeeFloorAuction),
+                decoration: const InputDecoration(
+                  labelText: 'Floor auction consignment commission',
+                  suffixText: '%',
+                ),
+                validator: (value) =>
+                    _optionalPercentage(value, 'Floor auction commission'),
+                onChanged: (value) {
+                  draft.consignmentFeeFloorAuction =
+                      _parseOptionalPercent(value);
+                },
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
+                ],
+              ),
+              TextFormField(
+                key: ValueKey(
+                  '$_keyPrefix-field-consignment-fee-web-auction',
+                ),
+                initialValue:
+                    _formatNullablePercent(draft.consignmentFeeWebAuction),
+                decoration: const InputDecoration(
+                  labelText: 'Web auction consignment commission',
+                  suffixText: '%',
+                ),
+                validator: (value) =>
+                    _optionalPercentage(value, 'Web auction commission'),
+                onChanged: (value) {
+                  draft.consignmentFeeWebAuction = _parseOptionalPercent(value);
+                },
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
                 ],
               ),
             ],
@@ -3860,6 +3931,7 @@ class _AuctionStep extends StatelessWidget {
     required this.draft,
     required this.auctions,
     required this.countries,
+    required this.hasValidToken,
     required this.onAuctionsChanged,
     required this.onConsignmentCountryChanged,
     required this.onBack,
@@ -3870,6 +3942,7 @@ class _AuctionStep extends StatelessWidget {
   final _WizardDraft draft;
   final List<AuctionOption> auctions;
   final List<Country> countries;
+  final bool hasValidToken;
   final ValueChanged<List<AuctionOption>> onAuctionsChanged;
   final ValueChanged<Country?> onConsignmentCountryChanged;
   final VoidCallback onBack;
@@ -3892,6 +3965,9 @@ class _AuctionStep extends StatelessWidget {
               selected: draft.selectedAuctions,
               itemLabel: (auction) => auction.displayName,
               validator: MultiAuctionSelectField.requireSelection,
+              enabled: hasValidToken,
+              disabledMessage:
+                  'Microsoft login is required for auction lookup.',
               onChanged: onAuctionsChanged,
             ),
           ),
@@ -4097,11 +4173,11 @@ typedef _PentaScanRunner = Future<_PentaScanFiles> Function(
 
 class _PentaScanFiles {
   const _PentaScanFiles({
-    required this.visibleImagePath,
+    required this.visibleImagePaths,
     this.validationReportPaths = const [],
   });
 
-  final String visibleImagePath;
+  final List<String> visibleImagePaths;
   final List<String> validationReportPaths;
 }
 
@@ -4323,10 +4399,11 @@ class _FullReviewStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final missingFields = draft.missingRequiredFields;
-    final selectedAuctions = draft.selectedAuctions
-        .map((auction) => auction.displayName)
-        .where((name) => name.trim().isNotEmpty)
-        .join(', ');
+    final selectedAuctions =
+        _chronologicalAuctionOptions(draft.selectedAuctions)
+            .map((auction) => auction.displayName)
+            .where((name) => name.trim().isNotEmpty)
+            .join(', ');
     final commissionRate = draft.commissionRate.trim();
     final commissionDisplay = commissionRate.isEmpty
         ? 'Not entered'
@@ -5484,9 +5561,7 @@ extension _WizardDraftReview on _WizardDraft {
         _ReviewLine('Salutation', _salutationLabel),
         _ReviewLine(
           'Date of birth',
-          dateOfBirth == null
-              ? ''
-              : '${dateOfBirth!.year.toString().padLeft(4, '0')}-${dateOfBirth!.month.toString().padLeft(2, '0')}-${dateOfBirth!.day.toString().padLeft(2, '0')}',
+          dateOfBirth == null ? '' : _formatEuropeanDate(dateOfBirth!),
         ),
         _ReviewLine('Nationality', nationalityName),
         _ReviewLine('Email', email),
@@ -5524,6 +5599,14 @@ extension _WizardDraftReview on _WizardDraft {
           ].where((part) => part.trim().isNotEmpty).join(', '),
         ),
         _ReviewLine('Correspondence', _correspondenceLabel),
+        _ReviewLine(
+          'Floor auction consignment commission',
+          _formatNullablePercent(consignmentFeeFloorAuction),
+        ),
+        _ReviewLine(
+          'Web auction consignment commission',
+          _formatNullablePercent(consignmentFeeWebAuction),
+        ),
       ];
 }
 
@@ -5705,30 +5788,33 @@ class _ConsignorTypeSelector extends StatelessWidget {
     final selected =
         options.contains(value) ? value : ConsignorType.naturalPerson;
 
-    return SegmentedButton<ConsignorType>(
-      segments: [
-        for (final option in options)
-          ButtonSegment<ConsignorType>(
-            value: option,
-            icon: Icon(
-              switch (option) {
-                ConsignorType.naturalPerson => Icons.person_outline,
-                ConsignorType.soleProprietor => Icons.storefront_outlined,
-                ConsignorType.legalEntity => Icons.business_outlined,
-              },
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SegmentedButton<ConsignorType>(
+        segments: [
+          for (final option in options)
+            ButtonSegment<ConsignorType>(
+              value: option,
+              icon: Icon(
+                switch (option) {
+                  ConsignorType.naturalPerson => Icons.person_outline,
+                  ConsignorType.soleProprietor => Icons.storefront_outlined,
+                  ConsignorType.legalEntity => Icons.business_outlined,
+                },
+              ),
+              label: Text(
+                switch (option) {
+                  ConsignorType.naturalPerson => 'Individual',
+                  ConsignorType.soleProprietor => 'Sole proprietor',
+                  ConsignorType.legalEntity => 'Legal entity',
+                },
+              ),
             ),
-            label: Text(
-              switch (option) {
-                ConsignorType.naturalPerson => 'Individual',
-                ConsignorType.soleProprietor => 'Sole proprietor',
-                ConsignorType.legalEntity => 'Legal entity',
-              },
-            ),
-          ),
-      ],
-      selected: {selected},
-      showSelectedIcon: false,
-      onSelectionChanged: (selection) => onChanged(selection.single),
+        ],
+        selected: {selected},
+        showSelectedIcon: false,
+        onSelectionChanged: (selection) => onChanged(selection.single),
+      ),
     );
   }
 }
@@ -5798,7 +5884,7 @@ class _DatePickerFormField extends FormField<DateTime> {
                 child: Text(
                   selected == null
                       ? 'Select date'
-                      : '${selected.year.toString().padLeft(4, '0')}-${selected.month.toString().padLeft(2, '0')}-${selected.day.toString().padLeft(2, '0')}',
+                      : _formatEuropeanDate(selected),
                   style: selected == null
                       ? TextStyle(color: Theme.of(field.context).hintColor)
                       : null,
@@ -5807,6 +5893,34 @@ class _DatePickerFormField extends FormField<DateTime> {
             );
           },
         );
+}
+
+String _formatEuropeanDate(DateTime date) {
+  return '${date.day.toString().padLeft(2, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.year.toString().padLeft(4, '0')}';
+}
+
+String _formatNullablePercent(num? value) {
+  if (value == null) return '';
+  final asDouble = value.toDouble();
+  if (asDouble == asDouble.roundToDouble()) {
+    return asDouble.toStringAsFixed(0);
+  }
+  return asDouble.toString();
+}
+
+double? _parseOptionalPercent(String? value) {
+  final normalized =
+      (value ?? '').trim().replaceAll('%', '').replaceAll(',', '.');
+  if (normalized.isEmpty) return null;
+  return double.tryParse(normalized);
+}
+
+String? _optionalPercentage(String? value, String fieldLabel) {
+  final trimmed = value?.trim() ?? '';
+  if (trimmed.isEmpty) return null;
+  return FormValidators.percentage(trimmed, fieldLabel);
 }
 
 class _MonthYearDayPickerDialog extends StatefulWidget {
@@ -5901,21 +6015,6 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
     return [for (var day = startDay; day <= endDay; day++) day];
   }
 
-  InputDecoration _pickerDecoration(String label) {
-    return InputDecoration(
-      labelText: label,
-      isDense: true,
-      contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-    );
-  }
-
-  Widget _pickerItemText(String value) {
-    return Transform.translate(
-      offset: const Offset(0, -1.5),
-      child: Text(value, style: const TextStyle(height: 1.0)),
-    );
-  }
-
   void _updateSelection({int? year, int? month, int? day}) {
     final nextYear = year ?? _selectedYear;
     final nextMonth = month ?? _selectedMonth;
@@ -5964,49 +6063,45 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
               child: Text('Choose year, month, and day directly.'),
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<int>(
-              initialValue: _selectedYear,
-              decoration: _pickerDecoration('Year'),
+            SearchableSelectFormField<int>(
+              key: ValueKey('dob-year-$_selectedYear'),
+              label: 'Year',
               items: years
-                  .map(
-                    (year) => DropdownMenuItem<int>(
-                      value: year,
-                      child: _pickerItemText(year.toString()),
-                    ),
-                  )
+                  .where((year) => year >= widget.firstDate.year)
                   .toList(growable: false),
+              itemLabel: (year) => year.toString(),
+              initialValue: _selectedYear,
+              allowClear: false,
+              hintText: 'Search year',
               onChanged: (value) {
                 if (value != null) _updateSelection(year: value);
               },
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
+            SearchableSelectFormField<int>(
+              key: ValueKey('dob-month-$_selectedYear-$_selectedMonth'),
+              label: 'Month',
+              items: months,
+              itemLabel: (month) =>
+                  '${month.toString().padLeft(2, '0')} - ${_monthLabels[month - 1]}',
               initialValue: _selectedMonth,
-              decoration: _pickerDecoration('Month'),
-              items: months
-                  .map(
-                    (month) => DropdownMenuItem<int>(
-                      value: month,
-                      child: _pickerItemText(_monthLabels[month - 1]),
-                    ),
-                  )
-                  .toList(growable: false),
+              allowClear: false,
+              hintText: 'Search month',
               onChanged: (value) {
                 if (value != null) _updateSelection(month: value);
               },
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
+            SearchableSelectFormField<int>(
+              key: ValueKey(
+                'dob-day-$_selectedYear-$_selectedMonth-$_selectedDay',
+              ),
+              label: 'Day',
+              items: days,
+              itemLabel: (day) => day.toString().padLeft(2, '0'),
               initialValue: _selectedDay,
-              decoration: _pickerDecoration('Day'),
-              items: days
-                  .map(
-                    (day) => DropdownMenuItem<int>(
-                      value: day,
-                      child: _pickerItemText(day.toString().padLeft(2, '0')),
-                    ),
-                  )
-                  .toList(growable: false),
+              allowClear: false,
+              hintText: 'Search day',
               onChanged: (value) {
                 if (value != null) _updateSelection(day: value);
               },

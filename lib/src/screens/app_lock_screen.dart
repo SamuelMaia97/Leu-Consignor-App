@@ -16,7 +16,9 @@ class AppLockScreen extends StatefulWidget {
 }
 
 class _AppLockScreenState extends State<AppLockScreen> {
-  final _usernameController = TextEditingController(text: 'admin');
+  final _usernameController = TextEditingController(
+    text: AppLockService.defaultUsername,
+  );
   final _passwordController = TextEditingController();
   final _service = AppLockService();
   bool _busy = false;

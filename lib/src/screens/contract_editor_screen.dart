@@ -21,7 +21,6 @@ import '../widgets/page_header.dart';
 import '../widgets/multi_auction_select_field.dart';
 import '../widgets/section_card.dart';
 
-const _unsignedContractPrefix = 'PROV-';
 const _ordererIdKind = 'NaturalPersonId';
 const _representativeIdKind = 'RepresentativeId';
 const _phoneTargetConsignorId = 'consignor-identification';
@@ -269,7 +268,6 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
 
   Future<bool> _finishContract() async {
     final auctionId = _record.auctionId;
-    final backendConsignorId = _backendConsignorId;
     final activeUploads = _record.uploads.where((u) => !u.isDeleted).toList();
 
     if (auctionId == null) {
@@ -282,27 +280,32 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       return false;
     }
 
-    if (backendConsignorId == null || backendConsignorId <= 0) {
-      _showSnack('Sync the consignor first before saving.');
-      return false;
-    }
-
     final appState = context.read<AppState>();
-    final api = ApiService(appState.settings, appState.token);
 
     setState(() => _busy = true);
     try {
-      final syncedRecord = await api.syncContractRecord(
-        backendConsignorId,
-        _record,
+      if (_lastPersistedRecordId != null &&
+          _lastPersistedRecordId != _record.id) {
+        await appState.deleteContract(_lastPersistedRecordId!);
+      }
+
+      await _persistLocal();
+      _lastPersistedRecordId = _record.id;
+
+      final syncedRecord = await appState.syncContract(
+        widget.consignorId,
+        auctionId,
         syncEvent: AbacusContractSyncEvent.contractFinalized,
       );
 
+      final error = syncedRecord?.syncErrorMessage;
+      if (syncedRecord == null || (error != null && error.trim().isNotEmpty)) {
+        throw Exception(
+            error ?? appState.lastMessage ?? 'Contract sync failed.');
+      }
+
       setState(() {
-        _record = syncedRecord.copyWith(
-          consignorId: widget.consignorId,
-          syncStatus: RecordSyncStatus.synced,
-        );
+        _record = syncedRecord.copyWith(syncStatus: RecordSyncStatus.synced);
       });
 
       if (_lastPersistedRecordId != null &&
@@ -329,50 +332,51 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   String _pdfFileNameForCurrentStatus() {
-    final prefix = _record.syncStatus == RecordSyncStatus.finalized
-        ? ''
-        : _unsignedContractPrefix;
-    final auctionPart = _auctionCodePart(_record.auctionDisplayNames);
-    final auctionSuffix = auctionPart.isEmpty ? '' : ' ($auctionPart)';
-    return '$prefix'
-        'Consignor-Agreement$auctionSuffix ${_todayDatePart()}.pdf';
+    return '${_contractNumber()}.pdf';
   }
 
-  String _auctionCodePart(List<String> auctionNames) {
-    final codes = auctionNames
-        .map(_auctionCode)
-        .where((value) => value.trim().isNotEmpty)
-        .toList(growable: false);
-    return codes.join(' & ');
+  String _contractNumber() {
+    final existing = _existingContractNumber(_record);
+    if (existing != null) return existing;
+
+    final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
+    final next = _nextContractSequenceForYear(year);
+    return 'COC-$year-$next';
   }
 
-  String _auctionCode(String value) {
-    final normalized = value.trim();
-    if (normalized.isEmpty) return '';
-
-    final webMatch = RegExp(
-      r'\bWeb\s+(?:Auction|Auktion)\s*(\d+)\b',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    if (webMatch != null) return 'WA${webMatch.group(1)}';
-
-    final auctionMatch = RegExp(
-      r'\b(?:Auction|Auktion)\s*(\d+)\b',
-      caseSensitive: false,
-    ).firstMatch(normalized);
-    if (auctionMatch != null) return 'A${auctionMatch.group(1)}';
-
-    return normalized
-        .replaceAll(RegExp(r'[\\/:*?"<>|]+'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+  String? _existingContractNumber(ContractRecord record) {
+    final candidates = <String>[
+      record.pdfName,
+      record.id,
+      ...record.uploads.map((upload) => upload.fileName),
+    ];
+    final pattern = RegExp(r'\bCOC-\d{2}-\d+\b', caseSensitive: false);
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(0)!.toUpperCase();
+    }
+    return null;
   }
 
-  String _todayDatePart() {
-    final now = DateTime.now();
-    return '${now.year.toString().padLeft(4, '0')}-'
-        '${now.month.toString().padLeft(2, '0')}-'
-        '${now.day.toString().padLeft(2, '0')}';
+  int _nextContractSequenceForYear(String year) {
+    final pattern = RegExp('\\bCOC-$year-(\\d+)\\b', caseSensitive: false);
+    var maxSequence = 0;
+    for (final contract in context.read<AppState>().contracts) {
+      final candidates = <String>[
+        contract.pdfName,
+        contract.id,
+        ...contract.uploads.map((upload) => upload.fileName),
+      ];
+      for (final candidate in candidates) {
+        final match = pattern.firstMatch(candidate);
+        if (match == null) continue;
+        final value = int.tryParse(match.group(1) ?? '');
+        if (value != null && value > maxSequence) {
+          maxSequence = value;
+        }
+      }
+    }
+    return maxSequence + 1;
   }
 
   Future<void> _generatePdf() async {
@@ -927,7 +931,10 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                       selected: _selectedAuctionOptions(auctions),
                       validator: MultiAuctionSelectField.requireSelection,
                       onChanged: _updateAuctions,
-                      enabled: widget.auctionId == null,
+                      enabled: widget.auctionId == null && state.hasValidToken,
+                      disabledMessage: state.hasValidToken
+                          ? null
+                          : 'Microsoft login is required for auction lookup.',
                       hintText: 'Search auctions',
                     ),
                   ),

@@ -22,8 +22,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'ConsignmentContract');
-      expect(json['label'], 'Consignment_Contract_12345');
-      expect(json['documentName'], 'Consignment_Contract_12345.pdf');
+      expect(json['label'], '12345');
+      expect(json['documentName'], '12345.pdf');
       expect(json['verifyReceipt'], isTrue);
       expect((json['storage'] as Map)['lookupText'], 'Vertrag Einlieferung');
     });
@@ -44,8 +44,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'Passport');
-      expect(json['label'], 'Passport_120149_20260609');
-      expect(json['documentName'], 'Passport_120149_20260609.jpg');
+      expect(json['label'], 'passport');
+      expect(json['documentName'], 'passport.jpg');
       expect((json['storage'] as Map)['storageId'],
           '39c1d257-327c-bb79-0408-9be8b5a1dcca');
     });

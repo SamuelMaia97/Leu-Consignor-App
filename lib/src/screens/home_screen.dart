@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/sync_status.dart';
@@ -259,6 +260,7 @@ class HomeScreen extends StatelessWidget {
                     icon: const Icon(Icons.sync_rounded),
                     label: const Text('Run sync'),
                   ),
+                  _LastSyncLabel(lastSync: state.lastSyncCompletedLocal),
                 ],
               ),
               const SizedBox(height: 24),
@@ -584,6 +586,35 @@ class HomeScreen extends StatelessWidget {
       case RecordSyncStatus.syncFailed:
         return 'failed';
     }
+  }
+}
+
+class _LastSyncLabel extends StatelessWidget {
+  const _LastSyncLabel({required this.lastSync});
+
+  final DateTime? lastSync;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = lastSync == null
+        ? 'Last sync: never'
+        : 'Last sync: ${DateFormat('dd MMM yyyy HH:mm').format(lastSync!)}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+      ),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: const Color(0xFFEAF0F7),
+              fontWeight: FontWeight.w700,
+            ),
+      ),
+    );
   }
 }
 

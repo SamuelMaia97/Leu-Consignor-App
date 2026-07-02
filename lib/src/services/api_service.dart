@@ -778,8 +778,16 @@ class ApiService {
       }
     }
 
+    final explicitContractId =
+        (json['contractId'] ?? json['ContractId'])?.toString().trim();
+    final fallbackContractId = pdfName.trim().isNotEmpty
+        ? pdfName.replaceAll(RegExp(r'\.[^.]+$'), '')
+        : '${_toInt(json['auctionId'] ?? json['AuctionId']) ?? 0}';
+
     final contract = ContractRecord(
-      id: '${consignorId}_${_toInt(json['auctionId'] ?? json['AuctionId']) ?? 0}',
+      id: explicitContractId != null && explicitContractId.isNotEmpty
+          ? explicitContractId
+          : '${consignorId}_$fallbackContractId',
       consignorId: consignorId.toString(),
       auctionId: _toInt(json['auctionId'] ?? json['AuctionId']),
       auctionDisplayName:

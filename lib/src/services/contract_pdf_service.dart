@@ -85,7 +85,7 @@ class ContractPdfService {
 class ContractPdfPayloadBuilder {
   const ContractPdfPayloadBuilder();
 
-  static final DateFormat _displayDateFormat = DateFormat('dd.MM.yyyy');
+  static final DateFormat _displayDateFormat = DateFormat('dd-MM-yyyy');
 
   Future<Map<String, dynamic>> build({
     required Consignor consignor,
