@@ -53,6 +53,7 @@ class AppState extends ChangeNotifier {
   String syncProgressMessage = '';
   String? lastMessage;
   String? activeUsername;
+  List<RemoteReportFieldIssue> lastSyncMissingReportFields = const [];
 
   bool get isAdminUser => activeUsername == 'admin';
   DateTime? get lastSyncCompletedLocal =>
@@ -497,6 +498,8 @@ class AppState extends ChangeNotifier {
       final updated = syncedFromServer ?? initial;
       updated.systemReferenceConsignor = reference.systemReferenceConsignor;
       updated.systemReferenceCustomer = reference.systemReferenceCustomer;
+      updated.abacusSubjectId =
+          reference.abacusSubjectId ?? updated.abacusSubjectId;
       updated.id = nextId;
       updated.markSynced(remoteModifiedUtc: updated.lastModifiedUtc);
 
@@ -567,6 +570,12 @@ class AppState extends ChangeNotifier {
       final api = ApiService(settings, token);
       var effectiveConsignorId = contractToSync.consignorId;
       var localConsignor = consignorById(effectiveConsignorId);
+      var abacusSubjectId = localConsignor?.abacusSubjectId;
+      if ((abacusSubjectId ?? 0) <= 0 &&
+          localConsignor != null &&
+          localConsignor.systemReferenceConsignor <= 0) {
+        abacusSubjectId = localConsignor.existingCustomerId;
+      }
       var backendConsignorId = localConsignor?.systemReferenceConsignor ??
           int.tryParse(effectiveConsignorId);
 
@@ -587,6 +596,7 @@ class AppState extends ChangeNotifier {
           backendConsignorId = localConsignor.systemReferenceConsignor > 0
               ? localConsignor.systemReferenceConsignor
               : int.tryParse(localConsignor.id);
+          abacusSubjectId = localConsignor.abacusSubjectId ?? abacusSubjectId;
           contractToSync = _contractRepo.getByConsignorAndAuction(
                 effectiveConsignorId,
                 auctionId,
@@ -614,6 +624,9 @@ class AppState extends ChangeNotifier {
       final synced = await api.syncContractRecord(
         backendConsignorId,
         contractToSync,
+        abacusSubjectId: (abacusSubjectId != null && abacusSubjectId > 0)
+            ? abacusSubjectId
+            : null,
         syncEvent: syncEvent,
       );
       final updated = synced.copyWith(
@@ -653,6 +666,7 @@ class AppState extends ChangeNotifier {
 
     syncingNow = true;
     lastMessage = null;
+    lastSyncMissingReportFields = const [];
     _setSyncProgress(0, 0, 'Starting sync…');
 
     try {
@@ -669,6 +683,7 @@ class AppState extends ChangeNotifier {
           _setSyncProgress(current, total, message);
         },
       );
+      lastSyncMissingReportFields = remoteSnapshot.missingReportFields;
 
       var workCurrent = remoteSnapshot.consignors.length;
       var workTotal = remoteSnapshot.consignors.length + 3;
@@ -726,6 +741,8 @@ class AppState extends ChangeNotifier {
             updated.systemReferenceConsignor =
                 reference.systemReferenceConsignor;
             updated.systemReferenceCustomer = reference.systemReferenceCustomer;
+            updated.abacusSubjectId =
+                reference.abacusSubjectId ?? updated.abacusSubjectId;
             updated.id = nextId;
             updated.markSynced(remoteModifiedUtc: updated.lastModifiedUtc);
 
@@ -802,12 +819,19 @@ class AppState extends ChangeNotifier {
       _setSyncProgress(
         workCurrent,
         workTotal,
-        'Sync finished.',
+        lastSyncMissingReportFields.isEmpty || !isAdminUser
+            ? 'Sync finished.'
+            : 'Sync finished with ${lastSyncMissingReportFields.length} Abacus report row${lastSyncMissingReportFields.length == 1 ? '' : 's'} missing fields.',
       );
+
+      final missingFieldsMessage = lastSyncMissingReportFields.isEmpty ||
+              !isAdminUser
+          ? ''
+          : ' ${lastSyncMissingReportFields.length} Abacus report row${lastSyncMissingReportFields.length == 1 ? '' : 's'} had missing fields. Open the sync report for the checklist.';
 
       lastMessage =
           'Sync completed. Fetched ${remoteSnapshot.consignors.length} updated consignor${remoteSnapshot.consignors.length == 1 ? '' : 's'}, '
-          'synced $uploadedConsignors pending consignor${uploadedConsignors == 1 ? '' : 's'} and $uploadedContracts contract${uploadedContracts == 1 ? '' : 's'}.';
+          'synced $uploadedConsignors pending consignor${uploadedConsignors == 1 ? '' : 's'} and $uploadedContracts contract${uploadedContracts == 1 ? '' : 's'}.$missingFieldsMessage';
     } catch (e) {
       final message = 'Sync failed: $e';
       lastMessage = message;

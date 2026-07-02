@@ -13,6 +13,7 @@ class Consignor {
     required this.id,
     this.systemReferenceConsignor = 0,
     this.systemReferenceCustomer = 0,
+    this.abacusSubjectId,
     this.existingCustomerId,
     this.existingCustomerLabel,
     bool isLegalEntity = false,
@@ -61,6 +62,7 @@ class Consignor {
   String id;
   int systemReferenceConsignor;
   int systemReferenceCustomer;
+  int? abacusSubjectId;
   int? existingCustomerId;
   String? existingCustomerLabel;
   ConsignorType consignorType;
@@ -170,6 +172,10 @@ class Consignor {
         ) ??
         0;
 
+    final abacusSubjectId = _toInt(
+      json['abacusSubjectId'] ?? json['AbacusSubjectId'],
+    );
+
     final hasRemoteReference = systemReferenceConsignor > 0;
 
     final rawPhoneNumber =
@@ -212,6 +218,7 @@ class Consignor {
           .toString(),
       systemReferenceConsignor: systemReferenceConsignor,
       systemReferenceCustomer: systemReferenceCustomer,
+      abacusSubjectId: abacusSubjectId,
       existingCustomerId: _toInt(
         json['existingCustomerId'] ?? json['ExistingCustomerId'],
       ),
@@ -322,6 +329,7 @@ class Consignor {
         'id': id,
         'systemReferenceConsignor': systemReferenceConsignor,
         'systemReferenceCustomer': systemReferenceCustomer,
+        'abacusSubjectId': abacusSubjectId,
         'existingCustomerId': existingCustomerId,
         'existingCustomerLabel': existingCustomerLabel,
         'isLegalEntity': isLegalEntity,

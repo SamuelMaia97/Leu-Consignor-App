@@ -22,8 +22,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'ConsignmentContract');
-      expect(json['label'], '12345');
-      expect(json['documentName'], '12345.pdf');
+      expect(json['label'], 'Consignment_Contract_12345');
+      expect(json['documentName'], 'Consignment_Contract_12345.pdf');
       expect(json['verifyReceipt'], isTrue);
       expect((json['storage'] as Map)['lookupText'], 'Vertrag Einlieferung');
     });
@@ -44,10 +44,33 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'Passport');
-      expect(json['label'], 'passport');
-      expect(json['documentName'], 'passport.jpg');
+      expect(json['label'], 'Passport_120149_20260609');
+      expect(json['documentName'], 'Passport_120149_20260609.jpg');
       expect((json['storage'] as Map)['storageId'],
           '39c1d257-327c-bb79-0408-9be8b5a1dcca');
+    });
+
+    test('targets representative passport uploads to the Passport dossier', () {
+      final metadata = AbacusFileSyncMetadata.forUpload(
+        upload: ContractUpload(
+          localId: 'representative-passport',
+          fileName: 'representative.jpg',
+          fileType: UploadType.passport,
+          kind: 'RepresentativeId',
+        ),
+        consignorSubjectId: 120149,
+        contractNumber: '12345',
+        eventUtc: DateTime.utc(2026, 6, 9),
+        trigger: AbacusContractSyncEvent.manualSync,
+      );
+
+      final json = metadata!.toJson();
+
+      expect(json['documentKind'], 'RepresentativePassport');
+      expect(json['label'], 'Representative_Passport_120149_20260609');
+      expect(
+          json['documentName'], 'Representative_Passport_120149_20260609.jpg');
+      expect((json['storage'] as Map)['lookupText'], 'Passport');
     });
 
     test('targets Desko validation reports to the Passport dossier', () {
@@ -84,15 +107,15 @@ void main() {
         ),
         consignorSubjectId: 120149,
         contractNumber: '12345',
-        eventUtc: DateTime.utc(2026, 6, 9, 14, 35),
+        eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
 
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'CoinImage');
-      expect(json['label'], 'Consignment_1_202606091435');
-      expect(json['documentName'], 'Consignment_1_202606091435.png');
+      expect(json['label'], 'Coin_temp_coin_1_20260609');
+      expect(json['documentName'], 'Coin_temp_coin_1_20260609.png');
       expect(json['contentType'], 'image/png');
       expect((json['storage'] as Map)['abbreviation'], 'EINL');
     });

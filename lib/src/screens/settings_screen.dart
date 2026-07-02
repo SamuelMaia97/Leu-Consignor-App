@@ -8,6 +8,7 @@ import '../widgets/app_shell.dart';
 import '../widgets/page_header.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_badge.dart';
+import '../widgets/sync_report_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -166,7 +167,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 actions: [
                   if (isAdmin)
                     ElevatedButton.icon(
-                      onPressed: state.syncingNow ? null : () => _saveSettings(),
+                      onPressed:
+                          state.syncingNow ? null : () => _saveSettings(),
                       icon: const Icon(Icons.save_outlined),
                       label: const Text('Save settings'),
                     ),
@@ -408,7 +410,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                         );
                                         await appState.syncNow();
 
-                                        if (!mounted) return;
+                                        if (!context.mounted) return;
+
+                                        if (appState.isAdminUser &&
+                                            appState.lastSyncMissingReportFields
+                                                .isNotEmpty) {
+                                          await showSyncReportDialog(
+                                            context,
+                                            appState
+                                                .lastSyncMissingReportFields,
+                                          );
+                                          if (!context.mounted) return;
+                                        }
 
                                         messenger.showSnackBar(
                                           SnackBar(
@@ -448,8 +461,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           children: [
                             _StatusLine(
                               label: 'Stored token',
-                              value:
-                                  state.hasStoredToken ? 'Available' : 'Missing',
+                              value: state.hasStoredToken
+                                  ? 'Available'
+                                  : 'Missing',
                             ),
                             const Divider(height: 24),
                             _StatusLine(
@@ -467,6 +481,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               value: state.lastMessage ??
                                   'No recent status message',
                             ),
+                            if (isAdmin &&
+                                state.lastSyncMissingReportFields
+                                    .isNotEmpty) ...[
+                              const Divider(height: 24),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => showSyncReportDialog(
+                                    context,
+                                    state.lastSyncMissingReportFields,
+                                  ),
+                                  icon: const Icon(Icons.fact_check_outlined),
+                                  label: const Text('View sync report'),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -513,9 +543,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         state.lastMessage!.toLowerCase().contains('failed')
                             ? Icons.error_outline_rounded
                             : Icons.check_circle_outline_rounded,
-                        color: state.lastMessage!.toLowerCase().contains('failed')
-                            ? context.palette.error
-                            : context.palette.success,
+                        color:
+                            state.lastMessage!.toLowerCase().contains('failed')
+                                ? context.palette.error
+                                : context.palette.success,
                       ),
                       const SizedBox(width: 12),
                       Expanded(

@@ -121,7 +121,6 @@ class AbacusFileSyncMetadata {
     final fileName = _effectiveFileName(upload);
     final lowerFileName = fileName.toLowerCase();
     final date = _compactDate(eventUtc);
-    final timestamp = _compactTimestamp(eventUtc);
     final normalizedConsignor = _safeToken(consignorSubjectId.toString());
     final extension = _extension(fileName);
 
@@ -149,22 +148,24 @@ class AbacusFileSyncMetadata {
                 ? 'Representative_Id_Validation_Report_${normalizedConsignor}_$date'
                 : 'Id_Validation_Report_${normalizedConsignor}_$date'
             : representative
-                ? 'representative-passport${_passportSideSuffix(fileName)}'
-                : 'passport${_passportSideSuffix(fileName)}';
+                ? 'Representative_Passport_${normalizedConsignor}_$date'
+                : 'Passport_${normalizedConsignor}_$date';
         break;
 
       case UploadType.product:
         documentKind = AbacusDocumentKind.coinImage;
         storage = AbacusStorageReference.consignmentPhotos;
-        final increment = _safeToken(_imageIncrement(upload));
-        label = 'Consignment_${increment}_$timestamp';
+        final lotOrTempId = _safeToken(
+          (upload.fileId ?? upload.auctionId)?.toString() ?? upload.localId,
+        );
+        label = 'Coin_${lotOrTempId}_$date';
         break;
 
       case UploadType.agreement:
         if (!lowerFileName.endsWith('.pdf')) return null;
         documentKind = AbacusDocumentKind.consignmentContract;
         storage = AbacusStorageReference.consignmentContract;
-        label = _safeToken(contractNumber);
+        label = 'Consignment_Contract_${_safeToken(contractNumber)}';
         break;
     }
 
@@ -225,40 +226,6 @@ class AbacusFileSyncMetadata {
       utc.month.toString().padLeft(2, '0'),
       utc.day.toString().padLeft(2, '0'),
     ].join();
-  }
-
-  static String _compactTimestamp(DateTime value) {
-    final utc = value.toUtc();
-    return [
-      utc.year.toString().padLeft(4, '0'),
-      utc.month.toString().padLeft(2, '0'),
-      utc.day.toString().padLeft(2, '0'),
-      utc.hour.toString().padLeft(2, '0'),
-      utc.minute.toString().padLeft(2, '0'),
-    ].join();
-  }
-
-  static String _passportSideSuffix(String fileName) {
-    final normalized = fileName.toLowerCase();
-    if (RegExp(r'(^|[_\-\s])(1|front|obverse)([_\-\s.]|$)')
-        .hasMatch(normalized)) {
-      return '-1';
-    }
-    if (RegExp(r'(^|[_\-\s])(2|back|reverse)([_\-\s.]|$)')
-        .hasMatch(normalized)) {
-      return '-2';
-    }
-    return '';
-  }
-
-  static String _imageIncrement(ContractUpload upload) {
-    final explicit = upload.fileId ?? upload.auctionId;
-    if (explicit != null && explicit > 0) return explicit.toString();
-
-    final digitMatch = RegExp(r'(\d+)(?!.*\d)').firstMatch(upload.localId);
-    if (digitMatch != null) return digitMatch.group(1)!;
-
-    return upload.localId;
   }
 
   static String _safeToken(String value) {

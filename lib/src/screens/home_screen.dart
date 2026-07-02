@@ -11,6 +11,7 @@ import '../widgets/app_shell.dart';
 import '../widgets/page_header.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_badge.dart';
+import '../widgets/sync_report_dialog.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -251,6 +252,14 @@ class HomeScreen extends StatelessWidget {
                   ElevatedButton.icon(
                     onPressed: () async {
                       await state.syncNow();
+                      if (context.mounted &&
+                          state.isAdminUser &&
+                          state.lastSyncMissingReportFields.isNotEmpty) {
+                        await showSyncReportDialog(
+                          context,
+                          state.lastSyncMissingReportFields,
+                        );
+                      }
                       if (context.mounted && state.lastMessage != null) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text(state.lastMessage!)),
