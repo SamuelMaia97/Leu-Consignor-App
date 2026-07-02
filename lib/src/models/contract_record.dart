@@ -1,3 +1,4 @@
+import 'consignor.dart';
 import 'sync_status.dart';
 
 enum UploadType { passport, agreement, product }
@@ -230,6 +231,7 @@ class ContractRecord {
     DateTime? lastModifiedUtc,
     this.pdfPath = '',
     List<ContractUpload>? uploads,
+    this.authorizedRepresentative,
     this.syncStatus = RecordSyncStatus.draft,
     this.syncErrorMessage,
     this.lastSyncedUtc,
@@ -259,6 +261,7 @@ class ContractRecord {
   DateTime lastModifiedUtc;
   String pdfPath;
   List<ContractUpload> uploads;
+  Consignor? authorizedRepresentative;
   RecordSyncStatus syncStatus;
   String? syncErrorMessage;
   DateTime? lastSyncedUtc;
@@ -281,6 +284,15 @@ class ContractRecord {
       syncStatus == RecordSyncStatus.finalized;
 
   bool get needsSync => uploads.any((e) => e.needsSync) || syncStatus.needsSync;
+
+  bool get isEditableDraft =>
+      syncStatus == RecordSyncStatus.draft && !hasRemoteReference;
+
+  bool get shouldUploadDuringWorkspaceSync =>
+      auctionId != null &&
+      hasLocalChanges &&
+      (syncStatus == RecordSyncStatus.pendingSync ||
+          syncStatus == RecordSyncStatus.syncFailed);
 
   List<ContractAttachment> get attachments => uploads
       .where((e) => !e.isDeleted && e.path.trim().isNotEmpty)
@@ -420,6 +432,10 @@ class ContractRecord {
     final systemReferenceContract = _toInt(json['systemReferenceContract'] ??
             json['SystemReferenceContract']) ??
         0;
+    final authorizedRepresentativeJson = _firstMap(
+      json,
+      const ['authorizedRepresentative', 'AuthorizedRepresentative'],
+    );
     final lastModifiedUtc = DateTime.tryParse(
       (json['lastModifiedUtc'] ?? json['LastModifiedUtc'])?.toString() ?? '',
     )?.toUtc();
@@ -457,6 +473,9 @@ class ContractRecord {
       lastModifiedUtc: lastModifiedUtc ?? DateTime.now().toUtc(),
       pdfPath: (json['pdfPath'] ?? json['PdfPath']) as String? ?? '',
       uploads: deduplicatedUploads,
+      authorizedRepresentative: authorizedRepresentativeJson == null
+          ? null
+          : Consignor.fromJson(authorizedRepresentativeJson),
       syncStatus: RecordSyncStatusX.fromAny(
         json['syncStatus'] ?? json['SyncStatus'],
         hasRemoteReference:
@@ -494,6 +513,7 @@ class ContractRecord {
         'lastModifiedUtc': lastModifiedUtc.toUtc().toIso8601String(),
         'pdfPath': pdfPath,
         'uploads': uploads.map((e) => e.toJson()).toList(),
+        'authorizedRepresentative': authorizedRepresentative?.toJson(),
         'syncStatus': syncStatus.name,
         'syncErrorMessage': syncErrorMessage,
         'lastSyncedUtc': lastSyncedUtc?.toUtc().toIso8601String(),
@@ -507,6 +527,9 @@ class ContractRecord {
   void markLocalChange([String? editorUsername]) {
     _markEdited(editorUsername);
     syncErrorMessage = null;
+    if (syncStatus == RecordSyncStatus.pendingSync) {
+      return;
+    }
     syncStatus = hasRemoteReference
         ? RecordSyncStatus.pendingSync
         : RecordSyncStatus.draft;
@@ -544,6 +567,7 @@ class ContractRecord {
     DateTime? signedAt,
     DateTime? lastModifiedUtc,
     List<ContractUpload>? uploads,
+    Consignor? authorizedRepresentative,
     RecordSyncStatus? syncStatus,
     String? syncErrorMessage,
     DateTime? lastSyncedUtc,
@@ -572,6 +596,8 @@ class ContractRecord {
       lastModifiedUtc: lastModifiedUtc ?? this.lastModifiedUtc,
       pdfPath: pdfPath ?? this.pdfPath,
       uploads: uploads ?? this.uploads,
+      authorizedRepresentative:
+          authorizedRepresentative ?? this.authorizedRepresentative,
       syncStatus: syncStatus ?? this.syncStatus,
       syncErrorMessage: syncErrorMessage ?? this.syncErrorMessage,
       lastSyncedUtc: lastSyncedUtc ?? this.lastSyncedUtc,
@@ -633,5 +659,18 @@ class ContractRecord {
     if (value == null) return null;
     if (value is int) return value;
     return int.tryParse(value.toString());
+  }
+
+  static Map<String, dynamic>? _firstMap(
+    Map<String, dynamic> json,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value is Map) {
+        return value.cast<String, dynamic>();
+      }
+    }
+    return null;
   }
 }

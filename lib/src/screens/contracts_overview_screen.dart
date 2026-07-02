@@ -3,13 +3,16 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../models/consignor.dart';
 import '../models/contract_record.dart';
 import '../models/sync_status.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/workflow_status.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/page_header.dart';
+import '../widgets/passport_status_badge.dart';
 import '../widgets/searchable_select_field.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_badge.dart';
@@ -119,7 +122,7 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
   }
 
   void _openContract(ContractRecord contract) {
-    if (contract.syncStatus == RecordSyncStatus.draft) {
+    if (contract.isEditableDraft) {
       context.go(
         '/contracts/${contract.consignorId}/record/${contract.id}/resume',
       );
@@ -183,6 +186,9 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
             quickFilter: _quickFilter,
             selectedAuctionId: _selectedAuctionId,
           );
+          final conflictNumbers = WorkflowStatus.findContractConflicts(
+            state.contracts,
+          ).map((conflict) => conflict.contractNumber).toSet();
 
           return CustomScrollView(
             slivers: [
@@ -266,7 +272,7 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                 child: SectionCard(
                   title: 'Search and manage',
                   subtitle:
-                      'Search by auction, contract ID, or file name, then use the quick status filters below.',
+                      'Search by contract number, auction, representative, file name, or sync status.',
                   icon: Icons.manage_search_outlined,
                   child: LayoutBuilder(
                     builder: (context, constraints) {
@@ -287,7 +293,7 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                                     prefixIcon: Icon(Icons.search_rounded),
                                     labelText: 'Search contracts',
                                     hintText:
-                                        'Try an auction, contract ID, or file name',
+                                        'Try COC-26-1, representative, auction, or file name',
                                   ),
                                 ),
                               ),
@@ -416,6 +422,8 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                 SliverList(
                   delegate: SliverChildBuilderDelegate((context, index) {
                     final contract = summary.visibleItems[index];
+                    final contractNumber =
+                        WorkflowStatus.extractContractNumber(contract);
                     final isSyncing = contract.auctionId != null &&
                         state.isSyncingContract(
                           contract.consignorId,
@@ -429,12 +437,14 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                       ),
                       child: _ContractOverviewRow(
                         contract: contract,
+                        consignor: consignor,
+                        hasConflict: contractNumber != null &&
+                            conflictNumbers.contains(
+                              contractNumber.toUpperCase(),
+                            ),
                         isSyncing: isSyncing,
                         onOpen: () => _openContract(contract),
-                        onSync: contract.auctionId != null &&
-                                _ContractsOverviewSummary._effectiveStatus(
-                                        contract)
-                                    .needsSync
+                        onSync: contract.shouldUploadDuringWorkspaceSync
                             ? () => _syncContract(contract)
                             : null,
                       ),
@@ -645,6 +655,11 @@ class _ContractsOverviewSummary {
       return RecordSyncStatus.syncFailed;
     }
 
+    if (contract.syncStatus == RecordSyncStatus.draft &&
+        !contract.hasRemoteReference) {
+      return RecordSyncStatus.draft;
+    }
+
     if (contract.hasLocalChanges ||
         contract.syncStatus == RecordSyncStatus.pendingSync) {
       return RecordSyncStatus.pendingSync;
@@ -667,11 +682,16 @@ class _ContractsOverviewSummary {
         .where((upload) => !upload.isDeleted)
         .map((upload) => upload.fileName)
         .join(' ');
+    final contractNumber = WorkflowStatus.extractContractNumber(contract) ?? '';
+    final representativeName =
+        contract.authorizedRepresentative?.displayName.trim() ?? '';
 
     return [
       contract.id,
+      contractNumber,
       contract.auctionDisplayName,
       contract.auctionId?.toString() ?? '',
+      representativeName,
       fileNames,
       contract.syncErrorMessage ?? '',
       _statusSearchTerms(_effectiveStatus(contract)),
@@ -697,12 +717,16 @@ class _ContractsOverviewSummary {
 class _ContractOverviewRow extends StatelessWidget {
   const _ContractOverviewRow({
     required this.contract,
+    required this.consignor,
+    required this.hasConflict,
     required this.isSyncing,
     required this.onOpen,
     this.onSync,
   });
 
   final ContractRecord contract;
+  final Consignor consignor;
+  final bool hasConflict;
   final bool isSyncing;
   final VoidCallback onOpen;
   final Future<void> Function()? onSync;
@@ -720,6 +744,16 @@ class _ContractOverviewRow extends StatelessWidget {
       'yyyy-MM-dd HH:mm',
     ).format(contract.lastModifiedUtc.toLocal());
     final status = _ContractsOverviewSummary._effectiveStatus(contract);
+    final canEdit = contract.isEditableDraft;
+    final passportStatus = WorkflowStatus.passportStatus(
+      validUntil: consignor.passportValidUntil,
+      uploads: contract.uploads.where(
+        (upload) =>
+            !upload.isDeleted &&
+            upload.fileType == UploadType.passport &&
+            !upload.kind.toLowerCase().contains('representative'),
+      ),
+    );
 
     return Container(
       decoration: BoxDecoration(
@@ -773,6 +807,14 @@ class _ContractOverviewRow extends StatelessWidget {
                         tone: _statusTone(status),
                         icon: _statusIcon(status),
                       ),
+                      PassportStatusBadge(
+                          status: passportStatus, compact: true),
+                      if (hasConflict)
+                        StatusBadge(
+                          label: 'Duplicate number',
+                          tone: StatusBadgeTone.error,
+                          icon: Icons.content_copy_outlined,
+                        ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -813,9 +855,11 @@ class _ContractOverviewRow extends StatelessWidget {
                     label: Text(isSyncing ? 'Syncing…' : 'Sync'),
                   ),
                 IconButton(
-                  tooltip: 'Open contract',
+                  tooltip: canEdit ? 'Edit draft' : 'View contract',
                   onPressed: onOpen,
-                  icon: const Icon(Icons.edit_outlined),
+                  icon: Icon(
+                    canEdit ? Icons.edit_outlined : Icons.visibility_outlined,
+                  ),
                 ),
               ],
             ),

@@ -213,8 +213,9 @@ class _AppShellState extends State<AppShell> {
       0 => '/',
       1 => '/consignors',
       2 => '/contracts',
-      3 => '/settings',
-      4 => '/users',
+      3 => '/sync-health',
+      4 => '/settings',
+      5 => '/users',
       _ => '/',
     };
 
@@ -232,8 +233,9 @@ class _AppShellState extends State<AppShell> {
   int _selectedIndex(String location) {
     if (location.startsWith('/consignors')) return 1;
     if (location.startsWith('/contracts')) return 2;
-    if (location.startsWith('/settings')) return 3;
-    if (location.startsWith('/users')) return 4;
+    if (location.startsWith('/sync-health')) return 3;
+    if (location.startsWith('/settings')) return 4;
+    if (location.startsWith('/users')) return 5;
     return 0;
   }
 }
@@ -509,19 +511,26 @@ class _Sidebar extends StatelessWidget {
         onTap: () => onSelect(2),
       ),
       _NavItem(
-        label: 'Settings',
-        icon: Icons.settings_outlined,
+        label: 'Sync health',
+        icon: Icons.monitor_heart_outlined,
         selected: selectedIndex == 3,
         collapsed: collapsed,
         onTap: () => onSelect(3),
+      ),
+      _NavItem(
+        label: 'Settings',
+        icon: Icons.settings_outlined,
+        selected: selectedIndex == 4,
+        collapsed: collapsed,
+        onTap: () => onSelect(4),
       ),
       if (state.isAdminUser)
         _NavItem(
           label: 'Users',
           icon: Icons.manage_accounts_outlined,
-          selected: selectedIndex == 4,
+          selected: selectedIndex == 5,
           collapsed: collapsed,
-          onTap: () => onSelect(4),
+          onTap: () => onSelect(5),
         ),
     ];
 

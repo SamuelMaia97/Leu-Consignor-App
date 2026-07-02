@@ -11,6 +11,7 @@ import '../widgets/app_shell.dart';
 import '../widgets/page_header.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_badge.dart';
+import '../widgets/sync_preview_dialog.dart';
 import '../widgets/sync_report_dialog.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -250,7 +251,18 @@ class HomeScreen extends StatelessWidget {
                     label: const Text('Create contract'),
                   ),
                   ElevatedButton.icon(
+                    onPressed: () => context.go('/sync-health'),
+                    icon: const Icon(Icons.monitor_heart_outlined),
+                    label: const Text('Sync health'),
+                  ),
+                  ElevatedButton.icon(
                     onPressed: () async {
+                      final confirmed = await showSyncPreviewDialog(
+                        context: context,
+                        consignors: state.consignors,
+                        contracts: state.contracts,
+                      );
+                      if (!context.mounted || !confirmed) return;
                       await state.syncNow();
                       if (context.mounted &&
                           state.isAdminUser &&

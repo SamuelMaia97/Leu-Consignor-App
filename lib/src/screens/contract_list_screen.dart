@@ -8,9 +8,11 @@ import '../models/contract_record.dart';
 import '../models/sync_status.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/workflow_status.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/page_header.dart';
+import '../widgets/passport_status_badge.dart';
 import '../widgets/searchable_select_field.dart';
 import '../widgets/section_card.dart';
 import '../widgets/status_badge.dart';
@@ -117,7 +119,7 @@ class _ContractListScreenState extends State<ContractListScreen> {
   }
 
   void _openContract(ContractRecord contract) {
-    if (contract.syncStatus == RecordSyncStatus.draft) {
+    if (contract.isEditableDraft) {
       context.go(
         '/contracts/${contract.consignorId}/record/${contract.id}/resume',
       );
@@ -272,6 +274,9 @@ class _ContractListScreenState extends State<ContractListScreen> {
             selectedConsignorId: _selectedConsignorId,
             selectedAuctionId: _selectedAuctionId,
           );
+          final conflictNumbers = WorkflowStatus.findContractConflicts(
+            state.contracts,
+          ).map((conflict) => conflict.contractNumber).toSet();
 
           return CustomScrollView(
             slivers: [
@@ -353,7 +358,7 @@ class _ContractListScreenState extends State<ContractListScreen> {
                 child: SectionCard(
                   title: 'Search and manage',
                   subtitle:
-                      'Search by consignor, auction, contract ID, or file name, then use the status filters below.',
+                      'Search by contract number, Abacus ID, company, contact person, email, IBAN ending, representative, auction, or file name.',
                   icon: Icons.manage_search_outlined,
                   child: LayoutBuilder(
                     builder: (context, constraints) {
@@ -371,7 +376,7 @@ class _ContractListScreenState extends State<ContractListScreen> {
                               prefixIcon: Icon(Icons.search_rounded),
                               labelText: 'Search contracts',
                               hintText:
-                                  'Try a consignor, auction, contract ID, or file name',
+                                  'Try COC-26-1, Abacus ID, email, IBAN ending, or representative',
                             ),
                           ),
                           const SizedBox(height: 18),
@@ -517,6 +522,8 @@ class _ContractListScreenState extends State<ContractListScreen> {
                           contract.auctionId!,
                         );
                     final consignor = state.consignorById(contract.consignorId);
+                    final contractNumber =
+                        WorkflowStatus.extractContractNumber(contract);
 
                     return Padding(
                       padding: EdgeInsets.only(
@@ -526,11 +533,13 @@ class _ContractListScreenState extends State<ContractListScreen> {
                       child: _ContractListRow(
                         contract: contract,
                         consignor: consignor,
+                        hasConflict: contractNumber != null &&
+                            conflictNumbers.contains(
+                              contractNumber.toUpperCase(),
+                            ),
                         isSyncing: isSyncing,
                         onOpen: () => _openContract(contract),
-                        onSync: contract.auctionId != null &&
-                                _ContractListSummary._effectiveStatus(contract)
-                                    .needsSync
+                        onSync: contract.shouldUploadDuringWorkspaceSync
                             ? () => _syncContract(contract)
                             : null,
                         localAction: _localDraftActionFor(contract),
@@ -789,6 +798,11 @@ class _ContractListSummary {
       return RecordSyncStatus.syncFailed;
     }
 
+    if (contract.syncStatus == RecordSyncStatus.draft &&
+        !contract.hasRemoteReference) {
+      return RecordSyncStatus.draft;
+    }
+
     if (contract.hasLocalChanges ||
         contract.syncStatus == RecordSyncStatus.pendingSync) {
       return RecordSyncStatus.pendingSync;
@@ -812,9 +826,15 @@ class _ContractListSummary {
         .where((upload) => !upload.isDeleted)
         .map((upload) => upload.fileName)
         .join(' ');
+    final accountNumber = consignor?.bankingDetails.accountNumber ?? '';
+    final representativeName =
+        contract.authorizedRepresentative?.displayName.trim() ?? '';
+    final contactName = consignor?.consignorInfo.fullName.trim() ?? '';
+    final contractNumber = WorkflowStatus.extractContractNumber(contract) ?? '';
 
     return [
       contract.id,
+      contractNumber,
       contract.consignorId,
       contract.auctionDisplayName,
       contract.auctionId?.toString() ?? '',
@@ -824,10 +844,23 @@ class _ContractListSummary {
       consignor?.abacusSubjectId?.toString() ?? '',
       consignor?.existingCustomerId?.toString() ?? '',
       consignor?.displayName ?? '',
+      contactName,
+      consignor?.emailAddress ?? '',
+      consignor?.fullPhoneNumber ?? '',
+      accountNumber,
+      _accountEnding(accountNumber),
+      consignor?.bankingDetails.bankName ?? '',
+      representativeName,
       fileNames,
       contract.syncErrorMessage ?? '',
       _statusSearchTerms(_effectiveStatus(contract)),
     ].join(' ').toLowerCase();
+  }
+
+  static String _accountEnding(String accountNumber) {
+    final normalized = accountNumber.replaceAll(RegExp(r'\s+'), '');
+    if (normalized.length <= 4) return normalized;
+    return normalized.substring(normalized.length - 4);
   }
 
   static String _statusSearchTerms(RecordSyncStatus status) {
@@ -850,6 +883,7 @@ class _ContractListRow extends StatelessWidget {
   const _ContractListRow({
     required this.contract,
     required this.consignor,
+    required this.hasConflict,
     required this.isSyncing,
     required this.onOpen,
     this.onSync,
@@ -860,6 +894,7 @@ class _ContractListRow extends StatelessWidget {
 
   final ContractRecord contract;
   final Consignor? consignor;
+  final bool hasConflict;
   final bool isSyncing;
   final VoidCallback onOpen;
   final Future<void> Function()? onSync;
@@ -885,6 +920,16 @@ class _ContractListRow extends StatelessWidget {
       'yyyy-MM-dd HH:mm',
     ).format(contract.lastModifiedUtc.toLocal());
     final status = _ContractListSummary._effectiveStatus(contract);
+    final canEdit = contract.isEditableDraft;
+    final passportStatus = WorkflowStatus.passportStatus(
+      validUntil: consignor?.passportValidUntil,
+      uploads: contract.uploads.where(
+        (upload) =>
+            !upload.isDeleted &&
+            upload.fileType == UploadType.passport &&
+            !upload.kind.toLowerCase().contains('representative'),
+      ),
+    );
 
     return Container(
       decoration: BoxDecoration(
@@ -925,6 +970,14 @@ class _ContractListRow extends StatelessWidget {
                         tone: _statusTone(status),
                         icon: _statusIcon(status),
                       ),
+                      PassportStatusBadge(
+                          status: passportStatus, compact: true),
+                      if (hasConflict)
+                        StatusBadge(
+                          label: 'Duplicate number',
+                          tone: StatusBadgeTone.error,
+                          icon: Icons.content_copy_outlined,
+                        ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -960,8 +1013,12 @@ class _ContractListRow extends StatelessWidget {
                     children: [
                       OutlinedButton.icon(
                         onPressed: onOpen,
-                        icon: const Icon(Icons.edit_outlined),
-                        label: const Text('Open'),
+                        icon: Icon(
+                          canEdit
+                              ? Icons.edit_outlined
+                              : Icons.visibility_outlined,
+                        ),
+                        label: Text(canEdit ? 'Edit draft' : 'View'),
                       ),
                       if (onSync != null)
                         ElevatedButton.icon(

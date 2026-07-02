@@ -121,14 +121,12 @@ class PageHeader extends StatelessWidget {
                     child: Transform.translate(
                       offset: Offset(compact ? 32 : 46, 0),
                       child: Opacity(
-                        opacity: compact ? 0.11 : 0.12,
+                        opacity: compact ? 0.16 : 0.18,
                         child: Image.asset(
                           'assets/images/logo-without-text.png',
                           width: compact ? 150 : 220,
                           height: compact ? 150 : 220,
                           fit: BoxFit.contain,
-                          color: Colors.white,
-                          colorBlendMode: BlendMode.srcIn,
                           filterQuality: FilterQuality.high,
                         ),
                       ),
@@ -168,10 +166,70 @@ class _ActionWrap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: actions,
+    final palette = context.palette;
+    final baseTheme = Theme.of(context);
+    final elevatedStyle =
+        baseTheme.elevatedButtonTheme.style ?? const ButtonStyle();
+    final outlinedStyle =
+        baseTheme.outlinedButtonTheme.style ?? const ButtonStyle();
+
+    return Theme(
+      data: baseTheme.copyWith(
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: elevatedStyle.copyWith(
+            elevation: const WidgetStatePropertyAll(0),
+            backgroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return Colors.white.withValues(alpha: 0.12);
+              }
+              return Colors.white;
+            }),
+            foregroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return Colors.white.withValues(alpha: 0.48);
+              }
+              return palette.brandStrong;
+            }),
+            iconColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return Colors.white.withValues(alpha: 0.48);
+              }
+              return palette.brandStrong;
+            }),
+            overlayColor: WidgetStatePropertyAll(
+              palette.brandSoft.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: outlinedStyle.copyWith(
+            foregroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return Colors.white.withValues(alpha: 0.48);
+              }
+              return Colors.white;
+            }),
+            iconColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return Colors.white.withValues(alpha: 0.48);
+              }
+              return Colors.white;
+            }),
+            side: WidgetStateProperty.resolveWith((states) {
+              final alpha = states.contains(WidgetState.disabled) ? 0.24 : 0.9;
+              return BorderSide(color: Colors.white.withValues(alpha: alpha));
+            }),
+            overlayColor: WidgetStatePropertyAll(
+              Colors.white.withValues(alpha: 0.08),
+            ),
+          ),
+        ),
+      ),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        children: actions,
+      ),
     );
   }
 }
