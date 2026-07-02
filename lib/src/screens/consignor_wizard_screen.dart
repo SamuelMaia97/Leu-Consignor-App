@@ -28,11 +28,13 @@ import '../theme/app_theme.dart';
 import '../utils/file_preview.dart';
 import '../utils/banking_rules.dart';
 import '../utils/form_validators.dart';
+import '../utils/penta_scan_parser.dart';
 import '../utils/phone_number_parser.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/country_dropdown.dart';
 import '../widgets/multi_auction_select_field.dart';
 import '../widgets/searchable_select_field.dart';
+import '../widgets/status_badge.dart';
 import '../widgets/section_card.dart';
 
 const _ordererIdKind = 'NaturalPersonId';
@@ -547,7 +549,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _goToStep(_steps.indexOf(_WizardStep.consignorType));
   }
 
-  void _selectExisting(CustomerLookupResult result) {
+  Future<void> _selectExisting(CustomerLookupResult result) async {
     setState(() {
       _draft.applyPrefill(result.prefill);
       _draft.usesExistingCustomer = true;
@@ -557,12 +559,117 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _matches = const [];
     });
 
+    unawaited(_loadExistingPassportUploads(
+      result,
+      targetDraft: _draft,
+      representative: false,
+    ));
+
     if (_isContractOnly) {
       _goToStep(_steps.indexOf(_WizardStep.auctions));
       return;
     }
 
     _goToStep(_steps.indexOf(_WizardStep.consignorType));
+  }
+
+  Future<void> _loadExistingPassportUploads(
+    CustomerLookupResult result, {
+    required _WizardDraft targetDraft,
+    required bool representative,
+  }) async {
+    final state = context.read<AppState>();
+    if (!state.hasValidToken || result.customerId <= 0) {
+      return;
+    }
+
+    try {
+      final api = ApiService(state.settings, state.token);
+      final uploads = result.passportUploads.isNotEmpty
+          ? result.passportUploads
+          : await api.fetchPassportUploads(result.customerId);
+      if (!mounted || uploads.isEmpty) return;
+
+      setState(() {
+        _addDossierPassportUploads(
+          targetDraft,
+          uploads,
+          representative: representative,
+        );
+      });
+
+      for (final upload in uploads) {
+        try {
+          final hydrated = await api.fetchDossierDocumentContent(
+            consignorId: result.customerId,
+            upload: upload,
+          );
+          final path = hydrated?.path.trim() ?? '';
+          if (hydrated == null || path.isEmpty || !File(path).existsSync()) {
+            continue;
+          }
+
+          if (!mounted) return;
+
+          setState(() {
+            final kind = _passportKindForLookupUpload(
+              upload,
+              representative: representative,
+            );
+            for (var index = 0; index < targetDraft.uploads.length; index++) {
+              final existing = targetDraft.uploads[index];
+              if (existing.localId == upload.localId ||
+                  existing.fileName == upload.fileName) {
+                targetDraft.uploads[index] = hydrated.copyWith(kind: kind);
+              }
+            }
+          });
+        } catch (_) {
+          // Metadata is already attached; the user can retry later.
+        }
+      }
+    } catch (_) {
+      // The Pictures step already shows a visible "not found" message when no
+      // passport files are attached; regular sync can retry later.
+    }
+  }
+
+  void _addDossierPassportUploads(
+    _WizardDraft targetDraft,
+    List<ContractUpload> uploads, {
+    required bool representative,
+  }) {
+    for (final upload in uploads.where((item) => !item.isDeleted)) {
+      final kind = _passportKindForLookupUpload(
+        upload,
+        representative: representative,
+      );
+      final exists = targetDraft.uploads.any((item) =>
+          !item.isDeleted &&
+          item.fileType == UploadType.passport &&
+          item.kind == kind &&
+          (item.localId == upload.localId ||
+              item.fileName == upload.fileName ||
+              item.path == upload.path));
+      if (exists) continue;
+
+      targetDraft.uploads.add(upload.copyWith(kind: kind));
+    }
+  }
+
+  String _passportKindForLookupUpload(
+    ContractUpload upload, {
+    required bool representative,
+  }) {
+    final token = '${upload.kind} ${upload.fileName}'.toLowerCase();
+    final isValidationReport = token.contains('validation');
+    if (representative) {
+      return isValidationReport
+          ? _representativeIdValidationReportKind
+          : _representativeIdKind;
+    }
+
+    return isValidationReport ? _ordererIdValidationReportKind : _ordererIdKind;
   }
 
   void _queueSearch(String query) {
@@ -678,6 +785,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _generatedPdfPath = null;
       _generatedPdfIncludesSignatures = false;
     });
+
+    unawaited(_loadExistingPassportUploads(
+      result,
+      targetDraft: _representativeDraft,
+      representative: true,
+    ));
   }
 
   Future<String?> _tryAutoFillBankingFromIban(
@@ -974,6 +1087,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       UploadType.passport,
     );
 
+    final passportValidUntil = await _readPentaPassportValidUntil(
+      scanFiles.validationReportPaths,
+    );
+
     if (importedImagePaths.isEmpty && importedReportPaths.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -989,18 +1106,47 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         UploadType.passport,
         kind: _validationReportKindFor(kind),
       );
+      if (passportValidUntil != null) {
+        if (kind == _representativeIdKind) {
+          _representativeDraft.passportValidUntil = passportValidUntil;
+        } else {
+          _draft.passportValidUntil = passportValidUntil;
+        }
+      }
     });
 
     if (!mounted) return;
     final importedCount =
         importedImagePaths.length + importedReportPaths.length;
+    final validUntilText = passportValidUntil == null
+        ? ''
+        : ' Passport valid until ${_formatEuropeanDate(passportValidUntil)}.';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Penta scan imported: $importedCount file${importedCount == 1 ? '' : 's'}.',
+          'Penta scan imported: $importedCount file${importedCount == 1 ? '' : 's'}.$validUntilText',
         ),
       ),
     );
+  }
+
+  Future<DateTime?> _readPentaPassportValidUntil(
+    List<String> validationReportPaths,
+  ) async {
+    for (final path in validationReportPaths) {
+      if (!path.toLowerCase().endsWith('.json')) continue;
+
+      try {
+        final parsed = parsePentaPassportExpiryDate(
+          await File(path).readAsString(),
+        );
+        if (parsed != null) return parsed;
+      } on FileSystemException {
+        // Ignore unreadable sidecar reports and still import the scan images.
+      }
+    }
+
+    return null;
   }
 
   Future<Set<String>> _pentaOutputFolders(Directory outputRoot) async {
@@ -1378,7 +1524,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     ContractRecord record, {
     required bool includeSignatures,
   }) {
-    return '${_contractNumber(record)}.pdf';
+    final contractNumber = _baseContractNumber(_contractNumber(record));
+    return includeSignatures
+        ? '$contractNumber.pdf'
+        : 'PROV-$contractNumber.pdf';
   }
 
   List<AuctionOption> _chronologicalAuctions(List<AuctionOption> auctions) {
@@ -1400,12 +1549,21 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       ...record.uploads.map((upload) => upload.fileName),
       if (_activeContractId != null) _activeContractId!,
     ];
-    final pattern = RegExp(r'\bCOC-\d{2}-\d+\b', caseSensitive: false);
+    final pattern =
+        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
     for (final candidate in candidates) {
       final match = pattern.firstMatch(candidate);
       if (match != null) return match.group(0)!.toUpperCase();
     }
     return null;
+  }
+
+  String _baseContractNumber(String value) {
+    final trimmed = value.trim();
+    if (trimmed.toUpperCase().startsWith('PROV-COC-')) {
+      return trimmed.substring(5);
+    }
+    return trimmed;
   }
 
   int _nextContractSequenceForYear(String year) {
@@ -2013,7 +2171,19 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           ordererFiles: _draft.ordererIdFiles,
           representativeFiles: _draft.representativeIdFiles,
           productFiles: _draft.productFiles,
+          ordererPassportLookupAttempted: _draft.usesExistingCustomer,
+          representativePassportLookupAttempted:
+              _representativeDraft.usesExistingCustomer,
+          ordererPassportValidUntil: _draft.passportValidUntil,
+          representativePassportValidUntil:
+              _representativeDraft.passportValidUntil,
           showRepresentativePictures: _requiresRepresentativeDetails,
+          onOrdererPassportValidUntilChanged: (value) {
+            setState(() => _draft.passportValidUntil = value);
+          },
+          onRepresentativePassportValidUntilChanged: (value) {
+            setState(() => _representativeDraft.passportValidUntil = value);
+          },
           onCaptureWithPhone: () => _captureWithPhone(
             initialTargetId: _phoneTargetConsignorId,
           ),
@@ -2206,6 +2376,7 @@ class _WizardDraft {
   String bankAddressAdminRegion = '';
   String bankAddressCountryIso3 = '';
   String bankAddressCountryName = '';
+  DateTime? passportValidUntil;
   String beneficiaryFirstName = '';
   String beneficiaryLastName = '';
   String beneficiaryAddressStreet = '';
@@ -2362,6 +2533,7 @@ class _WizardDraft {
         'bankAddressAdminRegion': bankAddressAdminRegion,
         'bankAddressCountryIso3': bankAddressCountryIso3,
         'bankAddressCountryName': bankAddressCountryName,
+        'passportValidUntil': passportValidUntil?.toIso8601String(),
         'beneficiaryFirstName': beneficiaryFirstName,
         'beneficiaryLastName': beneficiaryLastName,
         'beneficiaryAddressStreet': beneficiaryAddressStreet,
@@ -2488,6 +2660,8 @@ class _WizardDraft {
     bankAddressAdminRegion = _toString(json['bankAddressAdminRegion']);
     bankAddressCountryIso3 = _toString(json['bankAddressCountryIso3']);
     bankAddressCountryName = _toString(json['bankAddressCountryName']);
+    passportValidUntil =
+        DateTime.tryParse(_toString(json['passportValidUntil']));
     beneficiaryFirstName = _toString(json['beneficiaryFirstName']);
     beneficiaryLastName = _toString(json['beneficiaryLastName']);
     beneficiaryAddressStreet = _toString(json['beneficiaryAddressStreet']);
@@ -2678,6 +2852,7 @@ class _WizardDraft {
     bankAddressAdminRegion = prefill.bankingDetails.bankAddress.adminRegion;
     bankAddressCountryIso3 = prefill.bankingDetails.bankAddress.countryIso3;
     bankAddressCountryName = prefill.bankingDetails.bankAddress.countryName;
+    passportValidUntil = prefill.passportValidUntil;
     beneficiaryFirstName = prefill.bankingDetails.beneficiary.firstName;
     beneficiaryLastName = prefill.bankingDetails.beneficiary.lastName;
     beneficiaryAddressStreet =
@@ -2816,6 +2991,7 @@ class _WizardDraft {
     consignor.systemReferenceCustomer = systemReferenceCustomer;
     consignor.abacusSubjectId = abacusSubjectId;
     consignor.paymentOption = paymentOption;
+    consignor.passportValidUntil = passportValidUntil;
     consignor.existingCustomerId = existingCustomerId;
     consignor.existingCustomerLabel = existingCustomerLabel;
     consignor.consignorType = consignorType;
@@ -3085,7 +3261,7 @@ class _ExistingCustomerStep extends StatelessWidget {
   final List<CustomerLookupResult> matches;
   final VoidCallback onFindExisting;
   final ValueChanged<String> onSearchChanged;
-  final ValueChanged<CustomerLookupResult> onExistingSelected;
+  final Future<void> Function(CustomerLookupResult) onExistingSelected;
   final VoidCallback onNewConsignor;
 
   @override
@@ -3129,7 +3305,7 @@ class _ExistingCustomerStep extends StatelessWidget {
                   ListTile(
                     title: Text(match.displayLabel),
                     subtitle: Text(match.searchSubtitle),
-                    onTap: () => onExistingSelected(match),
+                    onTap: () => unawaited(onExistingSelected(match)),
                   ),
               ],
             ),
@@ -3407,6 +3583,19 @@ class _ConsignorDetailsForm extends StatelessWidget {
     return phonePrefixes
         .where((item) => item.dialCode == draft.phonePrefix)
         .firstOrNull;
+  }
+
+  void _selectBankCountryFromIban(List<Country> countries, String value) {
+    final normalized = value.replaceAll(RegExp(r'\s+'), '').toUpperCase();
+    if (normalized.length < 2) return;
+
+    final countryCode = normalized.substring(0, 2);
+    final matchedCountry =
+        countries.where((item) => item.matchesCode(countryCode)).firstOrNull;
+    if (matchedCountry == null) return;
+
+    draft.bankCountryIso3 = matchedCountry.iso3;
+    draft.bankCountryName = matchedCountry.name;
   }
 
   @override
@@ -3838,7 +4027,11 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     bankTransfer: bankTransfer,
                     requiresIbanOnly: requiresIbanOnly,
                   ),
-                  onChanged: (value) => draft.iban = value,
+                  onChanged: (value) {
+                    draft.iban = value;
+                    _selectBankCountryFromIban(countries, value);
+                    onChanged();
+                  },
                 ),
                 if (!requiresIbanOnly) ...[
                   TextFormField(
@@ -4112,7 +4305,13 @@ class _PicturesStep extends StatelessWidget {
     required this.ordererFiles,
     required this.representativeFiles,
     required this.productFiles,
+    required this.ordererPassportLookupAttempted,
+    required this.representativePassportLookupAttempted,
+    required this.ordererPassportValidUntil,
+    required this.representativePassportValidUntil,
     required this.showRepresentativePictures,
+    required this.onOrdererPassportValidUntilChanged,
+    required this.onRepresentativePassportValidUntilChanged,
     required this.onCaptureWithPhone,
     required this.onAddOrderer,
     required this.onCaptureOrderer,
@@ -4131,7 +4330,13 @@ class _PicturesStep extends StatelessWidget {
   final List<ContractUpload> ordererFiles;
   final List<ContractUpload> representativeFiles;
   final List<ContractUpload> productFiles;
+  final bool ordererPassportLookupAttempted;
+  final bool representativePassportLookupAttempted;
+  final DateTime? ordererPassportValidUntil;
+  final DateTime? representativePassportValidUntil;
   final bool showRepresentativePictures;
+  final ValueChanged<DateTime?> onOrdererPassportValidUntilChanged;
+  final ValueChanged<DateTime?> onRepresentativePassportValidUntilChanged;
   final VoidCallback onCaptureWithPhone;
   final VoidCallback onAddOrderer;
   final VoidCallback onCaptureOrderer;
@@ -4169,6 +4374,15 @@ class _PicturesStep extends StatelessWidget {
           onPentaScan: onPentaScanOrderer,
           onOpen: onOpen,
           onRemove: onRemove,
+          emptyMessage: ordererPassportLookupAttempted
+              ? 'No passport picture was found in Abacus for this consignor.'
+              : null,
+        ),
+        const SizedBox(height: 12),
+        _PassportValidityField(
+          label: 'Consignor Passport Valid Until',
+          value: ordererPassportValidUntil,
+          onChanged: onOrdererPassportValidUntilChanged,
         ),
         if (showRepresentativePictures) ...[
           const SizedBox(height: 12),
@@ -4180,6 +4394,15 @@ class _PicturesStep extends StatelessWidget {
             onPentaScan: onPentaScanRepresentative,
             onOpen: onOpen,
             onRemove: onRemove,
+            emptyMessage: representativePassportLookupAttempted
+                ? 'No passport picture was found in Abacus for this representative.'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          _PassportValidityField(
+            label: 'Representative Passport Valid Until',
+            value: representativePassportValidUntil,
+            onChanged: onRepresentativePassportValidUntilChanged,
           ),
         ],
         const SizedBox(height: 12),
@@ -4193,6 +4416,66 @@ class _PicturesStep extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         _WizardButtons(onBack: onBack, onNext: onNext),
+      ],
+    );
+  }
+}
+
+class _PassportValidityField extends StatelessWidget {
+  const _PassportValidityField({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final DateTime? value;
+  final ValueChanged<DateTime?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final selectedDate =
+        value == null ? null : DateTime(value!.year, value!.month, value!.day);
+    final valid =
+        selectedDate == null ? null : !selectedDate.isBefore(todayDate);
+    final statusText = valid == null
+        ? 'Not set'
+        : valid
+            ? 'Valid'
+            : 'Expired';
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: _DatePickerFormField(
+            label: label,
+            value: value,
+            initialDate: value ?? todayDate.add(const Duration(days: 365 * 5)),
+            firstDate: DateTime(1990, 1, 1),
+            lastDate: DateTime(today.year + 30, 12, 31),
+            onChanged: onChanged,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: StatusBadge(
+            label: statusText,
+            tone: valid == true
+                ? StatusBadgeTone.success
+                : valid == false
+                    ? StatusBadgeTone.error
+                    : StatusBadgeTone.info,
+            icon: valid == true
+                ? Icons.check_circle_outline
+                : valid == false
+                    ? Icons.error_outline
+                    : Icons.calendar_today_outlined,
+          ),
+        ),
       ],
     );
   }
@@ -4346,6 +4629,7 @@ class _FileUploadSection extends StatelessWidget {
     this.onPentaScan,
     required this.onOpen,
     required this.onRemove,
+    this.emptyMessage,
   });
 
   final String title;
@@ -4355,6 +4639,7 @@ class _FileUploadSection extends StatelessWidget {
   final VoidCallback? onPentaScan;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
+  final String? emptyMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -4387,7 +4672,9 @@ class _FileUploadSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           if (files.isEmpty)
-            const Text('No files selected yet.')
+            emptyMessage == null
+                ? const Text('No files selected yet.')
+                : _MissingPassportNotice(message: emptyMessage!)
           else
             for (final file in files)
               Padding(
@@ -4398,6 +4685,41 @@ class _FileUploadSection extends StatelessWidget {
                   onRemove: onRemove,
                 ),
               ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MissingPassportNotice extends StatelessWidget {
+  const _MissingPassportNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Colors.orange.shade700;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        border: Border.all(color: Colors.orange.shade200),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, color: color, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
         ],
       ),
     );
@@ -5888,6 +6210,9 @@ class _DatePickerFormField extends FormField<DateTime> {
     required String label,
     required DateTime? value,
     required ValueChanged<DateTime?> onChanged,
+    DateTime? initialDate,
+    DateTime? firstDate,
+    DateTime? lastDate,
     super.validator,
   }) : super(
           initialValue: value,
@@ -5899,9 +6224,10 @@ class _DatePickerFormField extends FormField<DateTime> {
                 final picked = await showDialog<DateTime>(
                   context: field.context,
                   builder: (context) => _MonthYearDayPickerDialog(
-                    initialDate: selected ?? DateTime(1990, 1, 1),
-                    firstDate: DateTime(1900, 1, 1),
-                    lastDate: DateTime.now(),
+                    initialDate:
+                        selected ?? initialDate ?? DateTime(1990, 1, 1),
+                    firstDate: firstDate ?? DateTime(1900, 1, 1),
+                    lastDate: lastDate ?? DateTime.now(),
                   ),
                 );
                 if (picked == null) return;

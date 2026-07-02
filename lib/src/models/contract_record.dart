@@ -271,7 +271,10 @@ class ContractRecord {
   String get auctionDisplayName =>
       auctionDisplayNames.isEmpty ? '' : auctionDisplayNames.first;
 
-  bool get hasRemoteReference => uploads.any((e) => e.hasServerReference);
+  bool get hasRemoteReference =>
+      systemReferenceContract > 0 ||
+      remoteLastModifiedUtc != null ||
+      uploads.any((e) => e.hasServerReference);
 
   bool get synced =>
       syncStatus == RecordSyncStatus.synced ||

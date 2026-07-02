@@ -18,6 +18,9 @@ import '../models/sync_status.dart';
 class ApiService {
   ApiService(this.settings, this.token) : _dio = _createDio(settings, token);
 
+  static const _syncRequestTimeout = Duration(minutes: 10);
+  static const _contractFetchConcurrency = 4;
+
   final AppSettings settings;
   final String token;
   final Dio _dio;
@@ -28,8 +31,8 @@ class ApiService {
         baseUrl: settings.apiBaseUrl.trim(),
         headers: token.trim().isEmpty ? {} : {'Authorization': 'Bearer $token'},
         connectTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(minutes: 2),
-        sendTimeout: const Duration(minutes: 2),
+        receiveTimeout: _syncRequestTimeout,
+        sendTimeout: _syncRequestTimeout,
         responseType: ResponseType.json,
       ),
     );
@@ -132,18 +135,103 @@ class ApiService {
       final data = response.data;
       if (data is! List) return const [];
 
-      return data
-          .whereType<Map>()
-          .map(
-            (item) => CustomerLookupResult.fromJson(
-              item.cast<String, dynamic>(),
-            ),
-          )
-          .where((item) => item.customerId > 0)
-          .toList(growable: false);
+      final results = <CustomerLookupResult>[];
+      for (final item in data.whereType<Map>()) {
+        final parsed = await _customerLookupResultFromJson(
+          item.cast<String, dynamic>(),
+        );
+        if (parsed.customerId > 0) {
+          results.add(parsed);
+        }
+      }
+
+      return results;
     } on DioException catch (e) {
       throw Exception(_friendlyDioError(e));
     }
+  }
+
+  Future<List<ContractUpload>> fetchPassportUploads(int customerId) async {
+    _ensureConfigured();
+    if (customerId <= 0) return const [];
+
+    try {
+      final response = await _dio.get(
+        _path('/api/consignors-app/customers/$customerId/passport-uploads'),
+      );
+
+      return await _uploadsFromJson(
+        customerId,
+        response.data,
+      );
+    } on DioException catch (e) {
+      throw Exception(_friendlyDioError(e));
+    }
+  }
+
+  Future<ContractUpload?> fetchDossierDocumentContent({
+    required int consignorId,
+    required ContractUpload upload,
+  }) async {
+    _ensureConfigured();
+    final documentId = upload.localId.trim();
+    if (documentId.isEmpty) return null;
+
+    try {
+      final response = await _dio.get(
+        _path(
+          '/api/consignors-app/dossier-documents/'
+          '${Uri.encodeComponent(documentId)}/content',
+        ),
+        queryParameters: {
+          'fileType': upload.fileType.apiValue,
+          if (upload.kind.trim().isNotEmpty) 'kind': upload.kind.trim(),
+        },
+      );
+
+      final data = response.data;
+      if (data is! Map) return null;
+
+      final hydrated = await _uploadFromJson(
+        consignorId: consignorId,
+        json: data.cast<String, dynamic>(),
+      );
+      return hydrated.copyWith(fileData: '');
+    } on DioException catch (e) {
+      throw Exception(_friendlyDioError(e));
+    }
+  }
+
+  Future<CustomerLookupResult> _customerLookupResultFromJson(
+    Map<String, dynamic> json,
+  ) async {
+    final preview = CustomerLookupResult.fromJson(json);
+    final uploads = await _uploadsFromJson(
+      preview.customerId,
+      json['passportUploads'] ?? json['PassportUploads'],
+    );
+    return CustomerLookupResult.fromJson(json, passportUploads: uploads);
+  }
+
+  Future<List<ContractUpload>> _uploadsFromJson(
+    int consignorId,
+    Object? value,
+  ) async {
+    final rows = (value as List?)
+            ?.whereType<Map>()
+            .map((item) => item.cast<String, dynamic>())
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    final uploads = <ContractUpload>[];
+    for (final row in rows) {
+      uploads.add(
+        await _uploadFromJson(
+          consignorId: consignorId,
+          json: row,
+        ),
+      );
+    }
+    return uploads;
   }
 
   /// Fetches the list of consignors that have changed on the server since
@@ -160,6 +248,14 @@ class ApiService {
     _ensureConfigured();
 
     try {
+      onProgress?.call(
+        0,
+        0,
+        sinceUtc == null
+            ? 'Fetching consignor report from Abacus...'
+            : 'Checking Abacus for changed consignors...',
+      );
+
       // Pass sinceUtc as a query param so the backend filters changed records only.
       final queryParameters = sinceUtc != null
           ? <String, dynamic>{
@@ -186,11 +282,11 @@ class ApiService {
       final total = summaries.length;
 
       if (total == 0) {
-        onProgress?.call(0, 0, 'No new records to fetch.');
+        onProgress?.call(0, 0, 'No changed consignors to fetch.');
         return const RemoteSnapshot();
       }
 
-      onProgress?.call(0, total, 'Fetching 0 of $total…');
+      onProgress?.call(0, total, 'Processing consignors 0 of $total...');
 
       for (var index = 0; index < summaries.length; index++) {
         final item = summaries[index];
@@ -198,7 +294,7 @@ class ApiService {
         onProgress?.call(
           index,
           total,
-          'Fetching ${index + 1} of $total…',
+          'Processing consignor ${index + 1} of $total...',
         );
 
         final fieldIssue = _reportFieldIssue(
@@ -224,7 +320,7 @@ class ApiService {
         onProgress?.call(
           index + 1,
           total,
-          'Fetching ${index + 1} of $total…',
+          'Processing consignor ${index + 1} of $total...',
         );
       }
 
@@ -232,6 +328,7 @@ class ApiService {
         consignors: consignors,
         contracts: contracts,
         missingReportFields: missingReportFields,
+        reportRowCount: total,
       );
     } on DioException catch (e) {
       throw Exception(_friendlyDioError(e));
@@ -252,6 +349,139 @@ class ApiService {
         '${_friendlyDioError(e)}',
       );
     }
+  }
+
+  Future<RemoteContractFetchResult> fetchAllContracts({
+    void Function(int current, int total, String message)? onProgress,
+  }) async {
+    _ensureConfigured();
+
+    try {
+      onProgress?.call(0, 1, 'Analyzing contracts in Abacus...');
+      final response = await _dio.get(_path(settings.contractsGetAll));
+      final data = response.data;
+      final groups = ((data is Map
+                  ? data['contracts'] ?? data['Contracts'] ?? data['value']
+                  : data) as List?)
+              ?.whereType<Map>()
+              .map((item) => item.cast<String, dynamic>())
+              .toList() ??
+          const <Map<String, dynamic>>[];
+
+      final contracts = <ContractRecord>[];
+      for (final groupJson in groups) {
+        final consignorId = _toInt(
+              groupJson['consignorId'] ??
+                  groupJson['ConsignorId'] ??
+                  groupJson['customerId'] ??
+                  groupJson['CustomerId'] ??
+                  groupJson['subjectId'] ??
+                  groupJson['SubjectId'],
+            ) ??
+            0;
+        if (consignorId <= 0) continue;
+
+        final contract = await _contractFromGroupJson(
+          consignorId: consignorId,
+          json: groupJson,
+        );
+        contract.markRemoteSnapshot();
+        contracts.add(contract);
+      }
+
+      onProgress?.call(
+        1,
+        1,
+        'Analyzed ${contracts.length} Abacus contract${contracts.length == 1 ? '' : 's'}.',
+      );
+
+      return RemoteContractFetchResult(
+        contracts: contracts,
+        analyzedDocumentCount: groups.length,
+      );
+    } on DioException catch (e) {
+      throw Exception(_friendlyDioError(e));
+    }
+  }
+
+  Future<RemoteContractFetchResult> fetchContractsForConsignors(
+    Iterable<int> consignorIds, {
+    void Function(int current, int total, String message)? onProgress,
+  }) async {
+    _ensureConfigured();
+
+    final ids = consignorIds
+        .where((id) => id > 0)
+        .toSet()
+        .toList(growable: false)
+      ..sort();
+    final total = ids.length;
+
+    if (total == 0) {
+      onProgress?.call(0, 0, 'No consignors available for contract sync.');
+      return const RemoteContractFetchResult();
+    }
+
+    final contracts = <ContractRecord>[];
+    final skippedIds = <int>[];
+    final failedMessages = <String>[];
+    onProgress?.call(0, total, 'Analyzing contracts 0 of $total...');
+
+    var completed = 0;
+    for (var start = 0;
+        start < ids.length;
+        start += _contractFetchConcurrency) {
+      final batch = ids
+          .skip(start)
+          .take(_contractFetchConcurrency)
+          .toList(growable: false);
+
+      final batchResults = await Future.wait(
+        batch.map((consignorId) async {
+          try {
+            final detail = await _fetchConsignorDetailUnchecked(consignorId);
+            return detail.contracts;
+          } on DioException catch (e) {
+            final status = e.response?.statusCode;
+            if (status == 401 || status == 403) {
+              rethrow;
+            }
+
+            if (status == 404) {
+              skippedIds.add(consignorId);
+            } else {
+              failedMessages.add(
+                '$consignorId: ${_friendlyDioError(e)}',
+              );
+            }
+            return const <ContractRecord>[];
+          } finally {
+            completed++;
+            final skippedText =
+                skippedIds.isEmpty ? '' : ', skipped ${skippedIds.length}';
+            final failedText = failedMessages.isEmpty
+                ? ''
+                : ', failed ${failedMessages.length}';
+            onProgress?.call(
+              completed,
+              total,
+              'Analyzing contracts $completed of $total$skippedText$failedText...',
+            );
+          }
+        }),
+      );
+
+      for (final result in batchResults) {
+        contracts.addAll(result);
+      }
+    }
+
+    return RemoteContractFetchResult(
+      contracts: contracts,
+      checkedConsignorCount: total,
+      skippedConsignorIds: skippedIds,
+      failedMessages: failedMessages,
+    );
   }
 
   Future<RemoteConsignorDetail> _fetchConsignorDetailUnchecked(
@@ -465,6 +695,7 @@ class ApiService {
     _ensureConfigured();
     try {
       final eventUtc = DateTime.now().toUtc();
+      final resolvedContractNumber = contractNumber ?? auctionId.toString();
       final response = await _dio.post(
         '/api/consignors-app/consignors/$consignorId/contracts',
         data: {
@@ -479,9 +710,14 @@ class ApiService {
                 abacusMetadata: AbacusFileSyncMetadata.forUpload(
                   upload: upload,
                   consignorSubjectId: abacusSubjectId ?? consignorId,
-                  contractNumber: contractNumber ?? auctionId.toString(),
+                  contractNumber: resolvedContractNumber,
                   eventUtc: eventUtc,
                   trigger: syncEvent,
+                  labelOverride: _abacusLabelForUpload(
+                    upload: upload,
+                    allUploads: uploads,
+                    contractNumber: resolvedContractNumber,
+                  ),
                 ),
               ),
           ],
@@ -503,6 +739,7 @@ class ApiService {
     int? abacusSubjectId,
     AbacusContractSyncEvent syncEvent = AbacusContractSyncEvent.manualSync,
     String? contractNumber,
+    String? documentLabel,
   }) async {
     _ensureConfigured();
     final uploadId = upload.fileId;
@@ -521,6 +758,7 @@ class ApiService {
             contractNumber: contractNumber ?? uploadId.toString(),
             eventUtc: DateTime.now().toUtc(),
             trigger: syncEvent,
+            labelOverride: documentLabel,
           ),
         ),
       );
@@ -641,6 +879,11 @@ class ApiService {
           abacusSubjectId: abacusSubjectId,
           syncEvent: syncEvent,
           contractNumber: contractNumber,
+          documentLabel: _abacusLabelForUpload(
+            upload: upload,
+            allUploads: workingRecord.uploads,
+            contractNumber: contractNumber,
+          ),
         );
         final serverUtc = serverUpload.serverLastModifiedUtc ??
             serverUpload.localLastModifiedUtc;
@@ -909,14 +1152,99 @@ class ApiService {
       };
 
   String _contractNumber(ContractRecord record) {
+    final extracted = _extractContractNumber([
+      record.pdfName,
+      record.id,
+      ...record.uploads.map((upload) => upload.fileName),
+    ]);
+    if (extracted != null) {
+      return extracted;
+    }
+
     if (record.systemReferenceContract > 0) {
-      return record.systemReferenceContract.toString();
+      final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
+      return 'COC-$year-${record.systemReferenceContract}';
     }
-    final pdfName = record.pdfName.trim();
-    if (pdfName.isNotEmpty && pdfName != 'consignor_contract.pdf') {
-      return pdfName.replaceAll(RegExp(r'\.[^.]+$'), '');
-    }
+
     return record.id;
+  }
+
+  String? _extractContractNumber(Iterable<String> candidates) {
+    final pattern =
+        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(0)!.toUpperCase();
+    }
+    return null;
+  }
+
+  String? _abacusLabelForUpload({
+    required ContractUpload upload,
+    required List<ContractUpload> allUploads,
+    required String contractNumber,
+  }) {
+    if (upload.isDeleted) return null;
+
+    final baseContractNumber = _baseContractNumber(contractNumber);
+
+    if (upload.fileType == UploadType.agreement) {
+      if (!upload.fileName.toLowerCase().endsWith('.pdf')) return null;
+      return contractNumber;
+    }
+
+    if (upload.fileType == UploadType.product) {
+      final productUploads = allUploads
+          .where(
+              (item) => !item.isDeleted && item.fileType == UploadType.product)
+          .toList(growable: false);
+      final index = _oneBasedUploadIndex(productUploads, upload);
+      return '$baseContractNumber-Product-$index';
+    }
+
+    if (upload.fileType == UploadType.passport) {
+      final kind = upload.kind.trim();
+      final validationReport = kind == 'NaturalPersonIdValidationReport' ||
+          kind == 'RepresentativeIdValidationReport';
+      if (validationReport) return null;
+
+      final representative = kind == 'RepresentativeId';
+      final passportUploads = allUploads
+          .where((item) =>
+              !item.isDeleted &&
+              item.fileType == UploadType.passport &&
+              item.kind.trim() == kind)
+          .toList(growable: false);
+      final prefix = representative ? 'Representative' : 'Passport';
+      if (passportUploads.length <= 1) return prefix;
+
+      final index = _oneBasedUploadIndex(passportUploads, upload);
+      return '$prefix-$index';
+    }
+
+    return null;
+  }
+
+  int _oneBasedUploadIndex(
+      List<ContractUpload> uploads, ContractUpload upload) {
+    for (var index = 0; index < uploads.length; index++) {
+      final candidate = uploads[index];
+      if (identical(candidate, upload) ||
+          (candidate.localId == upload.localId &&
+              candidate.fileId == upload.fileId &&
+              candidate.fileName == upload.fileName)) {
+        return index + 1;
+      }
+    }
+    return uploads.length + 1;
+  }
+
+  String _baseContractNumber(String value) {
+    final trimmed = value.trim();
+    if (trimmed.toUpperCase().startsWith('PROV-COC-')) {
+      return trimmed.substring(5);
+    }
+    return trimmed;
   }
 
   Future<Map<String, dynamic>> _uploadPayload(
@@ -1339,11 +1667,32 @@ class RemoteSnapshot {
     this.consignors = const [],
     this.contracts = const [],
     this.missingReportFields = const [],
+    this.reportRowCount = 0,
   });
 
   final List<Consignor> consignors;
   final List<ContractRecord> contracts;
   final List<RemoteReportFieldIssue> missingReportFields;
+  final int reportRowCount;
+}
+
+class RemoteContractFetchResult {
+  const RemoteContractFetchResult({
+    this.contracts = const [],
+    this.checkedConsignorCount = 0,
+    this.analyzedDocumentCount = 0,
+    this.skippedConsignorIds = const [],
+    this.failedMessages = const [],
+  });
+
+  final List<ContractRecord> contracts;
+  final int checkedConsignorCount;
+  final int analyzedDocumentCount;
+  final List<int> skippedConsignorIds;
+  final List<String> failedMessages;
+
+  int get skippedCount => skippedConsignorIds.length;
+  int get failedCount => failedMessages.length;
 }
 
 class RemoteReportFieldIssue {

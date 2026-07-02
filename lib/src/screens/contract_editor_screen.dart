@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -87,6 +88,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         context.read<AppState>().refreshAuctions(silent: false);
+        unawaited(_hydrateDossierUploadsForEditor());
       }
     });
   }
@@ -350,7 +352,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       record.id,
       ...record.uploads.map((upload) => upload.fileName),
     ];
-    final pattern = RegExp(r'\bCOC-\d{2}-\d+\b', caseSensitive: false);
+    final pattern =
+        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
     for (final candidate in candidates) {
       final match = pattern.firstMatch(candidate);
       if (match != null) return match.group(0)!.toUpperCase();
@@ -740,6 +743,129 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     });
   }
 
+  Future<void> _openUpload(ContractUpload upload) async {
+    final state = context.read<AppState>();
+    final backendConsignorId = _backendConsignorId;
+    final existingPath = upload.path.trim();
+    if (existingPath.isNotEmpty && await File(existingPath).exists()) {
+      await _fileService.open(existingPath);
+      return;
+    }
+
+    if (backendConsignorId == null || upload.localId.trim().isEmpty) {
+      if (existingPath.isNotEmpty) {
+        await _fileService.open(existingPath);
+      }
+      return;
+    }
+
+    _showSnack('Downloading file from Abacus...');
+
+    try {
+      final hydrated = await ApiService(
+        state.settings,
+        state.token,
+      ).fetchDossierDocumentContent(
+        consignorId: backendConsignorId,
+        upload: upload,
+      );
+
+      final hydratedPath = hydrated?.path.trim() ?? '';
+      if (hydrated == null ||
+          hydratedPath.isEmpty ||
+          !await File(hydratedPath).exists()) {
+        _showSnack('Could not download this file from Abacus.');
+        return;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _record = _record.copyWith(
+          uploads: _record.uploads
+              .map(
+                (item) => item.localId == upload.localId
+                    ? hydrated.copyWith(
+                        kind: upload.kind,
+                        auctionId: upload.auctionId,
+                        signedAt: upload.signedAt,
+                      )
+                    : item,
+              )
+              .toList(),
+        );
+      });
+
+      await _persistLocal();
+      _captureSnapshot();
+      await _fileService.open(hydratedPath);
+    } catch (e) {
+      _showSnack('Could not download this file from Abacus: $e');
+    }
+  }
+
+  Future<void> _hydrateDossierUploadsForEditor() async {
+    final backendConsignorId = _backendConsignorId;
+    if (backendConsignorId == null) return;
+
+    final candidates = _record.uploads
+        .where(
+          (upload) =>
+              !upload.isDeleted &&
+              upload.localId.trim().isNotEmpty &&
+              (upload.fileType == UploadType.passport ||
+                  upload.fileType == UploadType.product) &&
+              (upload.path.trim().isEmpty ||
+                  !File(upload.path.trim()).existsSync()),
+        )
+        .toList(growable: false);
+    if (candidates.isEmpty) return;
+
+    final state = context.read<AppState>();
+    final api = ApiService(state.settings, state.token);
+    var changed = false;
+    var nextUploads = _record.uploads;
+
+    for (final upload in candidates) {
+      try {
+        final hydrated = await api.fetchDossierDocumentContent(
+          consignorId: backendConsignorId,
+          upload: upload,
+        );
+        final path = hydrated?.path.trim() ?? '';
+        if (hydrated == null || path.isEmpty || !File(path).existsSync()) {
+          continue;
+        }
+
+        nextUploads = nextUploads
+            .map(
+              (item) => item.localId == upload.localId
+                  ? hydrated.copyWith(
+                      kind: upload.kind,
+                      auctionId: upload.auctionId,
+                      signedAt: upload.signedAt,
+                    )
+                  : item,
+            )
+            .toList(growable: false);
+        changed = true;
+
+        if (mounted) {
+          setState(() {
+            _record = _record.copyWith(uploads: nextUploads);
+          });
+        }
+      } catch (_) {
+        // A manual open can retry the single-file download later.
+      }
+    }
+
+    if (!changed || !mounted) return;
+
+    await _persistLocal();
+    _captureSnapshot();
+  }
+
   Future<bool> _handlePendingChangesBeforeLeave() async {
     if (!_hasUnsavedChanges) return true;
 
@@ -943,14 +1069,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                     child: _DateField(
                       label: 'Signed on',
                       value: _record.signedAt,
-                      onChanged: (value) {
-                        setState(() {
-                          _record = _record.copyWith(
-                            signedAt: value,
-                            lastModifiedUtc: DateTime.now().toUtc(),
-                          );
-                        });
-                      },
+                      enabled: false,
+                      onChanged: (_) {},
                     ),
                   ),
                   SizedBox(
@@ -959,9 +1079,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                       initialValue: _record.pdfName,
                       decoration:
                           const InputDecoration(labelText: 'PDF file name'),
-                      onChanged: (value) {
-                        _record = _record.copyWith(pdfName: value);
-                      },
+                      readOnly: true,
                     ),
                   ),
                 ],
@@ -1014,7 +1132,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
               onPhoneCapture: () => _captureWithPhone(
                 initialTargetId: _phoneTargetConsignorId,
               ),
-              onOpen: _fileService.open,
+              onOpen: _openUpload,
               onReplace: _replaceUpload,
               onDelete: _deleteUpload,
               showReplaceButton: false,
@@ -1038,7 +1156,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
               onPhoneCapture: () => _captureWithPhone(
                 initialTargetId: _phoneTargetProductPictures,
               ),
-              onOpen: _fileService.open,
+              onOpen: _openUpload,
               onReplace: _replaceUpload,
               onDelete: _deleteUpload,
               showReplaceButton: false,
@@ -1055,7 +1173,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                   .toList(),
               onAddFiles: () =>
                   _pickFiles(UploadType.agreement, imagesOnly: false),
-              onOpen: _fileService.open,
+              onOpen: _openUpload,
               onReplace: _replaceUpload,
               onDelete: _deleteUpload,
             ),
@@ -1092,11 +1210,13 @@ class _DateField extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onChanged,
+    this.enabled = true,
   });
 
   final String label;
   final DateTime value;
   final ValueChanged<DateTime> onChanged;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -1105,7 +1225,9 @@ class _DateField extends StatelessWidget {
       controller: TextEditingController(text: formatter.format(value)),
       decoration: InputDecoration(labelText: label),
       readOnly: true,
+      enabled: enabled,
       onTap: () async {
+        if (!enabled) return;
         final picked = await showDatePicker(
           context: context,
           initialDate: value,
@@ -1160,7 +1282,7 @@ class _UploadSection extends StatelessWidget {
   final VoidCallback? onCapture;
   final VoidCallback? onPhoneCapture;
   final bool showReplaceButton;
-  final Future<void> Function(String path) onOpen;
+  final Future<void> Function(ContractUpload upload) onOpen;
   final Future<void> Function(ContractUpload upload) onReplace;
   final Future<void> Function(ContractUpload upload) onDelete;
 
@@ -1231,7 +1353,7 @@ class _UploadTile extends StatelessWidget {
 
   final ContractUpload upload;
   final bool showReplaceButton;
-  final Future<void> Function(String path) onOpen;
+  final Future<void> Function(ContractUpload upload) onOpen;
   final Future<void> Function(ContractUpload upload) onReplace;
   final Future<void> Function(ContractUpload upload) onDelete;
 
@@ -1260,7 +1382,7 @@ class _UploadTile extends StatelessWidget {
     Widget leading;
     if (hasImagePreview) {
       leading = InkWell(
-        onTap: () => onOpen(upload.path),
+        onTap: () => onOpen(upload),
         borderRadius: BorderRadius.circular(12),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
@@ -1311,8 +1433,7 @@ class _UploadTile extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: InkWell(
-              onTap:
-                  upload.path.trim().isEmpty ? null : () => onOpen(upload.path),
+              onTap: upload.path.trim().isEmpty ? null : () => onOpen(upload),
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1342,9 +1463,8 @@ class _UploadTile extends StatelessWidget {
             children: [
               IconButton(
                 tooltip: 'Open',
-                onPressed: upload.path.trim().isEmpty
-                    ? null
-                    : () => onOpen(upload.path),
+                onPressed:
+                    upload.path.trim().isEmpty ? null : () => onOpen(upload),
                 icon: const Icon(Icons.open_in_new_rounded),
               ),
               if (showReplaceButton)

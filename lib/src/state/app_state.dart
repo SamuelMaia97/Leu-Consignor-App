@@ -51,6 +51,9 @@ class AppState extends ChangeNotifier {
   int syncProgressCurrent = 0;
   int syncProgressTotal = 0;
   String syncProgressMessage = '';
+  int contractSyncProgressCurrent = 0;
+  int contractSyncProgressTotal = 0;
+  String contractSyncProgressMessage = '';
   String? lastMessage;
   String? activeUsername;
   List<RemoteReportFieldIssue> lastSyncMissingReportFields = const [];
@@ -65,6 +68,15 @@ class AppState extends ChangeNotifier {
     }
 
     final value = syncProgressCurrent / syncProgressTotal;
+    return value.clamp(0.0, 1.0);
+  }
+
+  double? get contractSyncProgressValue {
+    if (contractSyncProgressTotal <= 0) {
+      return null;
+    }
+
+    final value = contractSyncProgressCurrent / contractSyncProgressTotal;
     return value.clamp(0.0, 1.0);
   }
 
@@ -667,7 +679,8 @@ class AppState extends ChangeNotifier {
     syncingNow = true;
     lastMessage = null;
     lastSyncMissingReportFields = const [];
-    _setSyncProgress(0, 0, 'Starting sync…');
+    _setContractSyncProgress(0, 0, '');
+    _setSyncProgress(0, 0, 'Starting sync...');
 
     try {
       final api = ApiService(settings, token);
@@ -686,7 +699,7 @@ class AppState extends ChangeNotifier {
       lastSyncMissingReportFields = remoteSnapshot.missingReportFields;
 
       var workCurrent = remoteSnapshot.consignors.length;
-      var workTotal = remoteSnapshot.consignors.length + 3;
+      var workTotal = remoteSnapshot.consignors.length + 4;
       if (workTotal <= 0) {
         workTotal = 1;
       }
@@ -694,12 +707,56 @@ class AppState extends ChangeNotifier {
       _setSyncProgress(
         workCurrent,
         workTotal,
-        'Merging downloaded records…',
+        'Merging downloaded consignors...',
       );
 
       await _mergeRemoteConsignors(remoteSnapshot.consignors);
       await _mergeRemoteContracts(remoteSnapshot.contracts);
       await _refreshLocalCollections();
+
+      workCurrent++;
+      _setSyncProgress(
+        workCurrent,
+        workTotal,
+        'Preparing contract sync...',
+      );
+
+      var fetchedRemoteContracts = remoteSnapshot.contracts.length;
+      var analyzedContractDocuments = 0;
+      var skippedContractConsignors = 0;
+      var failedContractConsignors = 0;
+
+      _setSyncProgress(
+        workCurrent,
+        workTotal,
+        'Analyzing contracts in Abacus...',
+      );
+      final contractFetchResult = await api.fetchAllContracts(
+        onProgress: (current, total, message) {
+          _setContractSyncProgress(current, total, message);
+          _setSyncProgress(workCurrent, workTotal, message);
+        },
+      );
+      fetchedRemoteContracts = contractFetchResult.contracts.length;
+      analyzedContractDocuments = contractFetchResult.analyzedDocumentCount;
+      skippedContractConsignors = contractFetchResult.skippedCount;
+      failedContractConsignors = contractFetchResult.failedCount;
+
+      if (contractFetchResult.contracts.isEmpty) {
+        _setSyncProgress(
+          workCurrent,
+          workTotal,
+          'No COC contracts found in Abacus.',
+        );
+      } else {
+        _setSyncProgress(
+          workCurrent,
+          workTotal,
+          'Merging downloaded contracts...',
+        );
+        await _mergeRemoteContracts(contractFetchResult.contracts);
+        await _refreshLocalCollections();
+      }
 
       workCurrent++;
       _setSyncProgress(
@@ -829,9 +886,17 @@ class AppState extends ChangeNotifier {
           ? ''
           : ' ${lastSyncMissingReportFields.length} Abacus report row${lastSyncMissingReportFields.length == 1 ? '' : 's'} had missing fields. Open the sync report for the checklist.';
 
+      final contractIssuesMessage = skippedContractConsignors == 0 &&
+              failedContractConsignors == 0
+          ? ''
+          : ' Skipped $skippedContractConsignors contract owner${skippedContractConsignors == 1 ? '' : 's'} not present in Abacus and $failedContractConsignors failed contract owner${failedContractConsignors == 1 ? '' : 's'}.';
+
       lastMessage =
-          'Sync completed. Fetched ${remoteSnapshot.consignors.length} updated consignor${remoteSnapshot.consignors.length == 1 ? '' : 's'}, '
-          'synced $uploadedConsignors pending consignor${uploadedConsignors == 1 ? '' : 's'} and $uploadedContracts contract${uploadedContracts == 1 ? '' : 's'}.$missingFieldsMessage';
+          'Sync completed. Checked ${remoteSnapshot.reportRowCount} changed Abacus report row${remoteSnapshot.reportRowCount == 1 ? '' : 's'}, '
+          'merged ${remoteSnapshot.consignors.length} consignor snapshot${remoteSnapshot.consignors.length == 1 ? '' : 's'}, '
+          'analyzed $analyzedContractDocuments Abacus contract document${analyzedContractDocuments == 1 ? '' : 's'}, '
+          'fetched $fetchedRemoteContracts Abacus contract${fetchedRemoteContracts == 1 ? '' : 's'}, '
+          'synced $uploadedConsignors pending consignor${uploadedConsignors == 1 ? '' : 's'} and $uploadedContracts contract${uploadedContracts == 1 ? '' : 's'}.$missingFieldsMessage$contractIssuesMessage';
     } catch (e) {
       final message = 'Sync failed: $e';
       lastMessage = message;
@@ -875,6 +940,18 @@ class AppState extends ChangeNotifier {
     syncProgressCurrent = safeCurrent;
     syncProgressTotal = safeTotal;
     syncProgressMessage = message;
+    notifyListeners();
+  }
+
+  void _setContractSyncProgress(int current, int total, String message) {
+    final safeTotal = total < 0 ? 0 : total;
+    final safeCurrent = safeTotal <= 0
+        ? (current < 0 ? 0 : current)
+        : current.clamp(0, safeTotal);
+
+    contractSyncProgressCurrent = safeCurrent;
+    contractSyncProgressTotal = safeTotal;
+    contractSyncProgressMessage = message;
     notifyListeners();
   }
 
@@ -943,21 +1020,48 @@ class AppState extends ChangeNotifier {
     final localById = {
       for (final item in _contractRepo.getAll()) item.id: item,
     };
+    final localByContractNumber = {
+      for (final item in _contractRepo.getAll()) _contractMergeKey(item): item,
+    };
     final toPersist = <ContractRecord>[];
 
     for (final remote in remoteContracts) {
-      final local = localById[remote.id];
+      final local = localById[remote.id] ??
+          localByContractNumber[_contractMergeKey(remote)];
       if (local != null && local.hasLocalChanges) {
         continue;
       }
 
       remote.markRemoteSnapshot();
-      toPersist.add(remote);
+      toPersist.add(local == null ? remote : remote.copyWith(id: local.id));
     }
 
     if (toPersist.isNotEmpty) {
       await _contractRepo.putAll(toPersist);
     }
+  }
+
+  String _contractMergeKey(ContractRecord contract) {
+    final contractNumber = _contractNumberForMerge(contract);
+    return [
+      contract.consignorId,
+      contractNumber ?? contract.id,
+    ].join('|').toUpperCase();
+  }
+
+  String? _contractNumberForMerge(ContractRecord contract) {
+    final pattern =
+        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+    final candidates = <String>[
+      contract.pdfName,
+      contract.id,
+      ...contract.uploads.map((upload) => upload.fileName),
+    ];
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(0)!.toUpperCase();
+    }
+    return null;
   }
 
   Future<void> _reassignContractsToConsignorId(

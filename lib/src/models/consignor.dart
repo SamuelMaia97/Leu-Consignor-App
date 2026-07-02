@@ -29,6 +29,7 @@ class Consignor {
     Address? consignorAddress,
     BankingDetails? bankingDetails,
     this.paymentOption = PaymentOption.bankTransfer,
+    this.passportValidUntil,
     this.checkedByLeu = true,
     this.ancientCoinsSubscribed = false,
     this.worldCoinsSubscribed = false,
@@ -77,6 +78,7 @@ class Consignor {
   Address consignorAddress;
   BankingDetails bankingDetails;
   PaymentOption paymentOption;
+  DateTime? passportValidUntil;
   bool checkedByLeu;
   bool ancientCoinsSubscribed;
   bool worldCoinsSubscribed;
@@ -178,14 +180,68 @@ class Consignor {
 
     final hasRemoteReference = systemReferenceConsignor > 0;
 
-    final rawPhoneNumber =
-        _toString(json['phoneNumber'] ?? json['PhoneNumber']);
+    final contactPersonJson = _firstMap(json, const [
+      'contactPerson',
+      'ContactPerson',
+      'contact',
+      'Contact',
+      'primaryContact',
+      'PrimaryContact',
+      'contactPersonDto',
+      'ContactPersonDto',
+      'authorizedContact',
+      'AuthorizedContact',
+    ]);
+    final nestedPersonJson = _firstMap(json, const [
+      'consignorInfo',
+      'ConsignorInfo',
+      'person',
+      'Person',
+    ]);
+    final personJson = _mergeNonEmptyMaps([
+      _personFieldsFromRoot(json),
+      contactPersonJson,
+      nestedPersonJson,
+    ]);
+    final tradingName = _resolveTradingName(json, contactPersonJson);
+    final contactPhoneNumber = contactPersonJson == null
+        ? null
+        : _firstNonEmptyValue(contactPersonJson, const [
+            'phoneNumber',
+            'PhoneNumber',
+            'phone',
+            'Phone',
+            'TEL',
+            'Tel',
+          ]);
+    final rawPhoneNumber = _toString(
+      contactPhoneNumber ??
+          _firstNonEmptyValue(json, const [
+            'phoneNumber',
+            'PhoneNumber',
+            'phone',
+            'Phone',
+            'TEL',
+            'Tel',
+          ]),
+    );
     final parsedPhone = PhoneNumberParser.parse(rawPhoneNumber);
+    final contactPhonePrefix = contactPersonJson == null
+        ? null
+        : _firstNonEmptyValue(contactPersonJson, const [
+            'phonePrefix',
+            'PhonePrefix',
+            'phoneCountryPrefix',
+            'PhoneCountryPrefix',
+          ]);
     final explicitPhonePrefix = _toString(
-      json['phonePrefix'] ??
-          json['PhonePrefix'] ??
-          json['phoneCountryPrefix'] ??
-          json['PhoneCountryPrefix'],
+      contactPhonePrefix ??
+          _firstNonEmptyValue(json, const [
+            'phonePrefix',
+            'PhonePrefix',
+            'phoneCountryPrefix',
+            'PhoneCountryPrefix',
+          ]),
     );
     final explicitPhonePrefixOriginId = _toInt(
       json['phonePrefixOriginId'] ??
@@ -193,19 +249,50 @@ class Consignor {
           json['phonePrefixId'] ??
           json['PhonePrefixId'],
     );
+    final rawConsignorType = json['consignorType'] ??
+        json['ConsignorType'] ??
+        json['partyType'] ??
+        json['PartyType'] ??
+        json['customerType'] ??
+        json['CustomerType'];
     final legacyIsLegalEntity =
         _toBool(json['isLegalEntity'] ?? json['IsLegalEntity']) ?? false;
     final legacyIsSoleProprietor =
         _toBool(json['isSoleProprietor'] ?? json['IsSoleProprietor']) ?? false;
-    final resolvedConsignorType = legacyIsSoleProprietor
+    var resolvedConsignorType = legacyIsSoleProprietor
         ? ConsignorType.soleProprietor
         : ConsignorTypeX.fromAny(
-            json['consignorType'] ??
-                json['ConsignorType'] ??
-                json['partyType'] ??
-                json['PartyType'],
+            rawConsignorType,
             legacyIsLegalEntity: legacyIsLegalEntity,
           );
+    final hasExplicitConsignorType = rawConsignorType != null ||
+        legacyIsLegalEntity ||
+        legacyIsSoleProprietor;
+    if (!hasExplicitConsignorType &&
+        tradingName.trim().isNotEmpty &&
+        (contactPersonJson != null || !_personHasName(personJson))) {
+      resolvedConsignorType = ConsignorType.legalEntity;
+    }
+    final addressJson = _firstMap(json, const [
+          'consignorAddress',
+          'ConsignorAddress',
+          'address',
+          'Address',
+          'customerAddress',
+          'CustomerAddress',
+        ]) ??
+        json;
+    final bankingJson = _firstMap(json, const [
+          'bankingDetails',
+          'BankingDetails',
+          'bankingDetailsDto',
+          'BankingDetailsDto',
+          'bankDetails',
+          'BankDetails',
+          'paymentDetails',
+          'PaymentDetails',
+        ]) ??
+        json;
 
     return Consignor(
       id: (json['id'] ??
@@ -226,15 +313,18 @@ class Consignor {
         json['existingCustomerLabel'] ?? json['ExistingCustomerLabel'],
       ),
       consignorType: resolvedConsignorType,
-      tradingName: _toString(json['tradingName'] ?? json['TradingName']),
-      consignorInfo: Person.fromJson(
-        ((json['consignorInfo'] ?? json['ConsignorInfo']) as Map?)
-                ?.cast<String, dynamic>() ??
-            {},
-      ),
+      tradingName: tradingName,
+      consignorInfo: Person.fromJson(personJson),
       vatLiability:
-          (json['vatLiability'] ?? json['VatLiability']) as bool? ?? false,
-      vatNumber: _toString(json['vatNumber'] ?? json['VatNumber']),
+          _toBool(json['vatLiability'] ?? json['VatLiability']) ?? false,
+      vatNumber: _toString(
+        _firstNonEmptyValue(json, const [
+          'vatNumber',
+          'VatNumber',
+          'VAT',
+          'MWST',
+        ]),
+      ),
       phonePrefix: explicitPhonePrefix.isNotEmpty
           ? explicitPhonePrefix
           : parsedPhone.prefix,
@@ -242,25 +332,26 @@ class Consignor {
       phoneNumber: explicitPhonePrefix.isNotEmpty
           ? _stripExplicitPrefix(rawPhoneNumber, explicitPhonePrefix)
           : parsedPhone.localNumber,
-      emailAddress: _toString(json['emailAddress'] ?? json['EmailAddress']),
-      consignorAddress: Address.fromJson(
-        ((json['consignorAddress'] ??
-                    json['ConsignorAddress'] ??
-                    json['consignorAddress'] ??
-                    json['ConsignorAddress']) as Map?)
-                ?.cast<String, dynamic>() ??
-            {},
-      ),
-      bankingDetails: BankingDetails.fromJson(
-        ((json['bankingDetails'] ??
-                    json['BankingDetails'] ??
-                    json['bankingDetailsDto'] ??
-                    json['BankingDetailsDto']) as Map?)
-                ?.cast<String, dynamic>() ??
-            {},
-      ),
+      emailAddress: _toString(_contactEmail(contactPersonJson) ??
+          _firstNonEmptyValue(json, const [
+            'emailAddress',
+            'EmailAddress',
+            'email',
+            'Email',
+            'EMAIL',
+          ])),
+      consignorAddress: Address.fromJson(addressJson),
+      bankingDetails: BankingDetails.fromJson(bankingJson),
       paymentOption: PaymentOptionX.fromAny(
           json['paymentOption'] ?? json['PaymentOption']),
+      passportValidUntil: DateTime.tryParse(
+        (json['passportValidUntil'] ??
+                    json['PassportValidUntil'] ??
+                    json['passportDate'] ??
+                    json['PassportDate'])
+                ?.toString() ??
+            '',
+      ),
       checkedByLeu:
           (json['checkedByLeu'] ?? json['CheckedByLeu']) as bool? ?? true,
       ancientCoinsSubscribed: (json['ancientCoinsSubscribed'] ??
@@ -347,6 +438,7 @@ class Consignor {
         'bankingDetails': bankingDetails.toJson(),
         'bankingDetailsDto': bankingDetails.toJson(),
         'paymentOption': paymentOption.apiName,
+        'passportValidUntil': passportValidUntil?.toUtc().toIso8601String(),
         'checkedByLeu': checkedByLeu,
         'ancientCoinsSubscribed': ancientCoinsSubscribed,
         'worldCoinsSubscribed': worldCoinsSubscribed,
@@ -459,9 +551,161 @@ class Consignor {
   static bool? _toBool(Object? value) {
     if (value is bool) return value;
     final text = value?.toString().toLowerCase().trim();
-    if (text == 'true') return true;
-    if (text == 'false') return false;
+    if (text == 'true' || text == '1' || text == 'yes') return true;
+    if (text == 'false' || text == '0' || text == 'no') return false;
     return null;
+  }
+
+  static Map<String, dynamic>? _firstMap(
+    Map<String, dynamic> json,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value is Map) {
+        return value.cast<String, dynamic>();
+      }
+    }
+    return null;
+  }
+
+  static Object? _firstNonEmptyValue(
+    Map<String, dynamic> json,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value == null) continue;
+      if (value is String && value.trim().isEmpty) continue;
+      return value;
+    }
+    return null;
+  }
+
+  static Map<String, dynamic> _mergeNonEmptyMaps(
+    Iterable<Map<String, dynamic>?> maps,
+  ) {
+    final merged = <String, dynamic>{};
+    for (final map in maps) {
+      if (map == null) continue;
+      for (final entry in map.entries) {
+        final value = entry.value;
+        if (value == null) continue;
+        if (value is String && value.trim().isEmpty) continue;
+        merged[entry.key] = value;
+      }
+    }
+    return merged;
+  }
+
+  static Map<String, dynamic> _personFieldsFromRoot(
+    Map<String, dynamic> json,
+  ) {
+    const aliases = {
+      'firstName': [
+        'firstName',
+        'FirstName',
+        'firstname',
+        'Firstname',
+        'VORNAME',
+        'Vorname',
+      ],
+      'lastName': [
+        'lastName',
+        'LastName',
+        'lastname',
+        'Lastname',
+        'NACHNAME',
+        'Nachname',
+        'NAME',
+        'Name',
+      ],
+      'fullName': [
+        'personName',
+        'PersonName',
+        'contactName',
+        'ContactName',
+      ],
+      'title': ['title', 'Title', 'TitleId', 'titleId'],
+      'salutation': ['salutation', 'Salutation', 'SalutationId'],
+      'dateOfBirth': ['dateOfBirth', 'DateOfBirth', 'birthDate', 'GEBDAT'],
+      'nationality': ['nationality', 'Nationality'],
+    };
+
+    final mapped = <String, dynamic>{};
+    for (final entry in aliases.entries) {
+      final value = _firstNonEmptyValue(json, entry.value);
+      if (value != null) {
+        mapped[entry.key] = value;
+      }
+    }
+
+    return mapped;
+  }
+
+  static bool _personHasName(Map<String, dynamic> json) {
+    return _toString(_firstNonEmptyValue(json, const [
+          'firstName',
+          'FirstName',
+          'VORNAME',
+        ])).trim().isNotEmpty ||
+        _toString(_firstNonEmptyValue(json, const [
+          'lastName',
+          'LastName',
+          'NAME',
+        ])).trim().isNotEmpty ||
+        _toString(_firstNonEmptyValue(json, const [
+          'fullName',
+          'FullName',
+          'displayName',
+          'DisplayName',
+        ])).trim().isNotEmpty;
+  }
+
+  static String _resolveTradingName(
+    Map<String, dynamic> json,
+    Map<String, dynamic>? contactPersonJson,
+  ) {
+    final explicit = _toString(
+      _firstNonEmptyValue(json, const [
+        'tradingName',
+        'TradingName',
+        'companyName',
+        'CompanyName',
+        'legalName',
+        'LegalName',
+        'firma',
+        'Firma',
+      ]),
+    );
+    if (explicit.trim().isNotEmpty) return explicit;
+
+    final abacusName = _toString(
+      _firstNonEmptyValue(json, const ['NAME', 'Name', 'name']),
+    );
+    final looksLikeCompany = contactPersonJson != null ||
+        (_toBool(json['isLegalEntity'] ?? json['IsLegalEntity']) ?? false) ||
+        _toString(
+          _firstNonEmptyValue(json, const [
+            'companyId',
+            'CompanyId',
+            'contactPersonId',
+            'ContactPersonId',
+          ]),
+        ).trim().isNotEmpty;
+
+    return looksLikeCompany ? abacusName : '';
+  }
+
+  static Object? _contactEmail(Map<String, dynamic>? contactPersonJson) {
+    if (contactPersonJson == null) return null;
+    return _firstNonEmptyValue(contactPersonJson, const [
+      'emailAddress',
+      'EmailAddress',
+      'email',
+      'Email',
+      'EMAIL',
+    ]);
   }
 
   static String _stripExplicitPrefix(

@@ -690,6 +690,25 @@ class _SyncProgressView extends StatelessWidget {
             progressText,
             style: Theme.of(context).textTheme.bodySmall,
           ),
+          if (state.contractSyncProgressMessage.trim().isNotEmpty ||
+              state.contractSyncProgressTotal > 0) ...[
+            const SizedBox(height: 14),
+            Text(
+              state.contractSyncProgressMessage.trim().isEmpty
+                  ? 'Analyzing contracts...'
+                  : state.contractSyncProgressMessage,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            LinearProgressIndicator(value: state.contractSyncProgressValue),
+            const SizedBox(height: 8),
+            Text(
+              state.contractSyncProgressTotal > 0
+                  ? '${state.contractSyncProgressCurrent} / ${state.contractSyncProgressTotal}'
+                  : 'Working...',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ],
       ),
     );

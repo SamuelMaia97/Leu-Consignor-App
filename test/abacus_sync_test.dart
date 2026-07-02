@@ -14,7 +14,7 @@ void main() {
           fileType: UploadType.agreement,
         ),
         consignorSubjectId: 120149,
-        contractNumber: '12345',
+        contractNumber: 'COC-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.contractSigned,
       );
@@ -22,8 +22,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'ConsignmentContract');
-      expect(json['label'], 'Consignment_Contract_12345');
-      expect(json['documentName'], 'Consignment_Contract_12345.pdf');
+      expect(json['label'], 'COC-26-1');
+      expect(json['documentName'], 'COC-26-1.pdf');
       expect(json['verifyReceipt'], isTrue);
       expect((json['storage'] as Map)['lookupText'], 'Vertrag Einlieferung');
     });
@@ -36,7 +36,7 @@ void main() {
           fileType: UploadType.passport,
         ),
         consignorSubjectId: 120149,
-        contractNumber: '12345',
+        contractNumber: 'COC-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -44,8 +44,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'Passport');
-      expect(json['label'], 'Passport_120149_20260609');
-      expect(json['documentName'], 'Passport_120149_20260609.jpg');
+      expect(json['label'], 'Passport');
+      expect(json['documentName'], 'Passport.jpg');
       expect((json['storage'] as Map)['storageId'],
           '39c1d257-327c-bb79-0408-9be8b5a1dcca');
     });
@@ -59,7 +59,7 @@ void main() {
           kind: 'RepresentativeId',
         ),
         consignorSubjectId: 120149,
-        contractNumber: '12345',
+        contractNumber: 'COC-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -67,9 +67,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'RepresentativePassport');
-      expect(json['label'], 'Representative_Passport_120149_20260609');
-      expect(
-          json['documentName'], 'Representative_Passport_120149_20260609.jpg');
+      expect(json['label'], 'Representative');
+      expect(json['documentName'], 'Representative.jpg');
       expect((json['storage'] as Map)['lookupText'], 'Passport');
     });
 
@@ -82,7 +81,7 @@ void main() {
           kind: 'RepresentativeIdValidationReport',
         ),
         consignorSubjectId: 120149,
-        contractNumber: '12345',
+        contractNumber: 'COC-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -106,7 +105,7 @@ void main() {
           fileType: UploadType.product,
         ),
         consignorSubjectId: 120149,
-        contractNumber: '12345',
+        contractNumber: 'COC-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -114,8 +113,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'CoinImage');
-      expect(json['label'], 'Coin_temp_coin_1_20260609');
-      expect(json['documentName'], 'Coin_temp_coin_1_20260609.png');
+      expect(json['label'], 'COC-26-1-Product-1');
+      expect(json['documentName'], 'COC-26-1-Product-1.png');
       expect(json['contentType'], 'image/png');
       expect((json['storage'] as Map)['abbreviation'], 'EINL');
     });
