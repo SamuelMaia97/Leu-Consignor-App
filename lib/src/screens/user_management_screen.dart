@@ -58,7 +58,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   Future<void> _removeUser(String username) async {
-    if (username == AppLockService.defaultUsername) {
+    if (username == AppLockService.adminUsername) {
       _showSnack('The admin user cannot be removed.');
       return;
     }
@@ -69,7 +69,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -78,66 +79,71 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     return AppShell(
       title: 'Users',
       child: !isAdmin
-          ? const Center(child: Text('Only the admin user can manage app users.'))
+          ? const Center(
+              child: Text('Only the admin user can manage app users.'))
           : ListView(
-        children: [
-          const PageHeader(
-            eyebrow: 'ADMIN',
-            title: 'Manage app users',
-          ),
-          const SizedBox(height: 24),
-          SectionCard(
-            title: 'Add or update user',
-            icon: Icons.person_add_alt_1_outlined,
-            child: Column(
               children: [
-                TextField(
-                  controller: _usernameController,
-                  decoration: const InputDecoration(labelText: 'Username'),
+                const PageHeader(
+                  eyebrow: 'ADMIN',
+                  title: 'Manage app users',
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _saveUser,
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('Save user'),
+                const SizedBox(height: 24),
+                SectionCard(
+                  title: 'Add or update user',
+                  icon: Icons.person_add_alt_1_outlined,
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _usernameController,
+                        decoration:
+                            const InputDecoration(labelText: 'Username'),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        decoration:
+                            const InputDecoration(labelText: 'Password'),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _saveUser,
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('Save user'),
+                        ),
+                      ),
+                    ],
                   ),
+                ),
+                const SizedBox(height: 18),
+                SectionCard(
+                  title: 'Existing users',
+                  icon: Icons.people_outline,
+                  child: _loading
+                      ? const Center(child: CircularProgressIndicator())
+                      : Column(
+                          children: [
+                            for (final username in _usernames)
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(username),
+                                trailing: IconButton(
+                                  tooltip: 'Remove user',
+                                  onPressed:
+                                      username == AppLockService.adminUsername
+                                          ? null
+                                          : () => _removeUser(username),
+                                  icon:
+                                      const Icon(Icons.delete_outline_rounded),
+                                ),
+                              ),
+                          ],
+                        ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 18),
-          SectionCard(
-            title: 'Existing users',
-            icon: Icons.people_outline,
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : Column(
-                    children: [
-                      for (final username in _usernames)
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(username),
-                          trailing: IconButton(
-                            tooltip: 'Remove user',
-                            onPressed: username == AppLockService.defaultUsername
-                                ? null
-                                : () => _removeUser(username),
-                            icon: const Icon(Icons.delete_outline_rounded),
-                          ),
-                        ),
-                    ],
-                  ),
-          ),
-        ],
-      ),
     );
   }
 }

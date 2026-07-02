@@ -4,9 +4,13 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class AppLockService {
-  static const defaultUsername = 'admin';
-  static const defaultPassword = 'LeuConsignorApp2026!';
+  static const adminUsername = 'admin';
+  static const adminPassword = 'LeuConsignorApp2026!';
+  static const defaultUsername = 'yves';
+  static const defaultPassword = 'mugi39';
   static const _usersKey = 'app_lock_users_v1';
+  static const _seedVersionKey = 'app_lock_seed_version';
+  static const _seedVersion = '2';
 
   // Legacy key kept only so older installations can still unlock with the
   // previous single-password value before an administrator changes users.
@@ -45,6 +49,7 @@ class AppLockService {
   Future<void> removeUser(String username) async {
     final normalizedUsername = _normalizeUsername(username);
     if (normalizedUsername.isEmpty) return;
+    if (normalizedUsername == adminUsername) return;
 
     final users = await _readUsers();
     users.remove(normalizedUsername);
@@ -72,32 +77,60 @@ class AppLockService {
   Future<Map<String, String>> _readUsers() async {
     final raw = await _storage.read(key: _usersKey);
     if (raw == null || raw.trim().isEmpty) {
-      final seeded = <String, String>{
-        defaultUsername: _hash(defaultPassword),
-      };
-      await _writeUsers(seeded);
-      return seeded;
+      return _seedUsers();
     }
 
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        return decoded.map(
+        final users = decoded.map(
           (key, value) => MapEntry(
             _normalizeUsername(key.toString()),
             value.toString(),
           ),
         )..removeWhere((key, value) => key.isEmpty || value.isEmpty);
+        return _migrateSeedUsers(users);
       }
     } catch (_) {
       // Re-seed corrupt storage rather than blocking all access.
     }
 
+    return _seedUsers();
+  }
+
+  Future<Map<String, String>> _seedUsers() async {
     final seeded = <String, String>{
       defaultUsername: _hash(defaultPassword),
+      adminUsername: _hash(adminPassword),
     };
     await _writeUsers(seeded);
+    await _storage.write(key: _seedVersionKey, value: _seedVersion);
     return seeded;
+  }
+
+  Future<Map<String, String>> _migrateSeedUsers(
+    Map<String, String> users,
+  ) async {
+    if (users.isEmpty) return _seedUsers();
+
+    final seedVersion = await _storage.read(key: _seedVersionKey);
+    if (seedVersion == _seedVersion) return users;
+
+    var changed = false;
+    users.putIfAbsent(defaultUsername, () {
+      changed = true;
+      return _hash(defaultPassword);
+    });
+    users.putIfAbsent(adminUsername, () {
+      changed = true;
+      return _hash(adminPassword);
+    });
+
+    if (changed) {
+      await _writeUsers(users);
+    }
+    await _storage.write(key: _seedVersionKey, value: _seedVersion);
+    return users;
   }
 
   Future<void> _writeUsers(Map<String, String> users) async {

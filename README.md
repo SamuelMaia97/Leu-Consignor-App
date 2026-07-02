@@ -165,6 +165,7 @@ Microsoft sign-in is currently implemented for desktop/mobile loopback flows and
 The app opens with a local lock screen before showing the main application.
 
 - The built-in administrator username is `admin`.
+- The default local username is `yves`.
 - The seeded development password is defined in `lib/src/services/app_lock_service.dart`.
 - Change the default password immediately for any shared environment.
 - The administrator can manage local app users from the **Users** screen.
