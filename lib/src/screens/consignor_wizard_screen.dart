@@ -2160,6 +2160,7 @@ class _WizardDraft {
   bool coinsOwnedByConsignor = true;
   int systemReferenceConsignor = 0;
   int systemReferenceCustomer = 0;
+  int? abacusSubjectId;
   int? existingCustomerId;
   String? existingCustomerLabel;
   String prefillVatNumber = '';
@@ -2314,6 +2315,7 @@ class _WizardDraft {
         'coinsOwnedByConsignor': coinsOwnedByConsignor,
         'systemReferenceConsignor': systemReferenceConsignor,
         'systemReferenceCustomer': systemReferenceCustomer,
+        'abacusSubjectId': abacusSubjectId,
         'existingCustomerId': existingCustomerId,
         'existingCustomerLabel': existingCustomerLabel,
         'prefillVatNumber': prefillVatNumber,
@@ -2431,6 +2433,7 @@ class _WizardDraft {
     coinsOwnedByConsignor = _toBool(json['coinsOwnedByConsignor']) ?? true;
     systemReferenceConsignor = _toInt(json['systemReferenceConsignor']) ?? 0;
     systemReferenceCustomer = _toInt(json['systemReferenceCustomer']) ?? 0;
+    abacusSubjectId = _toInt(json['abacusSubjectId']);
     existingCustomerId = _toInt(json['existingCustomerId']);
     existingCustomerLabel = _stringOrNull(json['existingCustomerLabel']);
     prefillVatNumber = _toString(json['prefillVatNumber']);
@@ -2621,6 +2624,7 @@ class _WizardDraft {
     localConsignorId = prefill.id;
     systemReferenceConsignor = prefill.systemReferenceConsignor;
     systemReferenceCustomer = prefill.systemReferenceCustomer;
+    abacusSubjectId = prefill.abacusSubjectId;
     existingCustomerId = prefill.existingCustomerId ??
         (prefill.systemReferenceCustomer > 0
             ? prefill.systemReferenceCustomer
@@ -2810,6 +2814,7 @@ class _WizardDraft {
     }
     consignor.systemReferenceConsignor = systemReferenceConsignor;
     consignor.systemReferenceCustomer = systemReferenceCustomer;
+    consignor.abacusSubjectId = abacusSubjectId;
     consignor.paymentOption = paymentOption;
     consignor.existingCustomerId = existingCustomerId;
     consignor.existingCustomerLabel = existingCustomerLabel;
@@ -3670,6 +3675,34 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     validator: (value) =>
                         value == null ? 'Correspondence is required' : null,
                     onChanged: (value) => draft.correspondence = value?.value,
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-references'),
+                    initialValue: draft.references,
+                    decoration: const InputDecoration(labelText: 'References'),
+                    onChanged: (value) {
+                      draft.references = value;
+                      onChanged();
+                    },
+                  ),
+                  TextFormField(
+                    key: ValueKey('$_keyPrefix-field-discount'),
+                    initialValue: _formatNullablePercent(draft.discount),
+                    decoration: const InputDecoration(
+                      labelText: 'Discount',
+                      suffixText: '%',
+                    ),
+                    validator: (value) =>
+                        _optionalPercentage(value, 'Discount'),
+                    onChanged: (value) {
+                      draft.discount = _parseOptionalPercent(value);
+                      onChanged();
+                    },
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
+                    ],
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-newsletter-subscribed'),

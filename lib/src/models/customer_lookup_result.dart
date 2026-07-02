@@ -29,16 +29,11 @@ class CustomerLookupResult {
   }
 
   String get searchSubtitle {
-    if (customerId <= 0 && emailAddress.trim().isEmpty) {
-      return displayLabel;
+    if (customerId > 0) {
+      return 'ID $customerId';
     }
 
-    final fragments = <String>[
-      if (customerId > 0) 'ID $customerId',
-      if (emailAddress.trim().isNotEmpty) emailAddress.trim(),
-    ];
-
-    return fragments.join(' • ');
+    return emailAddress.trim().isNotEmpty ? emailAddress.trim() : displayLabel;
   }
 
   static int? _toInt(Object? value) =>

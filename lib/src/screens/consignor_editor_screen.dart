@@ -1296,39 +1296,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             onChanged: (value) =>
                                 _model.correspondence = value?.value,
                           ),
-                          _BooleanCard(
-                            key: const ValueKey(
-                              'editor-field-newsletter-subscribed',
-                            ),
-                            title: 'Newsletter subscribed',
-                            subtitle: 'Marketing communication preference.',
-                            value: _model.newsletterSubscribed,
-                            onChanged: (value) => setState(
-                              () => _model.newsletterSubscribed = value,
-                            ),
-                          ),
-                          _BooleanCard(
-                            key: const ValueKey(
-                              'editor-field-ancient-coins-subscribed',
-                            ),
-                            title: 'Catalogue Ancient coins',
-                            subtitle: 'Collector preference.',
-                            value: _model.ancientCoinsSubscribed,
-                            onChanged: (value) => setState(
-                              () => _model.ancientCoinsSubscribed = value,
-                            ),
-                          ),
-                          _BooleanCard(
-                            key: const ValueKey(
-                              'editor-field-world-coins-subscribed',
-                            ),
-                            title: 'Catalogue Medieval and Modern coins',
-                            subtitle: 'Collector preference.',
-                            value: _model.worldCoinsSubscribed,
-                            onChanged: (value) => setState(
-                              () => _model.worldCoinsSubscribed = value,
-                            ),
-                          ),
                           TextFormField(
                             key: const ValueKey('editor-field-references'),
                             initialValue: _model.references,
@@ -1362,6 +1329,39 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                                 RegExp(r'[0-9,.% ]'),
                               ),
                             ],
+                          ),
+                          _BooleanCard(
+                            key: const ValueKey(
+                              'editor-field-newsletter-subscribed',
+                            ),
+                            title: 'Newsletter subscribed',
+                            subtitle: 'Marketing communication preference.',
+                            value: _model.newsletterSubscribed,
+                            onChanged: (value) => setState(
+                              () => _model.newsletterSubscribed = value,
+                            ),
+                          ),
+                          _BooleanCard(
+                            key: const ValueKey(
+                              'editor-field-ancient-coins-subscribed',
+                            ),
+                            title: 'Catalogue Ancient coins',
+                            subtitle: 'Collector preference.',
+                            value: _model.ancientCoinsSubscribed,
+                            onChanged: (value) => setState(
+                              () => _model.ancientCoinsSubscribed = value,
+                            ),
+                          ),
+                          _BooleanCard(
+                            key: const ValueKey(
+                              'editor-field-world-coins-subscribed',
+                            ),
+                            title: 'Catalogue Medieval and Modern coins',
+                            subtitle: 'Collector preference.',
+                            value: _model.worldCoinsSubscribed,
+                            onChanged: (value) => setState(
+                              () => _model.worldCoinsSubscribed = value,
+                            ),
                           ),
                         ],
                       ),
