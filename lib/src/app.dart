@@ -8,9 +8,11 @@ import 'screens/contract_list_screen.dart';
 import 'screens/contracts_overview_screen.dart';
 import 'screens/consignor_editor_screen.dart';
 import 'screens/consignor_list_screen.dart';
+import 'screens/consignor_overview_screen.dart';
 import 'screens/consignor_wizard_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/sync_health_screen.dart';
 import 'screens/user_management_screen.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
@@ -29,6 +31,10 @@ class _LeuAppState extends State<LeuApp> {
     routes: [
       GoRoute(path: '/', builder: (_, __) => const HomeScreen()),
       GoRoute(
+        path: '/sync-health',
+        builder: (_, __) => const SyncHealthScreen(),
+      ),
+      GoRoute(
           path: '/consignors', builder: (_, __) => const ConsignorListScreen()),
       GoRoute(
         path: '/consignors/new',
@@ -42,6 +48,11 @@ class _LeuAppState extends State<LeuApp> {
       ),
       GoRoute(
         path: '/consignors/:id',
+        builder: (_, state) => ConsignorOverviewScreen(
+            consignorId: state.pathParameters['id'] ?? ''),
+      ),
+      GoRoute(
+        path: '/consignors/:id/edit',
         builder: (_, state) =>
             ConsignorEditorScreen(consignorId: state.pathParameters['id']),
       ),

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/consignor.dart';
+import '../models/contract_record.dart';
 import '../models/sync_status.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -224,6 +225,7 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
         builder: (context, state, _) {
           final summary = _ConsignorListSummary.from(
             consignors: state.consignors,
+            contracts: state.contracts,
             query: _query,
             quickFilter: _quickFilter,
           );
@@ -308,7 +310,7 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
                 child: SectionCard(
                   title: 'Search and manage',
                   subtitle:
-                      'Search by name, email, phone, address, or use the quick status filters below.',
+                      'Search by Abacus ID, name, contact person, email, phone, contract number, IBAN ending, representative, or status.',
                   icon: Icons.manage_search_outlined,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -322,7 +324,7 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
                                 prefixIcon: Icon(Icons.search_rounded),
                                 labelText: 'Search consignors',
                                 hintText:
-                                    'Try a name, email, city, or error text',
+                                    'Try an ID, COC number, email, IBAN ending, or representative',
                               ),
                             ),
                           ),
@@ -516,6 +518,7 @@ class _ConsignorListSummary {
 
   factory _ConsignorListSummary.from({
     required List<Consignor> consignors,
+    required List<ContractRecord> contracts,
     required String query,
     required _ConsignorQuickFilter quickFilter,
   }) {
@@ -549,7 +552,7 @@ class _ConsignorListSummary {
       }
 
       if (normalizedQuery.isEmpty ||
-          _buildSearchText(consignor).contains(normalizedQuery)) {
+          _buildSearchText(consignor, contracts).contains(normalizedQuery)) {
         visibleItems.add(consignor);
       }
     }
@@ -583,8 +586,22 @@ class _ConsignorListSummary {
     }
   }
 
-  static String _buildSearchText(Consignor consignor) {
+  static String _buildSearchText(
+    Consignor consignor,
+    List<ContractRecord> contracts,
+  ) {
     final address = consignor.consignorAddress.toSingleLine();
+    final relatedContracts =
+        contracts.where((contract) => contract.consignorId == consignor.id);
+    final contractNumbers = relatedContracts
+        .map(_contractNumber)
+        .where((value) => value.trim().isNotEmpty)
+        .join(' ');
+    final representatives = relatedContracts
+        .map((contract) => contract.authorizedRepresentative?.displayName ?? '')
+        .where((value) => value.trim().isNotEmpty)
+        .join(' ');
+    final accountNumber = consignor.bankingDetails.accountNumber;
 
     return [
       consignor.id,
@@ -597,10 +614,38 @@ class _ConsignorListSummary {
       _consignorContactPersonName(consignor),
       consignor.emailAddress,
       consignor.fullPhoneNumber,
+      accountNumber,
+      _accountEnding(accountNumber),
+      consignor.bankingDetails.bankName,
+      contractNumbers,
+      representatives,
       address,
       consignor.syncErrorMessage ?? '',
       _statusSearchTerms(consignor.syncStatus),
     ].join(' ').toLowerCase();
+  }
+
+  static String _contractNumber(ContractRecord contract) {
+    final pattern =
+        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+    final candidates = <String>[
+      contract.pdfName,
+      contract.id,
+      ...contract.uploads.map((upload) => upload.fileName),
+    ];
+
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(0)!.toUpperCase();
+    }
+
+    return contract.pdfName;
+  }
+
+  static String _accountEnding(String accountNumber) {
+    final normalized = accountNumber.replaceAll(RegExp(r'\s+'), '');
+    if (normalized.length <= 4) return normalized;
+    return normalized.substring(normalized.length - 4);
   }
 
   static String _statusSearchTerms(RecordSyncStatus status) {
@@ -828,7 +873,7 @@ class _ConsignorRow extends StatelessWidget {
                   onPressed: () => context.go(
                     item.syncStatus == RecordSyncStatus.draft
                         ? '/consignors/${item.id}/resume'
-                        : '/consignors/${item.id}',
+                        : '/consignors/${item.id}/edit',
                   ),
                   icon: const Icon(Icons.edit_outlined),
                 ),

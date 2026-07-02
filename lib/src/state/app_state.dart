@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/activity_event.dart';
 import '../models/app_settings.dart';
 import '../models/abacus_sync.dart';
 import '../models/auction_option.dart';
@@ -10,6 +11,7 @@ import '../models/contract_record.dart';
 import '../models/country.dart';
 import '../models/phone_prefix.dart';
 import '../models/sync_status.dart';
+import '../repositories/activity_repository.dart';
 import '../repositories/consignor_repository.dart';
 import '../repositories/contract_repository.dart';
 import '../repositories/country_repository.dart';
@@ -22,6 +24,7 @@ import '../services/auth_service.dart';
 class AppState extends ChangeNotifier {
   final _consignorRepo = ConsignorRepository();
   final _contractRepo = ContractRepository();
+  final _activityRepo = ActivityRepository();
   final _countryRepo = CountryRepository();
   final _phonePrefixRepo = PhonePrefixRepository();
   final _settingsRepo = SettingsRepository();
@@ -40,6 +43,7 @@ class AppState extends ChangeNotifier {
   List<PhonePrefix> phonePrefixes = const [];
   List<Consignor> consignors = const [];
   List<ContractRecord> contracts = const [];
+  List<ActivityEvent> activityEvents = const [];
   List<AuctionOption> auctions = const [];
   AppSettings settings = const AppSettings();
   String token = '';
@@ -55,6 +59,9 @@ class AppState extends ChangeNotifier {
   int contractSyncProgressTotal = 0;
   String contractSyncProgressMessage = '';
   String? lastMessage;
+  DateTime? lastConnectionCheckUtc;
+  bool? lastConnectionSucceeded;
+  String? lastConnectionError;
   String? activeUsername;
   List<RemoteReportFieldIssue> lastSyncMissingReportFields = const [];
 
@@ -146,6 +153,7 @@ class AppState extends ChangeNotifier {
     await refreshAuthSessionState(notify: false);
     _startAuthMonitor();
     await _refreshLocalCollections();
+    _refreshActivityEvents();
     await refreshPhonePrefixes(silent: true);
 
     loading = false;
@@ -248,6 +256,13 @@ class AppState extends ChangeNotifier {
       consignor,
       editorUsername: activeUsername,
     );
+    await addActivity(
+      ActivityEventType.consignorSaved,
+      'Consignor saved',
+      description: consignor.displayName,
+      relatedConsignorId: consignor.id,
+      notify: false,
+    );
     await _refreshLocalCollections();
     final saved = consignorById(consignor.id) ?? consignor;
     notifyListeners();
@@ -256,6 +271,13 @@ class AppState extends ChangeNotifier {
 
   Future<Consignor> saveConsignorDraft(Consignor consignor) async {
     await _consignorRepo.saveDraft(consignor, editorUsername: activeUsername);
+    await addActivity(
+      ActivityEventType.consignorSaved,
+      'Consignor draft saved',
+      description: consignor.displayName,
+      relatedConsignorId: consignor.id,
+      notify: false,
+    );
     await _refreshLocalCollections();
     final saved = consignorById(consignor.id) ?? consignor;
     notifyListeners();
@@ -286,10 +308,21 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> saveContract(ContractRecord contract) async {
+    final existing = _contractRepo.getById(contract.id);
     if (contract.syncStatus.needsSync) {
       contract.markLocalChange(activeUsername);
     }
     await _contractRepo.put(contract);
+    await addActivity(
+      existing == null
+          ? ActivityEventType.contractCreated
+          : ActivityEventType.contractUpdated,
+      existing == null ? 'Contract created' : 'Contract updated',
+      description: contract.pdfName,
+      relatedConsignorId: contract.consignorId,
+      relatedContractId: contract.id,
+      notify: false,
+    );
     await _refreshLocalCollections();
     notifyListeners();
   }
@@ -367,9 +400,27 @@ class AppState extends ChangeNotifier {
     try {
       final api = ApiService(settings, token);
       await api.validateConnection();
+      lastConnectionCheckUtc = DateTime.now().toUtc();
+      lastConnectionSucceeded = true;
+      lastConnectionError = null;
       lastMessage = 'Connection test succeeded.';
+      await addActivity(
+        ActivityEventType.connectionSucceeded,
+        'Abacus connection succeeded',
+        description: settings.apiBaseUrl,
+        notify: false,
+      );
     } catch (e) {
+      lastConnectionCheckUtc = DateTime.now().toUtc();
+      lastConnectionSucceeded = false;
+      lastConnectionError = e.toString();
       lastMessage = 'Connection test failed: $e';
+      await addActivity(
+        ActivityEventType.connectionFailed,
+        'Abacus connection failed',
+        description: e.toString(),
+        notify: false,
+      );
     }
 
     notifyListeners();
@@ -532,6 +583,13 @@ class AppState extends ChangeNotifier {
       } else {
         lastMessage = 'Consignor synced successfully.';
       }
+      await addActivity(
+        ActivityEventType.syncSucceeded,
+        'Consignor sync succeeded',
+        description: updated.displayName,
+        relatedConsignorId: updated.id,
+        notify: false,
+      );
       final result = consignorById(updated.id);
       syncCompleter.complete(result);
       return result;
@@ -539,6 +597,13 @@ class AppState extends ChangeNotifier {
       final current = consignorById(id) ?? initial;
       current.markSyncFailed('Sync failed: $e');
       await _consignorRepo.put(current);
+      await addActivity(
+        ActivityEventType.syncFailed,
+        'Consignor sync failed',
+        description: e.toString(),
+        relatedConsignorId: current.id,
+        notify: false,
+      );
       await _refreshLocalCollections();
       lastMessage = 'Consignor sync failed: $e';
       final result = consignorById(current.id);
@@ -566,6 +631,11 @@ class AppState extends ChangeNotifier {
 
     if (current == null) return null;
     var contractToSync = current;
+    if (syncEvent == AbacusContractSyncEvent.manualSync &&
+        contractToSync.syncStatus == RecordSyncStatus.draft) {
+      lastMessage = 'Draft contracts stay local and are ignored by sync.';
+      return contractToSync;
+    }
     if (!contractToSync.hasLocalChanges &&
         syncEvent == AbacusContractSyncEvent.manualSync) {
       return contractToSync;
@@ -651,6 +721,14 @@ class AppState extends ChangeNotifier {
       );
       updated.markSynced(remoteModifiedUtc: synced.lastModifiedUtc);
       await _contractRepo.put(updated);
+      await addActivity(
+        ActivityEventType.syncSucceeded,
+        'Contract sync succeeded',
+        description: updated.pdfName,
+        relatedConsignorId: contractToSync.consignorId,
+        relatedContractId: contractToSync.id,
+        notify: false,
+      );
       await _refreshLocalCollections();
       lastMessage = 'Contract synced successfully.';
       return _contractRepo.getByConsignorAndAuction(
@@ -660,6 +738,14 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       contractToSync.markSyncFailed('Sync failed: $e');
       await _contractRepo.put(contractToSync);
+      await addActivity(
+        ActivityEventType.syncFailed,
+        'Contract sync failed',
+        description: e.toString(),
+        relatedConsignorId: contractToSync.consignorId,
+        relatedContractId: contractToSync.id,
+        notify: false,
+      );
       await _refreshLocalCollections();
       lastMessage = 'Contract sync failed: $e';
       return _contractRepo.getByConsignorAndAuction(
@@ -681,6 +767,12 @@ class AppState extends ChangeNotifier {
     lastSyncMissingReportFields = const [];
     _setContractSyncProgress(0, 0, '');
     _setSyncProgress(0, 0, 'Starting sync...');
+    await addActivity(
+      ActivityEventType.syncStarted,
+      'Workspace sync started',
+      description: settings.apiBaseUrl,
+      notify: false,
+    );
 
     try {
       final api = ApiService(settings, token);
@@ -834,7 +926,7 @@ class AppState extends ChangeNotifier {
       );
 
       final dirtyContracts = contracts
-          .where((e) => e.auctionId != null && e.hasLocalChanges)
+          .where((e) => e.shouldUploadDuringWorkspaceSync)
           .toList(growable: false);
 
       workTotal += dirtyContracts.length;
@@ -872,6 +964,9 @@ class AppState extends ChangeNotifier {
       final completedUtc = DateTime.now().toUtc();
       settings = settings.copyWith(lastSyncCompletedUtc: completedUtc);
       await _settingsRepo.saveSettings(settings);
+      lastConnectionCheckUtc = completedUtc;
+      lastConnectionSucceeded = true;
+      lastConnectionError = null;
 
       _setSyncProgress(
         workCurrent,
@@ -897,9 +992,24 @@ class AppState extends ChangeNotifier {
           'analyzed $analyzedContractDocuments Abacus contract document${analyzedContractDocuments == 1 ? '' : 's'}, '
           'fetched $fetchedRemoteContracts Abacus contract${fetchedRemoteContracts == 1 ? '' : 's'}, '
           'synced $uploadedConsignors pending consignor${uploadedConsignors == 1 ? '' : 's'} and $uploadedContracts contract${uploadedContracts == 1 ? '' : 's'}.$missingFieldsMessage$contractIssuesMessage';
+      await addActivity(
+        ActivityEventType.syncSucceeded,
+        'Workspace sync succeeded',
+        description: lastMessage ?? '',
+        notify: false,
+      );
     } catch (e) {
       final message = 'Sync failed: $e';
       lastMessage = message;
+      lastConnectionCheckUtc = DateTime.now().toUtc();
+      lastConnectionSucceeded = false;
+      lastConnectionError = e.toString();
+      await addActivity(
+        ActivityEventType.syncFailed,
+        'Workspace sync failed',
+        description: e.toString(),
+        notify: false,
+      );
       await _markDirtyRecordsSyncFailed(message);
       await _refreshLocalCollections();
 
@@ -987,6 +1097,31 @@ class AppState extends ChangeNotifier {
   Future<void> _refreshLocalCollections() async {
     consignors = _consignorRepo.getAll();
     contracts = _contractRepo.getAll();
+  }
+
+  void _refreshActivityEvents() {
+    activityEvents = _activityRepo.getAll();
+  }
+
+  Future<void> addActivity(
+    ActivityEventType type,
+    String title, {
+    String description = '',
+    String? relatedConsignorId,
+    String? relatedContractId,
+    bool notify = true,
+  }) async {
+    await _activityRepo.add(
+      ActivityEvent.create(
+        type: type,
+        title: title,
+        description: description,
+        relatedConsignorId: relatedConsignorId,
+        relatedContractId: relatedContractId,
+      ),
+    );
+    _refreshActivityEvents();
+    if (notify) notifyListeners();
   }
 
   Future<void> _mergeRemoteConsignors(List<Consignor> remoteConsignors) async {
@@ -1091,7 +1226,8 @@ class AppState extends ChangeNotifier {
     }
 
     final currentContracts = _contractRepo.getAll();
-    for (final contract in currentContracts.where((e) => e.hasLocalChanges)) {
+    for (final contract
+        in currentContracts.where((e) => e.shouldUploadDuringWorkspaceSync)) {
       contract.markSyncFailed(message);
       await _contractRepo.put(contract);
     }

@@ -10,6 +10,7 @@ import 'package:iban_to_bic/iban_to_bic.dart';
 import 'package:provider/provider.dart';
 
 import '../domain/consignor_type.dart';
+import '../models/activity_event.dart';
 import '../models/abacus_sync.dart';
 import '../models/auction_option.dart';
 import '../models/consignor.dart';
@@ -17,8 +18,9 @@ import '../models/contract_record.dart';
 import '../models/country.dart';
 import '../models/customer_lookup_result.dart';
 import '../models/payment_option.dart';
-import '../repositories/wizard_draft_repository.dart';
 import '../models/phone_prefix.dart';
+import '../models/sync_status.dart';
+import '../repositories/wizard_draft_repository.dart';
 import '../services/api_service.dart';
 import '../services/contract_pdf_service.dart';
 import '../services/desko_id_analyze_service.dart';
@@ -30,9 +32,12 @@ import '../utils/banking_rules.dart';
 import '../utils/form_validators.dart';
 import '../utils/penta_scan_parser.dart';
 import '../utils/phone_number_parser.dart';
+import '../utils/workflow_status.dart';
 import '../widgets/app_shell.dart';
+import '../widgets/attachment_status_badges.dart';
 import '../widgets/country_dropdown.dart';
 import '../widgets/multi_auction_select_field.dart';
+import '../widgets/ready_to_sync_checklist.dart';
 import '../widgets/searchable_select_field.dart';
 import '../widgets/status_badge.dart';
 import '../widgets/section_card.dart';
@@ -112,6 +117,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   String? _activeContractId;
   String? _generatedPdfPath;
   bool _generatedPdfIncludesSignatures = false;
+  bool _provisionalContractSubmitted = false;
   List<CustomerLookupResult> _matches = const [];
   List<CustomerLookupResult> _representativeMatches = const [];
   String _activeIbanLookup = '';
@@ -261,6 +267,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _generatedPdfPath = savedState['generatedPdfPath']?.toString();
     _generatedPdfIncludesSignatures =
         _asBool(savedState['generatedPdfIncludesSignatures']) ?? false;
+    _provisionalContractSubmitted =
+        _asBool(savedState['provisionalContractSubmitted']) ?? false;
 
     final ownerJson = _asMap(savedState['draft']);
     if (ownerJson != null) {
@@ -318,6 +326,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _generatedPdfPath =
           contract.pdfPath.trim().isEmpty ? null : contract.pdfPath;
       _generatedPdfIncludesSignatures = false;
+      _provisionalContractSubmitted = _isSubmittedProvisionalContract(contract);
       final reviewStep = _steps.indexOf(_WizardStep.fullReview);
       _step = reviewStep >= 0 ? reviewStep : _steps.length - 1;
     } else if (consignor != null) {
@@ -360,6 +369,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       'contractId': _activeContractId,
       'generatedPdfPath': _generatedPdfPath,
       'generatedPdfIncludesSignatures': _generatedPdfIncludesSignatures,
+      'provisionalContractSubmitted': _provisionalContractSubmitted,
       'draft': _draft.toResumeJson(),
       'representativeDraft': _representativeDraft.toResumeJson(),
       'savedAtUtc': DateTime.now().toUtc().toIso8601String(),
@@ -624,6 +634,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
               }
             }
           });
+          await context.read<AppState>().addActivity(
+                ActivityEventType.passportDownloaded,
+                representative
+                    ? 'Representative passport downloaded'
+                    : 'Consignor passport downloaded',
+                description: hydrated.fileName,
+                relatedConsignorId: targetDraft.localConsignorId,
+              );
         } catch (_) {
           // Metadata is already attached; the user can retry later.
         }
@@ -1463,15 +1481,6 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     final uploads = <ContractUpload>[];
     for (final upload in _draft.uploads) {
       if (upload.isGeneratedContractPdf) {
-        if ((upload.fileId ?? 0) > 0) {
-          uploads.add(
-            upload.copyWith(
-              auctionId: firstAuctionId,
-              isDeleted: true,
-              localLastModifiedUtc: nowUtc,
-            ),
-          );
-        }
         continue;
       }
 
@@ -1508,12 +1517,16 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     );
 
     final persistedContractId = _activeContractId?.trim();
+    final authorizedRepresentative = _requiresRepresentativeDetails
+        ? _representativeDraft.toConsignor()
+        : null;
 
     return baseRecord.copyWith(
       id: persistedContractId == null || persistedContractId.isEmpty
           ? baseRecord.id
           : persistedContractId,
       uploads: uploads,
+      authorizedRepresentative: authorizedRepresentative,
       pdfPath: pdfPath,
       pdfName: pdfName ?? baseRecord.pdfName,
       lastModifiedUtc: nowUtc,
@@ -1528,6 +1541,28 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     return includeSignatures
         ? '$contractNumber.pdf'
         : 'PROV-$contractNumber.pdf';
+  }
+
+  bool _isSubmittedProvisionalContract(ContractRecord contract) {
+    if (contract.syncStatus != RecordSyncStatus.pendingSync &&
+        contract.syncStatus != RecordSyncStatus.synced &&
+        contract.syncStatus != RecordSyncStatus.finalized) {
+      return false;
+    }
+
+    return _hasProvisionalContractName(contract);
+  }
+
+  bool _hasProvisionalContractName(ContractRecord contract) {
+    final candidates = <String>[
+      contract.pdfName,
+      contract.id,
+      ...contract.uploads.map((upload) => upload.fileName),
+    ];
+
+    return candidates.any((candidate) =>
+        RegExp(r'\bPROV-COC-\d{2}-\d+\b', caseSensitive: false)
+            .hasMatch(candidate));
   }
 
   List<AuctionOption> _chronologicalAuctions(List<AuctionOption> auctions) {
@@ -1786,7 +1821,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   Future<bool> _generatePdf({bool includeSignatures = false}) async {
     if (_saving) return false;
     if (!await _ensureProfileReadyForContract()) return false;
+    if (!mounted) return false;
 
+    final appState = context.read<AppState>();
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _saving = true);
     try {
       final file =
@@ -1796,15 +1834,21 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         _generatedPdfPath = file.path;
         _generatedPdfIncludesSignatures = includeSignatures;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PDF created at ${file.path}')),
+      await appState.addActivity(
+        ActivityEventType.pdfGenerated,
+        includeSignatures
+            ? 'Signed contract PDF generated'
+            : 'Provisional contract PDF generated',
+        description: file.path,
+        relatedConsignorId: _draft.localConsignorId,
       );
+      messenger
+          .showSnackBar(SnackBar(content: Text('PDF created at ${file.path}')));
       return true;
     } catch (e) {
       if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('PDF generation failed: $e')),
-      );
+      messenger
+          .showSnackBar(SnackBar(content: Text('PDF generation failed: $e')));
       return false;
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -1884,7 +1928,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     saved = synced ?? state.consignorById(saved.id) ?? saved;
     _draft.localConsignorId = saved.id;
 
-    if (saved.systemReferenceConsignor <= 0) {
+    if (saved.syncStatus == RecordSyncStatus.syncFailed) {
       final message = saved.syncErrorMessage?.trim().isNotEmpty == true
           ? saved.syncErrorMessage!
           : state.lastMessage ??
@@ -1895,6 +1939,87 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
 
     return saved;
+  }
+
+  Future<void> _saveProvisionalContract() async {
+    if (_saving || _provisionalContractSubmitted) return;
+    if (!await _ensureProfileReadyForContract()) return;
+    if (!(_detailsFormKey.currentState?.validate() ?? true)) return;
+    if (!mounted) return;
+
+    final state = context.read<AppState>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    setState(() => _saving = true);
+
+    try {
+      final savedConsignor = await _saveConsignorBeforeContract(state);
+
+      if (_generatedPdfPath == null || _generatedPdfIncludesSignatures) {
+        final file = await _createContractPdf(includeSignatures: false);
+        _generatedPdfPath = file.path;
+        _generatedPdfIncludesSignatures = false;
+        await state.addActivity(
+          ActivityEventType.pdfGenerated,
+          'Provisional contract PDF generated',
+          description: file.path,
+          relatedConsignorId: savedConsignor.id,
+          notify: false,
+        );
+      }
+
+      var contract = _buildContract(savedConsignor.id).copyWith(
+        syncStatus: RecordSyncStatus.pendingSync,
+        lastModifiedUtc: DateTime.now().toUtc(),
+      );
+      _activeContractId = contract.id;
+      await state.saveContract(contract);
+
+      var savedToAbacus = false;
+      if (state.hasValidToken && contract.auctionId != null) {
+        final synced = await state.syncContract(
+          savedConsignor.id,
+          contract.auctionId!,
+          syncEvent: AbacusContractSyncEvent.contractGenerated,
+        );
+        final error = synced?.syncErrorMessage;
+        if (synced == null || (error != null && error.trim().isNotEmpty)) {
+          throw Exception(
+            error ?? state.lastMessage ?? 'Provisional contract sync failed.',
+          );
+        }
+        contract = synced;
+        savedToAbacus = synced.synced;
+      }
+
+      _provisionalContractSubmitted = true;
+      await _saveWizardResumeState(
+        consignorId: savedConsignor.id,
+        contractId: contract.id,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _activeContractId = contract.id;
+      });
+
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            savedToAbacus
+                ? 'Provisional Consignor Contract saved to Abacus.'
+                : 'Provisional Consignor Contract saved locally and pending sync.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Save provisional contract failed: $e')),
+      );
+    }
   }
 
   Future<void> _saveFullFlow() async {
@@ -1924,9 +2049,19 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         final file = await _createContractPdf(includeSignatures: true);
         _generatedPdfPath = file.path;
         _generatedPdfIncludesSignatures = true;
+        await state.addActivity(
+          ActivityEventType.pdfGenerated,
+          'Signed contract PDF generated',
+          description: file.path,
+          relatedConsignorId: savedConsignor.id,
+          notify: false,
+        );
       }
 
-      final contract = _buildContract(savedConsignor.id);
+      final contract = _buildContract(savedConsignor.id).copyWith(
+        syncStatus: RecordSyncStatus.pendingSync,
+        lastModifiedUtc: DateTime.now().toUtc(),
+      );
       _activeContractId = contract.id;
       await state.saveContract(contract);
 
@@ -2227,6 +2362,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
               _requiresRepresentativeDetails ? _representativeDraft : null,
           saving: _saving,
           generatedPdfPath: _generatedPdfPath,
+          provisionalContractSubmitted: _provisionalContractSubmitted,
           onEditConsignor: () {
             unawaited(
               _openConsignorReviewEditor(
@@ -2236,6 +2372,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           },
           onBack: _back,
           onGeneratePdf: () => _generatePdf(),
+          onSaveProvisional: _saveProvisionalContract,
           onOpenPdf: _generatedPdfPath == null
               ? null
               : () => _fileService.open(_generatedPdfPath!),
@@ -4732,9 +4869,11 @@ class _FullReviewStep extends StatelessWidget {
     required this.representative,
     required this.saving,
     required this.generatedPdfPath,
+    required this.provisionalContractSubmitted,
     required this.onEditConsignor,
     required this.onBack,
     required this.onGeneratePdf,
+    required this.onSaveProvisional,
     required this.onOpenPdf,
     required this.onOpenFile,
     required this.onContinue,
@@ -4744,9 +4883,11 @@ class _FullReviewStep extends StatelessWidget {
   final _WizardDraft? representative;
   final bool saving;
   final String? generatedPdfPath;
+  final bool provisionalContractSubmitted;
   final VoidCallback onEditConsignor;
   final VoidCallback onBack;
   final VoidCallback onGeneratePdf;
+  final Future<void> Function() onSaveProvisional;
   final VoidCallback? onOpenPdf;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onContinue;
@@ -4766,6 +4907,11 @@ class _FullReviewStep extends StatelessWidget {
             ? commissionRate
             : '$commissionRate%';
     final consignmentCountry = draft.consignmentCountryName.trim();
+    final readinessIssues = _draftReadinessIssues(
+      draft: draft,
+      representative: representative,
+      generatedPdfPath: generatedPdfPath,
+    );
 
     return ListView(
       children: [
@@ -4811,6 +4957,11 @@ class _FullReviewStep extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        const SizedBox(height: 12),
+        SectionCard(
+          title: 'Ready-to-sync checklist',
+          child: ReadyToSyncChecklist(issues: readinessIssues),
         ),
         const SizedBox(height: 12),
         SectionCard(
@@ -4862,12 +5013,112 @@ class _FullReviewStep extends StatelessWidget {
             onPressed: saving ? null : onBack, child: const Text('Back')),
         const SizedBox(height: 12),
         ElevatedButton.icon(
+          onPressed: saving || provisionalContractSubmitted
+              ? null
+              : () => unawaited(onSaveProvisional()),
+          icon: const Icon(Icons.cloud_upload_outlined),
+          label: const Text('Save Provisional Consignor Contract'),
+        ),
+        if (provisionalContractSubmitted) ...[
+          const SizedBox(height: 6),
+          Text(
+            'The provisional contract has already been submitted. Continue to signatures to create the final COC.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+        const SizedBox(height: 12),
+        ElevatedButton.icon(
           onPressed: saving ? null : onContinue,
           icon: const Icon(Icons.draw_outlined),
           label: const Text('Continue to signatures'),
         ),
       ],
     );
+  }
+
+  static List<ReadinessIssue> _draftReadinessIssues({
+    required _WizardDraft draft,
+    required _WizardDraft? representative,
+    required String? generatedPdfPath,
+  }) {
+    final issues = <ReadinessIssue>[];
+    if (draft.ordererIdFiles.isEmpty) {
+      issues.add(
+        const ReadinessIssue(
+          title: 'No consignor passport',
+          detail: 'Add or download a passport image before saving.',
+          severity: ReadinessSeverity.warning,
+        ),
+      );
+    }
+    final passportValidUntil = draft.passportValidUntil;
+    if (passportValidUntil == null) {
+      issues.add(
+        const ReadinessIssue(
+          title: 'Consignor passport expiry missing',
+          detail: 'Enter the passport valid-until date.',
+          severity: ReadinessSeverity.warning,
+        ),
+      );
+    } else {
+      final endOfDay = DateTime(
+        passportValidUntil.year,
+        passportValidUntil.month,
+        passportValidUntil.day,
+        23,
+        59,
+        59,
+      );
+      if (endOfDay.isBefore(DateTime.now())) {
+        issues.add(
+          const ReadinessIssue(
+            title: 'Consignor passport expired',
+            detail: 'Update the passport images or valid-until date.',
+            severity: ReadinessSeverity.warning,
+          ),
+        );
+      }
+    }
+    if (draft.productFiles.isEmpty) {
+      issues.add(
+        const ReadinessIssue(
+          title: 'No product pictures',
+          detail: 'Attach at least one product picture.',
+          severity: ReadinessSeverity.warning,
+        ),
+      );
+    }
+    if (draft.paymentOption != PaymentOption.cash &&
+        draft.iban.trim().isEmpty &&
+        draft.bankName.trim().isEmpty &&
+        draft.bicSwift.trim().isEmpty) {
+      issues.add(
+        const ReadinessIssue(
+          title: 'Bank information missing',
+          detail: 'Check the payment method and bank details.',
+          severity: ReadinessSeverity.warning,
+        ),
+      );
+    }
+    if (representative != null && draft.representativeIdFiles.isEmpty) {
+      issues.add(
+        const ReadinessIssue(
+          title: 'Representative document missing',
+          detail: 'Add passport images for the authorized representative.',
+          severity: ReadinessSeverity.warning,
+        ),
+      );
+    }
+    if (generatedPdfPath == null || generatedPdfPath.trim().isEmpty) {
+      issues.add(
+        const ReadinessIssue(
+          title: 'PDF not generated',
+          detail: 'Generate the provisional or signed contract PDF.',
+          severity: ReadinessSeverity.warning,
+        ),
+      );
+    }
+    return issues;
   }
 }
 
@@ -6030,6 +6281,8 @@ class _FileTile extends StatelessWidget {
                         ),
                   ),
                 ],
+                const SizedBox(height: 6),
+                AttachmentStatusBadges(upload: upload),
               ],
             ),
           ),

@@ -12,6 +12,7 @@ class LocalStore {
   static const contractsBox = 'contracts';
   static const settingsBox = 'settings';
   static const wizardDraftsBox = 'wizard_drafts';
+  static const activityBox = 'activity';
 
   static Future<Directory> appDirectory() async {
     final documentsDirectory = await getApplicationDocumentsDirectory();
@@ -78,6 +79,7 @@ class LocalStore {
     await Hive.openBox(contractsBox);
     await Hive.openBox(settingsBox);
     await Hive.openBox(wizardDraftsBox);
+    await Hive.openBox(activityBox);
 
     debugPrint('Hive storage path: ${directory.path}');
   }

@@ -71,5 +71,37 @@ void main() {
       expect(record.hasRemoteReference, isTrue);
       expect(record.hasLocalChanges, isFalse);
     });
+
+    test('keeps local drafts editable but out of workspace sync', () {
+      final draft = ContractRecord.empty('100', auctionId: 1).copyWith(
+        uploads: [
+          ContractUpload(
+            localId: 'product-1',
+            fileName: 'COC-26-1-Product-1.png',
+            fileType: UploadType.product,
+          ),
+        ],
+      );
+
+      expect(draft.isEditableDraft, isTrue);
+      expect(draft.hasLocalChanges, isTrue);
+      expect(draft.shouldUploadDuringWorkspaceSync, isFalse);
+    });
+
+    test('allows pending local contracts to upload during workspace sync', () {
+      final pending = ContractRecord.empty('100', auctionId: 1).copyWith(
+        syncStatus: RecordSyncStatus.pendingSync,
+        uploads: [
+          ContractUpload(
+            localId: 'contract-pdf',
+            fileName: 'COC-26-1.pdf',
+            fileType: UploadType.agreement,
+          ),
+        ],
+      );
+
+      expect(pending.isEditableDraft, isFalse);
+      expect(pending.shouldUploadDuringWorkspaceSync, isTrue);
+    });
   });
 }

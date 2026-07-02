@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/abacus_sync.dart';
+import '../models/activity_event.dart';
 import '../models/auction_option.dart';
 import '../models/contract_record.dart';
 import '../models/sync_status.dart';
@@ -16,10 +17,13 @@ import '../services/contract_pdf_service.dart';
 import '../services/file_service.dart';
 import '../state/app_state.dart';
 import '../utils/file_preview.dart';
+import '../utils/workflow_status.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_shell.dart';
+import '../widgets/attachment_status_badges.dart';
 import '../widgets/page_header.dart';
 import '../widgets/multi_auction_select_field.dart';
+import '../widgets/ready_to_sync_checklist.dart';
 import '../widgets/section_card.dart';
 
 const _ordererIdKind = 'NaturalPersonId';
@@ -82,7 +86,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
 
     _lastPersistedRecordId = _record.id;
     _captureSnapshot();
-    _registerLeaveGuard();
+    if (_canEditRecord) {
+      _registerLeaveGuard();
+    }
 
     _initialized = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -126,6 +132,15 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   bool get _hasUnsavedChanges => _buildSnapshot() != _initialSnapshot;
+
+  bool get _canEditRecord => _record.isEditableDraft;
+
+  bool _ensureEditable() {
+    if (_canEditRecord) return true;
+    _showSnack(
+        'Synced contracts are read-only. Create a new draft to make changes.');
+    return false;
+  }
 
   Future<void> _persistLocal() async {
     await context.read<AppState>().saveContract(_record);
@@ -227,6 +242,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   Future<void> _updateAuctions(
     List<AuctionOption> selected,
   ) async {
+    if (!_ensureEditable()) return;
+
     final auctionIds =
         selected.map((item) => item.auctionId).toList(growable: false);
     final displayNames =
@@ -246,6 +263,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   Future<bool> _saveAsDraft() async {
+    if (!_ensureEditable()) return false;
+
     final appState = context.read<AppState>();
 
     try {
@@ -269,6 +288,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   Future<bool> _finishContract() async {
+    if (!_ensureEditable()) return false;
+
     final auctionId = _record.auctionId;
     final activeUploads = _record.uploads.where((u) => !u.isDeleted).toList();
 
@@ -291,6 +312,10 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
         await appState.deleteContract(_lastPersistedRecordId!);
       }
 
+      _record = _record.copyWith(
+        syncStatus: RecordSyncStatus.pendingSync,
+        lastModifiedUtc: DateTime.now().toUtc(),
+      );
       await _persistLocal();
       _lastPersistedRecordId = _record.id;
 
@@ -383,6 +408,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   Future<void> _generatePdf() async {
+    if (!_ensureEditable()) return;
+
     final appState = context.read<AppState>();
     final consignor = appState.consignorById(widget.consignorId);
 
@@ -459,6 +486,11 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       return;
     }
 
+    if (_record.syncStatus == RecordSyncStatus.draft) {
+      await _persistLocal();
+      return;
+    }
+
     await _persistLocal();
     final synced = await appState.syncContract(
       widget.consignorId,
@@ -480,6 +512,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     bool fromCamera = false,
     String kind = '',
   }) async {
+    if (!_ensureEditable()) return;
+
     if (_record.auctionId == null) {
       _showSnack('Select at least one auction before adding files.');
       return;
@@ -511,6 +545,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   Future<void> _captureWithPhone({
     required String initialTargetId,
   }) async {
+    if (!_ensureEditable()) return;
+
     if (_record.auctionId == null) {
       _showSnack('Select at least one auction before adding files.');
       return;
@@ -598,6 +634,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     bool openOnComplete = false,
     String kind = '',
   }) async {
+    if (!_ensureEditable()) return;
+
     final auctionId = _record.auctionId;
 
     if (auctionId == null) {
@@ -642,6 +680,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     String? overridePath,
     String? overrideFileName,
   }) async {
+    if (!_ensureEditable()) return;
+
     final auctionId = _record.auctionId;
 
     if (auctionId == null) {
@@ -711,6 +751,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   Future<void> _deleteUpload(ContractUpload upload) async {
+    if (!_ensureEditable()) return;
+
     final nowUtc = DateTime.now().toUtc();
 
     setState(() {
@@ -798,6 +840,13 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
 
       await _persistLocal();
       _captureSnapshot();
+      await state.addActivity(
+        ActivityEventType.passportDownloaded,
+        'File downloaded from Abacus',
+        description: hydrated.fileName,
+        relatedConsignorId: _record.consignorId,
+        relatedContractId: _record.id,
+      );
       await _fileService.open(hydratedPath);
     } catch (e) {
       _showSnack('Could not download this file from Abacus: $e');
@@ -867,6 +916,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   Future<bool> _handlePendingChangesBeforeLeave() async {
+    if (!_canEditRecord) return true;
     if (!_hasUnsavedChanges) return true;
 
     final action = await showDialog<_UnsavedChangesAction>(
@@ -957,6 +1007,12 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     final consignor = state.consignorById(widget.consignorId);
     final auctions = state.auctions;
     final auditUsername = _record.lastEditedByUsername?.trim() ?? '';
+    final canEdit = _canEditRecord;
+    final readinessIssues = WorkflowStatus.readinessIssuesForContract(
+      consignor: consignor,
+      contract: _record,
+      allContracts: state.contracts,
+    );
 
     if (consignor == null) {
       return AppShell(
@@ -993,21 +1049,22 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
               title:
                   'Contract for ${consignor.displayName.isEmpty ? 'consignor' : consignor.displayName}',
               actions: [
-                ElevatedButton.icon(
-                  style: _headerPrimaryButtonStyle(),
-                  onPressed: _busy ? null : _generatePdf,
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.picture_as_pdf_outlined),
-                  label: Text(_busy ? 'Working…' : 'Generate PDF'),
-                ),
+                if (canEdit)
+                  ElevatedButton.icon(
+                    style: _headerPrimaryButtonStyle(),
+                    onPressed: _busy ? null : _generatePdf,
+                    icon: _busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.picture_as_pdf_outlined),
+                    label: Text(_busy ? 'Working…' : 'Generate PDF'),
+                  ),
                 OutlinedButton.icon(
                   style: _headerSecondaryButtonStyle(),
                   onPressed: _record.pdfPath.isEmpty ||
@@ -1017,20 +1074,26 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                   icon: const Icon(Icons.open_in_new_rounded),
                   label: const Text('Open PDF'),
                 ),
-                OutlinedButton.icon(
-                  style: _headerSecondaryButtonStyle(),
-                  onPressed: _busy ? null : _saveAsDraft,
-                  icon: const Icon(Icons.edit_note_outlined),
-                  label: const Text('Save as draft'),
-                ),
-                ElevatedButton.icon(
-                  style: _headerPrimaryButtonStyle(),
-                  onPressed: _busy ? null : _finishContract,
-                  icon: const Icon(Icons.save_rounded),
-                  label: const Text('Save'),
-                ),
+                if (canEdit)
+                  OutlinedButton.icon(
+                    style: _headerSecondaryButtonStyle(),
+                    onPressed: _busy ? null : _saveAsDraft,
+                    icon: const Icon(Icons.edit_note_outlined),
+                    label: const Text('Save as draft'),
+                  ),
+                if (canEdit)
+                  ElevatedButton.icon(
+                    style: _headerPrimaryButtonStyle(),
+                    onPressed: _busy ? null : _finishContract,
+                    icon: const Icon(Icons.save_rounded),
+                    label: const Text('Save'),
+                  ),
               ],
             ),
+            if (!canEdit) ...[
+              const SizedBox(height: 14),
+              _ReadOnlyNotice(record: _record),
+            ],
             if (auditUsername.isNotEmpty) ...[
               const SizedBox(height: 10),
               _AuditText(
@@ -1041,8 +1104,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
             const SizedBox(height: 24),
             SectionCard(
               title: 'Contract settings',
-              subtitle:
-                  'Auction selection and signing date for this contract only.',
+              subtitle: canEdit
+                  ? 'Auction selection and signing date for this contract only.'
+                  : 'Synced contracts are view-only in the app.',
               icon: Icons.tune_outlined,
               child: Wrap(
                 spacing: 16,
@@ -1057,7 +1121,9 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                       selected: _selectedAuctionOptions(auctions),
                       validator: MultiAuctionSelectField.requireSelection,
                       onChanged: _updateAuctions,
-                      enabled: widget.auctionId == null && state.hasValidToken,
+                      enabled: canEdit &&
+                          widget.auctionId == null &&
+                          state.hasValidToken,
                       disabledMessage: state.hasValidToken
                           ? null
                           : 'Microsoft login is required for auction lookup.',
@@ -1114,8 +1180,16 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
               ),
             ),
             const SizedBox(height: 18),
+            SectionCard(
+              title: 'Ready-to-sync checklist',
+              icon: Icons.checklist_rtl_outlined,
+              child: ReadyToSyncChecklist(issues: readinessIssues),
+            ),
+            const SizedBox(height: 18),
             _UploadSection(
               title: 'Passport photos',
+              contract: _record,
+              canEdit: canEdit,
               uploads: _record.uploads
                   .where(
                     (item) =>
@@ -1140,6 +1214,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
             const SizedBox(height: 18),
             _UploadSection(
               title: 'Product photos',
+              contract: _record,
+              canEdit: canEdit,
               uploads: _record.uploads
                   .where(
                     (item) =>
@@ -1164,6 +1240,8 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
             const SizedBox(height: 18),
             _UploadSection(
               title: 'Registration files',
+              contract: _record,
+              canEdit: canEdit,
               uploads: _record.uploads
                   .where(
                     (item) =>
@@ -1179,6 +1257,45 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ReadOnlyNotice extends StatelessWidget {
+  const _ReadOnlyNotice({required this.record});
+
+  final ContractRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final syncedAt = record.lastSyncedUtc?.toLocal();
+    final syncedText = syncedAt == null
+        ? 'This contract is already linked to Abacus.'
+        : 'This contract was synced on ${DateFormat('yyyy-MM-dd HH:mm').format(syncedAt)}.';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF5FB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFC7D8EA)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.lock_outline_rounded, color: Color(0xFF163865)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '$syncedText Synced contracts are read-only to avoid creating duplicate Abacus documents.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF163865),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1266,6 +1383,8 @@ class _SummaryPill extends StatelessWidget {
 class _UploadSection extends StatelessWidget {
   const _UploadSection({
     required this.title,
+    required this.contract,
+    required this.canEdit,
     required this.uploads,
     required this.onAddFiles,
     this.onCapture,
@@ -1277,6 +1396,8 @@ class _UploadSection extends StatelessWidget {
   });
 
   final String title;
+  final ContractRecord contract;
+  final bool canEdit;
   final List<ContractUpload> uploads;
   final VoidCallback onAddFiles;
   final VoidCallback? onCapture;
@@ -1299,19 +1420,19 @@ class _UploadSection extends StatelessWidget {
             runSpacing: 8,
             children: [
               OutlinedButton.icon(
-                onPressed: onAddFiles,
+                onPressed: canEdit ? onAddFiles : null,
                 icon: const Icon(Icons.upload_file_outlined),
                 label: const Text('Add file'),
               ),
               if (onCapture != null)
                 OutlinedButton.icon(
-                  onPressed: onCapture,
+                  onPressed: canEdit ? onCapture : null,
                   icon: const Icon(Icons.photo_camera_outlined),
                   label: const Text('Capture'),
                 ),
               if (onPhoneCapture != null)
                 OutlinedButton.icon(
-                  onPressed: onPhoneCapture,
+                  onPressed: canEdit ? onPhoneCapture : null,
                   icon: const Icon(Icons.qr_code_2_outlined),
                   label: const Text('Capture with phone'),
                 ),
@@ -1329,6 +1450,8 @@ class _UploadSection extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: _UploadTile(
                   upload: upload,
+                  contract: contract,
+                  canEdit: canEdit,
                   onOpen: onOpen,
                   onReplace: onReplace,
                   onDelete: onDelete,
@@ -1345,6 +1468,8 @@ class _UploadSection extends StatelessWidget {
 class _UploadTile extends StatelessWidget {
   const _UploadTile({
     required this.upload,
+    required this.contract,
+    required this.canEdit,
     required this.onOpen,
     required this.onReplace,
     required this.onDelete,
@@ -1352,6 +1477,8 @@ class _UploadTile extends StatelessWidget {
   });
 
   final ContractUpload upload;
+  final ContractRecord contract;
+  final bool canEdit;
   final bool showReplaceButton;
   final Future<void> Function(ContractUpload upload) onOpen;
   final Future<void> Function(ContractUpload upload) onReplace;
@@ -1445,13 +1572,9 @@ class _UploadTile extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      upload.needsSync ? 'Unsynced local changes' : 'In sync',
-                      style: TextStyle(
-                        color: upload.needsSync
-                            ? Colors.orange.shade800
-                            : Colors.green.shade700,
-                      ),
+                    AttachmentStatusBadges(
+                      upload: upload,
+                      contract: contract,
                     ),
                   ],
                 ),
@@ -1470,12 +1593,12 @@ class _UploadTile extends StatelessWidget {
               if (showReplaceButton)
                 IconButton(
                   tooltip: 'Replace',
-                  onPressed: () => onReplace(upload),
+                  onPressed: canEdit ? () => onReplace(upload) : null,
                   icon: const Icon(Icons.swap_horiz_rounded),
                 ),
               IconButton(
                 tooltip: 'Delete',
-                onPressed: () => onDelete(upload),
+                onPressed: canEdit ? () => onDelete(upload) : null,
                 icon: const Icon(Icons.delete_outline_rounded),
               ),
             ],
