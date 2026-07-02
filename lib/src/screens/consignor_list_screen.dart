@@ -587,7 +587,14 @@ class _ConsignorListSummary {
     final address = consignor.consignorAddress.toSingleLine();
 
     return [
+      consignor.id,
+      consignor.systemReferenceCustomer.toString(),
+      consignor.systemReferenceConsignor.toString(),
+      consignor.abacusSubjectId?.toString() ?? '',
+      consignor.existingCustomerId?.toString() ?? '',
+      consignor.existingCustomerLabel ?? '',
       consignor.displayName,
+      _consignorContactPersonName(consignor),
       consignor.emailAddress,
       consignor.fullPhoneNumber,
       address,
@@ -610,6 +617,18 @@ class _ConsignorListSummary {
         return 'sync failed failed error';
     }
   }
+}
+
+String _consignorContactPersonName(Consignor consignor) {
+  if (!consignor.usesTradingName) return '';
+
+  final contactName = consignor.consignorInfo.fullName.trim();
+  if (contactName.isEmpty) return '';
+
+  final displayName = consignor.displayName.trim();
+  if (contactName.toLowerCase() == displayName.toLowerCase()) return '';
+
+  return contactName;
 }
 
 class _ConsignorRow extends StatelessWidget {
@@ -640,6 +659,7 @@ class _ConsignorRow extends StatelessWidget {
     final palette = context.palette;
 
     final displayName = item.displayName.trim();
+    final contactPersonName = _consignorContactPersonName(item);
     final email = item.emailAddress.trim();
     final phone = item.fullPhoneNumber.trim();
     final address = item.consignorAddress.toSingleLine().trim();
@@ -714,6 +734,18 @@ class _ConsignorRow extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (contactPersonName.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      contactPersonName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: palette.textMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 12,

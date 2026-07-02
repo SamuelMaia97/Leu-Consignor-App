@@ -115,6 +115,7 @@ class AbacusFileSyncMetadata {
     required String contractNumber,
     required DateTime eventUtc,
     required AbacusContractSyncEvent trigger,
+    String? labelOverride,
   }) {
     if (upload.isDeleted) return null;
 
@@ -143,29 +144,33 @@ class AbacusFileSyncMetadata {
                 ? AbacusDocumentKind.representativePassport
                 : AbacusDocumentKind.passport;
         storage = AbacusStorageReference.passport;
-        label = validationReport
-            ? representative
-                ? 'Representative_Id_Validation_Report_${normalizedConsignor}_$date'
-                : 'Id_Validation_Report_${normalizedConsignor}_$date'
-            : representative
-                ? 'Representative_Passport_${normalizedConsignor}_$date'
-                : 'Passport_${normalizedConsignor}_$date';
+        label = labelOverride?.trim().isNotEmpty == true
+            ? labelOverride!.trim()
+            : validationReport
+                ? representative
+                    ? 'Representative_Id_Validation_Report_${normalizedConsignor}_$date'
+                    : 'Id_Validation_Report_${normalizedConsignor}_$date'
+                : representative
+                    ? 'Representative'
+                    : 'Passport';
         break;
 
       case UploadType.product:
         documentKind = AbacusDocumentKind.coinImage;
         storage = AbacusStorageReference.consignmentPhotos;
-        final lotOrTempId = _safeToken(
-          (upload.fileId ?? upload.auctionId)?.toString() ?? upload.localId,
-        );
-        label = 'Coin_${lotOrTempId}_$date';
+        final lotOrTempId = _productIndexToken(upload);
+        label = labelOverride?.trim().isNotEmpty == true
+            ? labelOverride!.trim()
+            : '${_safeToken(_baseContractNumber(contractNumber))}-Product-$lotOrTempId';
         break;
 
       case UploadType.agreement:
         if (!lowerFileName.endsWith('.pdf')) return null;
         documentKind = AbacusDocumentKind.consignmentContract;
         storage = AbacusStorageReference.consignmentContract;
-        label = 'Consignment_Contract_${_safeToken(contractNumber)}';
+        label = labelOverride?.trim().isNotEmpty == true
+            ? labelOverride!.trim()
+            : _safeToken(contractNumber);
         break;
     }
 
@@ -232,6 +237,29 @@ class AbacusFileSyncMetadata {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return 'Unknown';
     return trimmed.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
+  }
+
+  static String _baseContractNumber(String value) {
+    final trimmed = value.trim();
+    if (trimmed.toUpperCase().startsWith('PROV-COC-')) {
+      return trimmed.substring(5);
+    }
+    return trimmed;
+  }
+
+  static String _productIndexToken(ContractUpload upload) {
+    final candidates = <String>[
+      upload.localId,
+      upload.fileName,
+      upload.path,
+      (upload.fileId ?? upload.auctionId)?.toString() ?? '',
+    ];
+    final pattern = RegExp(r'(\d+)(?!.*\d)');
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(1)!;
+    }
+    return _safeToken(upload.localId.isEmpty ? '1' : upload.localId);
   }
 
   static String _extension(String fileName) {

@@ -431,9 +431,6 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                         contract: contract,
                         isSyncing: isSyncing,
                         onOpen: () => _openContract(contract),
-                        onOpenWizard: () => context.go(
-                          '/contracts/${contract.consignorId}/record/${contract.id}/resume',
-                        ),
                         onSync: contract.auctionId != null &&
                                 _ContractsOverviewSummary._effectiveStatus(
                                         contract)
@@ -648,23 +645,21 @@ class _ContractsOverviewSummary {
       return RecordSyncStatus.syncFailed;
     }
 
-    if (contract.syncStatus == RecordSyncStatus.finalized &&
-        !contract.hasLocalChanges &&
-        contract.auctionId != null) {
-      return RecordSyncStatus.finalized;
-    }
-
-    if (contract.syncStatus == RecordSyncStatus.draft ||
-        contract.auctionId == null) {
-      return RecordSyncStatus.draft;
-    }
-
     if (contract.hasLocalChanges ||
         contract.syncStatus == RecordSyncStatus.pendingSync) {
       return RecordSyncStatus.pendingSync;
     }
 
-    return RecordSyncStatus.synced;
+    if (contract.syncStatus == RecordSyncStatus.finalized) {
+      return RecordSyncStatus.finalized;
+    }
+
+    if (contract.syncStatus == RecordSyncStatus.synced ||
+        contract.hasRemoteReference) {
+      return RecordSyncStatus.synced;
+    }
+
+    return RecordSyncStatus.draft;
   }
 
   static String _buildSearchText(ContractRecord contract) {
@@ -704,14 +699,12 @@ class _ContractOverviewRow extends StatelessWidget {
     required this.contract,
     required this.isSyncing,
     required this.onOpen,
-    required this.onOpenWizard,
     this.onSync,
   });
 
   final ContractRecord contract;
   final bool isSyncing;
   final VoidCallback onOpen;
-  final VoidCallback onOpenWizard;
   final Future<void> Function()? onSync;
 
   @override
@@ -761,7 +754,7 @@ class _ContractOverviewRow extends StatelessWidget {
                       MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: GestureDetector(
-                          onTap: onOpenWizard,
+                          onTap: onOpen,
                           child: Text(
                             displayName,
                             style: Theme.of(context)

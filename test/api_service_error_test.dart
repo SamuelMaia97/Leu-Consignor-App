@@ -212,5 +212,93 @@ void main() {
       expect(issue.missingFields, contains('Bank name'));
       expect(issue.missingFields, contains('Bank account / IBAN'));
     });
+
+    test('contract sync skips 404 consignors and keeps fetching', () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/get/121097') {
+          await writeJson(request, {
+            'consignorId': 121097,
+            'systemReferenceCustomer': 121097,
+            'consignorInfo': {
+              'firstName': 'Test',
+              'lastName': 'Consignor',
+            },
+            'lastModifiedUtc': '2026-07-02T07:00:00Z',
+            'contracts': [
+              {
+                'contractId': 'COC-26-1',
+                'auctionDisplayName': 'COC-26-1',
+                'lastModifiedUtc': '2026-07-02T08:00:00Z',
+                'list': [
+                  {
+                    'localId': 'abacus-doc-1',
+                    'fileType': 2,
+                    'fileName': 'COC-26-1.pdf',
+                    'lastModifiedUtc': '2026-07-02T08:00:00Z',
+                  },
+                ],
+              },
+            ],
+          });
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final result = await buildApi().fetchContractsForConsignors([
+        100000,
+        121097,
+      ]);
+
+      expect(result.checkedConsignorCount, 2);
+      expect(result.skippedConsignorIds, contains(100000));
+      expect(result.failedMessages, isEmpty);
+      expect(result.contracts, hasLength(1));
+      expect(result.contracts.single.id, 'COC-26-1');
+      expect(result.contracts.single.auctionId, isNull);
+      expect(result.contracts.single.synced, isTrue);
+    });
+
+    test('global contract sync imports Abacus COC metadata', () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/contracts/get-all') {
+          await writeJson(request, [
+            {
+              'consignorId': 121097,
+              'contractId': 'COC-26-1',
+              'auctionDisplayName': 'COC-26-1',
+              'lastModifiedUtc': '2026-07-02T08:00:00Z',
+              'list': [
+                {
+                  'localId': 'abacus-doc-1',
+                  'fileType': 2,
+                  'fileName': 'COC-26-1.pdf',
+                  'lastModifiedUtc': '2026-07-02T08:00:00Z',
+                },
+              ],
+            },
+          ]);
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final result = await buildApi().fetchAllContracts();
+
+      expect(result.analyzedDocumentCount, 1);
+      expect(result.contracts, hasLength(1));
+      expect(result.contracts.single.id, 'COC-26-1');
+      expect(result.contracts.single.consignorId, '121097');
+      expect(result.contracts.single.pdfName, 'COC-26-1.pdf');
+      expect(result.contracts.single.synced, isTrue);
+      expect(
+        requests,
+        isNot(contains('GET /api/consignors-app/consignors/get/121097')),
+      );
+    });
   });
 }

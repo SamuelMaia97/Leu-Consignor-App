@@ -789,23 +789,21 @@ class _ContractListSummary {
       return RecordSyncStatus.syncFailed;
     }
 
-    if (contract.syncStatus == RecordSyncStatus.finalized &&
-        !contract.hasLocalChanges &&
-        contract.auctionId != null) {
-      return RecordSyncStatus.finalized;
-    }
-
-    if (contract.syncStatus == RecordSyncStatus.draft ||
-        contract.auctionId == null) {
-      return RecordSyncStatus.draft;
-    }
-
     if (contract.hasLocalChanges ||
         contract.syncStatus == RecordSyncStatus.pendingSync) {
       return RecordSyncStatus.pendingSync;
     }
 
-    return RecordSyncStatus.synced;
+    if (contract.syncStatus == RecordSyncStatus.finalized) {
+      return RecordSyncStatus.finalized;
+    }
+
+    if (contract.syncStatus == RecordSyncStatus.synced ||
+        contract.hasRemoteReference) {
+      return RecordSyncStatus.synced;
+    }
+
+    return RecordSyncStatus.draft;
   }
 
   static String _buildSearchText(
@@ -817,8 +815,14 @@ class _ContractListSummary {
 
     return [
       contract.id,
+      contract.consignorId,
       contract.auctionDisplayName,
       contract.auctionId?.toString() ?? '',
+      consignor?.id ?? '',
+      consignor?.systemReferenceCustomer.toString() ?? '',
+      consignor?.systemReferenceConsignor.toString() ?? '',
+      consignor?.abacusSubjectId?.toString() ?? '',
+      consignor?.existingCustomerId?.toString() ?? '',
       consignor?.displayName ?? '',
       fileNames,
       contract.syncErrorMessage ?? '',
@@ -872,6 +876,8 @@ class _ContractListRow extends StatelessWidget {
             ? 'Draft contract'
             : 'Auction ${contract.auctionId}')
         : contract.auctionDisplayName;
+    final contactName = _contactName(consignor);
+    final contractNumber = _contractNumber(contract);
     final consignorName = consignor == null || consignor!.displayName.isEmpty
         ? 'Unknown consignor'
         : consignor!.displayName;
@@ -911,7 +917,7 @@ class _ContractListRow extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
-                        displayName,
+                        contactName,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       StatusBadge(
@@ -923,7 +929,14 @@ class _ContractListRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '$consignorName • $fileCount file${fileCount == 1 ? '' : 's'} • $modifiedText',
+                    contractNumber,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$displayName - $consignorName - $fileCount file${fileCount == 1 ? '' : 's'} - $modifiedText',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   if (status == RecordSyncStatus.syncFailed &&
@@ -1045,6 +1058,35 @@ class _ContractListRow extends StatelessWidget {
       case RecordSyncStatus.syncFailed:
         return Icons.error_outline_rounded;
     }
+  }
+
+  static String _contactName(Consignor? consignor) {
+    final personName = consignor?.consignorInfo.fullName.trim() ?? '';
+    if (personName.isNotEmpty) return personName;
+
+    final displayName = consignor?.displayName.trim() ?? '';
+    return displayName.isEmpty ? 'Unknown consignor' : displayName;
+  }
+
+  static String _contractNumber(ContractRecord contract) {
+    final pattern =
+        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+    final candidates = <String>[
+      contract.pdfName,
+      contract.id,
+      ...contract.uploads.map((upload) => upload.fileName),
+    ];
+
+    for (final candidate in candidates) {
+      final match = pattern.firstMatch(candidate);
+      if (match != null) return match.group(0)!.toUpperCase();
+    }
+
+    final fallback = contract.pdfName
+        .replaceAll(RegExp(r'\.[^.]+$'), '')
+        .replaceAll('_', ' ')
+        .trim();
+    return fallback.isEmpty ? contract.id : fallback;
   }
 }
 

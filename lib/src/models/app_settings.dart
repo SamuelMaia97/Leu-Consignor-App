@@ -1,11 +1,14 @@
 class AppSettings {
+  static const defaultContractsGetAll = '/api/consignors-app/contracts/get-all';
+  static const legacyFilesGetAll = '/api/consignors-app/files/get-all';
+
   const AppSettings({
     this.apiBaseUrl = '',
     this.consignorsGetAll = '/api/consignors-app/consignors/get-all',
     this.consignorsGetOne = '/api/consignors-app/consignors/get/{id}',
     this.consignorsUpdateOne = '/api/consignors-app/consignors/update/{id}',
     this.consignorsBulkUpdate = '/api/consignors-app/consignors/bulk-create',
-    this.contractsGetAll = '/api/consignors-app/files/get-all',
+    this.contractsGetAll = defaultContractsGetAll,
     this.contractsGetOne = '/api/consignors-app/files/get/{id}',
     this.contractsUpdateOne = '/api/consignors-app/files/update/{id}',
     this.contractsBulkUpdate = '/api/consignors-app/files/bulk-create',
@@ -46,8 +49,7 @@ class AppSettings {
             '/api/consignors-app/consignors/update/{id}',
         consignorsBulkUpdate: json['consignorsBulkUpdate'] as String? ??
             '/api/consignors-app/consignors/bulk-create',
-        contractsGetAll: json['contractsGetAll'] as String? ??
-            '/api/consignors-app/files/get-all',
+        contractsGetAll: _migrateContractsGetAll(json['contractsGetAll']),
         contractsGetOne: json['contractsGetOne'] as String? ??
             '/api/consignors-app/files/get/{id}',
         contractsUpdateOne: json['contractsUpdateOne'] as String? ??
@@ -70,6 +72,17 @@ class AppSettings {
           json['lastSyncCompletedUtc']?.toString() ?? '',
         ),
       );
+
+  static String _migrateContractsGetAll(Object? value) {
+    final text = value?.toString().trim();
+    if (text == null ||
+        text.isEmpty ||
+        text.toLowerCase() == legacyFilesGetAll.toLowerCase()) {
+      return defaultContractsGetAll;
+    }
+
+    return text;
+  }
 
   Map<String, dynamic> toJson() => {
         'apiBaseUrl': apiBaseUrl,
