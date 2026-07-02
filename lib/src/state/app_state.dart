@@ -29,6 +29,8 @@ class AppState extends ChangeNotifier {
 
   final Set<String> _syncingConsignorIds = <String>{};
   final Set<String> _syncingContractKeys = <String>{};
+  final Map<String, Future<Consignor?>> _syncingConsignorFutures =
+      <String, Future<Consignor?>>{};
 
   Object? _leaveGuardToken;
   Future<bool> Function()? _leaveGuard;
@@ -53,6 +55,8 @@ class AppState extends ChangeNotifier {
   String? activeUsername;
 
   bool get isAdminUser => activeUsername == 'admin';
+  DateTime? get lastSyncCompletedLocal =>
+      settings.lastSyncCompletedUtc?.toLocal();
 
   double? get syncProgressValue {
     if (syncProgressTotal <= 0) {
@@ -82,7 +86,8 @@ class AppState extends ChangeNotifier {
       hasValidToken && AuthService.isTokenExpiringSoon(token);
   DateTime? get tokenExpiresAtLocal => tokenExpiresAtUtc?.toLocal();
 
-  bool isSyncingConsignor(String id) => _syncingConsignorIds.contains(id);
+  bool isSyncingConsignor(String id) =>
+      _syncingConsignorFutures.containsKey(id);
 
   bool isSyncingContract(String consignorId, int auctionId) =>
       _syncingContractKeys.contains(_contractKey(consignorId, auctionId));
@@ -442,13 +447,21 @@ class AppState extends ChangeNotifier {
   Future<Consignor?> syncConsignor(
     String id, {
     Consignor? authorizedRepresentative,
+    bool force = false,
   }) async {
     final initial = consignorById(id);
     if (initial == null) return null;
-    if (!initial.needsSync && authorizedRepresentative == null) return initial;
-    if (_syncingConsignorIds.contains(id)) return initial;
+    if (!force && !initial.needsSync && authorizedRepresentative == null) {
+      return initial;
+    }
+    final existingSync = _syncingConsignorFutures[id];
+    if (existingSync != null) {
+      return await existingSync ?? consignorById(id) ?? initial;
+    }
     if (!await _ensureActiveMicrosoftSession()) return initial;
 
+    final syncCompleter = Completer<Consignor?>();
+    _syncingConsignorFutures[id] = syncCompleter.future;
     _syncingConsignorIds.add(id);
     notifyListeners();
 
@@ -470,7 +483,9 @@ class AppState extends ChangeNotifier {
         await _consignorRepo.put(initial);
         await _refreshLocalCollections();
         lastMessage = 'Consignor sync failed.';
-        return consignorById(id);
+        final result = consignorById(id);
+        syncCompleter.complete(result);
+        return result;
       }
 
       final previousId = initial.id;
@@ -502,15 +517,23 @@ class AppState extends ChangeNotifier {
       } else {
         lastMessage = 'Consignor synced successfully.';
       }
-      return consignorById(updated.id);
+      final result = consignorById(updated.id);
+      syncCompleter.complete(result);
+      return result;
     } catch (e) {
       final current = consignorById(id) ?? initial;
       current.markSyncFailed('Sync failed: $e');
       await _consignorRepo.put(current);
       await _refreshLocalCollections();
       lastMessage = 'Consignor sync failed: $e';
-      return consignorById(current.id);
+      final result = consignorById(current.id);
+      syncCompleter.complete(result);
+      return result;
     } finally {
+      if (!syncCompleter.isCompleted) {
+        syncCompleter.complete(consignorById(id));
+      }
+      _syncingConsignorFutures.remove(id);
       _syncingConsignorIds.remove(id);
       notifyListeners();
     }
@@ -525,25 +548,63 @@ class AppState extends ChangeNotifier {
       consignorId,
       auctionId,
     );
-    final backendConsignorId =
-        consignorById(consignorId)?.systemReferenceConsignor ??
-            int.tryParse(consignorId);
 
     if (current == null) return null;
-    if (!current.hasLocalChanges &&
+    var contractToSync = current;
+    if (!contractToSync.hasLocalChanges &&
         syncEvent == AbacusContractSyncEvent.manualSync) {
-      return current;
+      return contractToSync;
     }
-    if (!await _ensureActiveMicrosoftSession()) return current;
+    if (!await _ensureActiveMicrosoftSession()) return contractToSync;
 
     final key = _contractKey(consignorId, auctionId);
-    if (_syncingContractKeys.contains(key)) return current;
+    if (_syncingContractKeys.contains(key)) return contractToSync;
 
     _syncingContractKeys.add(key);
     notifyListeners();
 
     try {
       final api = ApiService(settings, token);
+      var effectiveConsignorId = contractToSync.consignorId;
+      var localConsignor = consignorById(effectiveConsignorId);
+      var backendConsignorId = localConsignor?.systemReferenceConsignor ??
+          int.tryParse(effectiveConsignorId);
+
+      final requiresConsignorSync = localConsignor != null &&
+          (localConsignor.needsSync ||
+              backendConsignorId == null ||
+              backendConsignorId <= 0);
+
+      if (requiresConsignorSync) {
+        final syncedConsignor = await syncConsignor(
+          effectiveConsignorId,
+          force: backendConsignorId == null || backendConsignorId <= 0,
+        );
+        localConsignor = syncedConsignor ?? consignorById(effectiveConsignorId);
+
+        if (localConsignor != null) {
+          effectiveConsignorId = localConsignor.id;
+          backendConsignorId = localConsignor.systemReferenceConsignor > 0
+              ? localConsignor.systemReferenceConsignor
+              : int.tryParse(localConsignor.id);
+          contractToSync = _contractRepo.getByConsignorAndAuction(
+                effectiveConsignorId,
+                auctionId,
+              ) ??
+              contractToSync.copyWith(consignorId: effectiveConsignorId);
+        }
+
+        if (localConsignor == null || localConsignor.needsSync) {
+          final message =
+              localConsignor?.syncErrorMessage?.trim().isNotEmpty == true
+                  ? localConsignor!.syncErrorMessage!
+                  : lastMessage ?? 'Consignor sync failed.';
+          throw Exception(
+            'Consignor must be synced before syncing the contract. $message',
+          );
+        }
+      }
+
       if (backendConsignorId == null || backendConsignorId <= 0) {
         throw Exception(
           'Sync the consignor first before syncing this contract.',
@@ -552,12 +613,12 @@ class AppState extends ChangeNotifier {
 
       final synced = await api.syncContractRecord(
         backendConsignorId,
-        current,
+        contractToSync,
         syncEvent: syncEvent,
       );
       final updated = synced.copyWith(
-        id: current.id,
-        consignorId: current.consignorId,
+        id: contractToSync.id,
+        consignorId: contractToSync.consignorId,
         syncStatus: RecordSyncStatus.synced,
         syncErrorMessage: null,
         lastSyncedUtc: DateTime.now().toUtc(),
@@ -567,13 +628,19 @@ class AppState extends ChangeNotifier {
       await _contractRepo.put(updated);
       await _refreshLocalCollections();
       lastMessage = 'Contract synced successfully.';
-      return _contractRepo.getByConsignorAndAuction(consignorId, auctionId);
+      return _contractRepo.getByConsignorAndAuction(
+        contractToSync.consignorId,
+        auctionId,
+      );
     } catch (e) {
-      current.markSyncFailed('Sync failed: $e');
-      await _contractRepo.put(current);
+      contractToSync.markSyncFailed('Sync failed: $e');
+      await _contractRepo.put(contractToSync);
       await _refreshLocalCollections();
       lastMessage = 'Contract sync failed: $e';
-      return _contractRepo.getByConsignorAndAuction(consignorId, auctionId);
+      return _contractRepo.getByConsignorAndAuction(
+        contractToSync.consignorId,
+        auctionId,
+      );
     } finally {
       _syncingContractKeys.remove(key);
       notifyListeners();
@@ -728,6 +795,10 @@ class AppState extends ChangeNotifier {
       await _refreshLocalCollections();
 
       workCurrent = workTotal;
+      final completedUtc = DateTime.now().toUtc();
+      settings = settings.copyWith(lastSyncCompletedUtc: completedUtc);
+      await _settingsRepo.saveSettings(settings);
+
       _setSyncProgress(
         workCurrent,
         workTotal,

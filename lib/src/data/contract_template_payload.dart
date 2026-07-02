@@ -45,7 +45,7 @@ class ContractAttachmentPayload {
 class ContractRenderPayloadBuilder {
   const ContractRenderPayloadBuilder();
 
-  static final DateFormat _dateFormat = DateFormat('yyyy-MM-dd');
+  static final DateFormat _dateFormat = DateFormat('dd-MM-yyyy');
 
   Future<ContractRenderPayload> build({
     required Consignor consignor,

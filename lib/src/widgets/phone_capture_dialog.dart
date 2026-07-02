@@ -94,11 +94,15 @@ class _PhoneCaptureDialogState extends State<PhoneCaptureDialog> {
   @override
   Widget build(BuildContext context) {
     final session = _session;
+    final screenSize = MediaQuery.sizeOf(context);
+    final dialogWidth = (screenSize.width * 0.88).clamp(720.0, 920.0);
+    final dialogHeight = (screenSize.height * 0.82).clamp(560.0, 760.0);
 
     return AlertDialog(
       title: const Text('Capture with phone'),
       content: SizedBox(
-        width: 760,
+        width: dialogWidth,
+        height: dialogHeight,
         child: _starting
             ? const Padding(
                 padding: EdgeInsets.symmetric(vertical: 32),
@@ -128,17 +132,30 @@ class _PhoneCaptureDialogState extends State<PhoneCaptureDialog> {
   }
 }
 
-class _CaptureSessionView extends StatelessWidget {
+class _CaptureSessionView extends StatefulWidget {
   const _CaptureSessionView({required this.session});
 
   final PhoneCaptureSession session;
 
   @override
+  State<_CaptureSessionView> createState() => _CaptureSessionViewState();
+}
+
+class _CaptureSessionViewState extends State<_CaptureSessionView> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final session = widget.session;
 
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
@@ -190,48 +207,53 @@ class _CaptureSessionView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 18),
-        ValueListenableBuilder<List<PhoneCaptureUpload>>(
-          valueListenable: session.uploads,
-          builder: (context, uploads, _) {
-            if (uploads.isEmpty) {
-              return Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.black12),
-                ),
-                child: const Text('No phone photos received yet.'),
-              );
-            }
+        Expanded(
+          child: ValueListenableBuilder<List<PhoneCaptureUpload>>(
+            valueListenable: session.uploads,
+            builder: (context, uploads, _) {
+              if (uploads.isEmpty) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.black12),
+                  ),
+                  child: const Text('No phone photos received yet.'),
+                );
+              }
 
-            return ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 320),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${uploads.length} photo${uploads.length == 1 ? '' : 's'} received',
-                      style: textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
+              return Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.only(right: 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${uploads.length} photo${uploads.length == 1 ? '' : 's'} received',
+                        style: textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    for (final target in session.targets) ...[
-                      _TargetUploadGroup(
-                        target: target,
-                        uploads: uploads
-                            .where((upload) => upload.targetId == target.id)
-                            .toList(growable: false),
-                      ),
+                      const SizedBox(height: 10),
+                      for (final target in session.targets) ...[
+                        _TargetUploadGroup(
+                          target: target,
+                          uploads: uploads
+                              .where((upload) => upload.targetId == target.id)
+                              .toList(growable: false),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ],
     );

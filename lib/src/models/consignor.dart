@@ -37,6 +37,8 @@ class Consignor {
     this.references = '',
     this.creditLimit = 0,
     this.discount,
+    this.consignmentFeeFloorAuction,
+    this.consignmentFeeWebAuction,
     this.eori = '',
     this.username = '',
     this.password = '',
@@ -82,6 +84,8 @@ class Consignor {
   String references;
   double creditLimit;
   double? discount;
+  double? consignmentFeeFloorAuction;
+  double? consignmentFeeWebAuction;
   String eori;
   String username;
   String password;
@@ -139,6 +143,8 @@ class Consignor {
       references: '',
       creditLimit: 0,
       discount: null,
+      consignmentFeeFloorAuction: null,
+      consignmentFeeWebAuction: null,
       eori: '',
       username: credentials.username,
       password: credentials.password,
@@ -267,6 +273,18 @@ class Consignor {
       references: _toString(json['references'] ?? json['References']),
       creditLimit: _toDouble(json['creditLimit'] ?? json['CreditLimit']) ?? 0,
       discount: _toDouble(json['discount'] ?? json['Discount']),
+      consignmentFeeFloorAuction: _toDouble(
+        json['consignmentFeeFloorAuction'] ??
+            json['ConsignmentFeeFloorAuction'] ??
+            json['consignorPrintedTerms'] ??
+            json['ConsignorPrintedTerms'],
+      ),
+      consignmentFeeWebAuction: _toDouble(
+        json['consignmentFeeWebAuction'] ??
+            json['ConsignmentFeeWebAuction'] ??
+            json['consignorElectronicTerms'] ??
+            json['ConsignorElectronicTerms'],
+      ),
       eori: _toString(json['eori'] ?? json['Eori'] ?? json['EORI']),
       username: _toString(json['username'] ?? json['Username']),
       password: _toString(json['password'] ?? json['Password']),
@@ -331,6 +349,8 @@ class Consignor {
         'references': references.trim().isEmpty ? null : references.trim(),
         'creditLimit': creditLimit,
         'discount': discount,
+        'consignmentFeeFloorAuction': consignmentFeeFloorAuction,
+        'consignmentFeeWebAuction': consignmentFeeWebAuction,
         'eori': eori.trim().isEmpty ? null : eori.trim(),
         'username': username.trim().isEmpty ? null : username.trim(),
         'password': password.trim().isEmpty ? null : password.trim(),

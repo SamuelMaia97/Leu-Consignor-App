@@ -125,6 +125,18 @@ void main() {
       expect(payload['consignor_signature_name'], 'Dr. Muster Anna');
     });
 
+    test('formats visible template dates day first', () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          signedAt: DateTime.utc(2026, 9, 15),
+        ),
+      );
+
+      expect(payload['consignor_dob'], '02-01-1980');
+      expect(payload['auction_date'], '15-09-2026');
+    });
+
     test('emits PDF name, title, page numbers, and provisional flags',
         () async {
       final payload = await builder.build(

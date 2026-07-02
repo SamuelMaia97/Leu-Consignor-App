@@ -164,6 +164,12 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       'newsletterSubscribed': _model.newsletterSubscribed,
       'ancientCoinsSubscribed': _model.ancientCoinsSubscribed,
       'worldCoinsSubscribed': _model.worldCoinsSubscribed,
+      'collectingArea': _model.collectingArea,
+      'references': _model.references,
+      'creditLimit': _model.creditLimit,
+      'discount': _model.discount,
+      'consignmentFeeFloorAuction': _model.consignmentFeeFloorAuction,
+      'consignmentFeeWebAuction': _model.consignmentFeeWebAuction,
       'existingCustomer': _useExistingCustomer,
       'existingCustomerId': _model.existingCustomerId,
       'existingCustomerLabel': _model.existingCustomerLabel,
@@ -186,6 +192,35 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
 
   String _normalizeLookupQuery(String value) =>
       value.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  double? _parseDecimalInput(String? value) {
+    final normalized = (value ?? '').trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    return double.tryParse(normalized);
+  }
+
+  String _formatDecimalInput(num? value, {bool emptyWhenZero = false}) {
+    if (value == null) return '';
+
+    final asDouble = value.toDouble();
+    if (emptyWhenZero && asDouble == 0) return '';
+    if (asDouble == asDouble.roundToDouble()) {
+      return asDouble.toStringAsFixed(0);
+    }
+    return asDouble.toString();
+  }
+
+  String? _optionalPercentage(String? value, String fieldLabel) {
+    final trimmed = value?.trim() ?? '';
+    if (trimmed.isEmpty) return null;
+
+    final number = _parseDecimalInput(trimmed.replaceAll('%', ''));
+    if (number == null || number < 0 || number > 100) {
+      return 'Enter a percentage between 0 and 100';
+    }
+
+    return null;
+  }
 
   Future<void> _navigateAway(String location) async {
     _unregisterLeaveGuard();
@@ -662,12 +697,17 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     _model.phoneNumber = _model.phoneNumber.trim();
     _model.emailAddress = _model.emailAddress.trim();
     _model.vatNumber = _model.vatNumber.trim();
+    _model.collectingArea = _model.collectingArea.trim();
+    _model.references = _model.references.trim();
     if (_model.consignorType == ConsignorType.naturalPerson) {
       _model.vatLiability = false;
       _model.vatNumber = '';
-    } else if (!_model.vatLiability) {
-      _model.vatNumber = '';
+    } else {
+      _model.vatLiability = _model.vatNumber.trim().isNotEmpty;
     }
+    _model.checkedByLeu = true;
+    _model.collectingArea = '';
+    _model.creditLimit = 500000;
     _model.eori = _model.eori.trim();
     _model.correspondence = _model.correspondence?.trim();
 
@@ -752,7 +792,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       ElevatedButton.icon(
         onPressed: _saveAndContinue,
         icon: const Icon(Icons.save_rounded),
-        label: const Text('Save as draft'),
+        label: const Text('Save and continue'),
       ),
       OutlinedButton(
         onPressed: () => _attemptLeaveTo('/consignors'),
@@ -937,42 +977,45 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                   icon: Icons.badge_outlined,
                   child: Column(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color:
-                              context.palette.brandSoft.withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: context.palette.border),
-                        ),
-                        child: SegmentedButton<ConsignorType>(
-                          segments: const [
-                            ButtonSegment<ConsignorType>(
-                              value: ConsignorType.naturalPerson,
-                              icon: Icon(Icons.person_outline),
-                              label: Text('Individual'),
-                            ),
-                            ButtonSegment<ConsignorType>(
-                              value: ConsignorType.soleProprietor,
-                              icon: Icon(Icons.storefront_outlined),
-                              label: Text('Sole proprietor'),
-                            ),
-                            ButtonSegment<ConsignorType>(
-                              value: ConsignorType.legalEntity,
-                              icon: Icon(Icons.business_outlined),
-                              label: Text('Legal entity'),
-                            ),
-                          ],
-                          selected: {_model.consignorType},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (selection) => setState(() {
-                            _model.consignorType = selection.single;
-                            if (_model.consignorType ==
-                                ConsignorType.naturalPerson) {
-                              _model.vatLiability = false;
-                              _model.vatNumber = '';
-                            }
-                          }),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: context.palette.brandSoft
+                                .withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: context.palette.border),
+                          ),
+                          child: SegmentedButton<ConsignorType>(
+                            segments: const [
+                              ButtonSegment<ConsignorType>(
+                                value: ConsignorType.naturalPerson,
+                                icon: Icon(Icons.person_outline),
+                                label: Text('Individual'),
+                              ),
+                              ButtonSegment<ConsignorType>(
+                                value: ConsignorType.soleProprietor,
+                                icon: Icon(Icons.storefront_outlined),
+                                label: Text('Sole proprietor'),
+                              ),
+                              ButtonSegment<ConsignorType>(
+                                value: ConsignorType.legalEntity,
+                                icon: Icon(Icons.business_outlined),
+                                label: Text('Legal entity'),
+                              ),
+                            ],
+                            selected: {_model.consignorType},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (selection) => setState(() {
+                              _model.consignorType = selection.single;
+                              if (_model.consignorType ==
+                                  ConsignorType.naturalPerson) {
+                                _model.vatLiability = false;
+                                _model.vatNumber = '';
+                              }
+                            }),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 18),
@@ -1215,78 +1258,22 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                 ),
                 const SizedBox(height: 18),
                 SectionCard(
-                  title: 'VAT and preferences',
+                  title: showVatFields ? 'VAT and preferences' : 'Preferences',
                   subtitle:
                       'Tax flags, correspondence language, and subscription preferences.',
                   icon: Icons.account_balance_wallet_outlined,
                   child: Column(
                     children: [
                       if (showVatFields) ...[
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final stack = constraints.maxWidth < 760;
-                            final vatToggle = Container(
-                              key: const ValueKey('editor-field-vat-toggle'),
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: context.palette.brandSoft
-                                    .withValues(alpha: 0.45),
-                                borderRadius: BorderRadius.circular(18),
-                                border:
-                                    Border.all(color: context.palette.border),
-                              ),
-                              child: CheckboxListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('VAT obligatory'),
-                                subtitle: const Text(
-                                  'When enabled, a VAT number is required.',
-                                ),
-                                value: _model.vatLiability,
-                                onChanged: (value) => setState(() {
-                                  _model.vatLiability = value ?? false;
-                                  if (!_model.vatLiability) {
-                                    _model.vatNumber = '';
-                                  }
-                                }),
-                              ),
-                            );
-
-                            final vatNumber = TextFormField(
-                              key: const ValueKey('editor-field-vat-number'),
-                              initialValue: _model.vatNumber,
-                              decoration: const InputDecoration(
-                                labelText: 'VAT number',
-                              ),
-                              validator: (value) => _model.vatLiability
-                                  ? FormValidators.requiredText(
-                                      value,
-                                      'VAT number',
-                                    )
-                                  : null,
-                              onChanged: (value) => _model.vatNumber = value,
-                            );
-
-                            if (stack) {
-                              return Column(
-                                children: [
-                                  vatToggle,
-                                  if (_model.vatLiability) ...[
-                                    const SizedBox(height: 16),
-                                    vatNumber,
-                                  ],
-                                ],
-                              );
-                            }
-
-                            return Row(
-                              children: [
-                                Expanded(child: vatToggle),
-                                if (_model.vatLiability) ...[
-                                  const SizedBox(width: 16),
-                                  Expanded(child: vatNumber),
-                                ],
-                              ],
-                            );
+                        TextFormField(
+                          key: const ValueKey('editor-field-vat-number'),
+                          initialValue: _model.vatNumber,
+                          decoration: const InputDecoration(
+                            labelText: 'VAT number',
+                          ),
+                          onChanged: (value) {
+                            _model.vatNumber = value;
+                            _model.vatLiability = value.trim().isNotEmpty;
                           },
                         ),
                         const SizedBox(height: 16),
@@ -1308,14 +1295,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                                 : null,
                             onChanged: (value) =>
                                 _model.correspondence = value?.value,
-                          ),
-                          _BooleanCard(
-                            key: const ValueKey('editor-field-checked-by-leu'),
-                            title: 'Checked by Leu',
-                            subtitle: 'Internal review flag.',
-                            value: _model.checkedByLeu,
-                            onChanged: (value) =>
-                                setState(() => _model.checkedByLeu = value),
                           ),
                           _BooleanCard(
                             key: const ValueKey(
@@ -1349,6 +1328,110 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             onChanged: (value) => setState(
                               () => _model.worldCoinsSubscribed = value,
                             ),
+                          ),
+                          TextFormField(
+                            key: const ValueKey('editor-field-references'),
+                            initialValue: _model.references,
+                            decoration: const InputDecoration(
+                              labelText: 'References',
+                            ),
+                            onChanged: (value) => _model.references = value,
+                          ),
+                          TextFormField(
+                            key: const ValueKey('editor-field-discount'),
+                            initialValue: _formatDecimalInput(_model.discount),
+                            decoration: const InputDecoration(
+                              labelText: 'Discount',
+                              suffixText: '%',
+                            ),
+                            validator: (value) => _optionalPercentage(
+                              value,
+                              'discount',
+                            ),
+                            onChanged: (value) {
+                              final trimmed = value.trim();
+                              _model.discount = trimmed.isEmpty
+                                  ? null
+                                  : _parseDecimalInput(trimmed);
+                            },
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                RegExp(r'[0-9,.% ]'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SectionCard(
+                  title: 'Terms',
+                  subtitle: 'Auction consignment commission settings.',
+                  icon: Icons.percent_outlined,
+                  child: _ResponsiveFormGrid(
+                    children: [
+                      TextFormField(
+                        key: const ValueKey(
+                          'editor-field-consignment-fee-floor-auction',
+                        ),
+                        initialValue: _formatDecimalInput(
+                          _model.consignmentFeeFloorAuction,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Floor auction consignment commission',
+                          suffixText: '%',
+                        ),
+                        validator: (value) => _optionalPercentage(
+                          value,
+                          'floor auction consignment commission',
+                        ),
+                        onChanged: (value) {
+                          final trimmed = value.trim();
+                          _model.consignmentFeeFloorAuction = trimmed.isEmpty
+                              ? null
+                              : _parseDecimalInput(trimmed);
+                        },
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[0-9,.% ]'),
+                          ),
+                        ],
+                      ),
+                      TextFormField(
+                        key: const ValueKey(
+                          'editor-field-consignment-fee-web-auction',
+                        ),
+                        initialValue: _formatDecimalInput(
+                          _model.consignmentFeeWebAuction,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Web auction consignment commission',
+                          suffixText: '%',
+                        ),
+                        validator: (value) => _optionalPercentage(
+                          value,
+                          'web auction consignment commission',
+                        ),
+                        onChanged: (value) {
+                          final trimmed = value.trim();
+                          _model.consignmentFeeWebAuction = trimmed.isEmpty
+                              ? null
+                              : _parseDecimalInput(trimmed);
+                        },
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[0-9,.% ]'),
                           ),
                         ],
                       ),
@@ -1678,9 +1761,7 @@ class _DatePickerFormField extends FormField<DateTime> {
                   errorText: field.errorText,
                 ),
                 child: Text(
-                  date == null
-                      ? 'Select date'
-                      : '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}',
+                  date == null ? 'Select date' : _formatEuropeanDate(date),
                   style: date == null
                       ? TextStyle(color: Theme.of(field.context).hintColor)
                       : null,
@@ -1689,6 +1770,12 @@ class _DatePickerFormField extends FormField<DateTime> {
             );
           },
         );
+}
+
+String _formatEuropeanDate(DateTime date) {
+  return '${date.day.toString().padLeft(2, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.year.toString().padLeft(4, '0')}';
 }
 
 class _MonthYearDayPickerDialog extends StatefulWidget {
@@ -1793,24 +1880,6 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
     ];
   }
 
-  InputDecoration _pickerDecoration(String label) {
-    return InputDecoration(
-      labelText: label,
-      isDense: true,
-      contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-    );
-  }
-
-  Widget _pickerItemText(String value) {
-    return Transform.translate(
-      offset: const Offset(0, -1.5),
-      child: Text(
-        value,
-        style: const TextStyle(height: 1.0),
-      ),
-    );
-  }
-
   void _updateSelection({
     int? year,
     int? month,
@@ -1865,17 +1934,14 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
               child: Text('Choose year, month, and day directly.'),
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<int>(
+            SearchableSelectFormField<int>(
+              key: ValueKey('dob-year-$_selectedYear'),
+              label: 'Year',
+              items: years,
+              itemLabel: (year) => year.toString(),
               initialValue: _selectedYear,
-              decoration: _pickerDecoration('Year'),
-              items: years
-                  .map(
-                    (year) => DropdownMenuItem<int>(
-                      value: year,
-                      child: _pickerItemText(year.toString()),
-                    ),
-                  )
-                  .toList(growable: false),
+              allowClear: false,
+              hintText: 'Search year',
               onChanged: (value) {
                 if (value != null) {
                   _updateSelection(year: value);
@@ -1883,17 +1949,15 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
               },
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
+            SearchableSelectFormField<int>(
+              key: ValueKey('dob-month-$_selectedYear-$_selectedMonth'),
+              label: 'Month',
+              items: months,
+              itemLabel: (month) =>
+                  '${month.toString().padLeft(2, '0')} - ${_monthLabels[month - 1]}',
               initialValue: _selectedMonth,
-              decoration: _pickerDecoration('Month'),
-              items: months
-                  .map(
-                    (month) => DropdownMenuItem<int>(
-                      value: month,
-                      child: _pickerItemText(_monthLabels[month - 1]),
-                    ),
-                  )
-                  .toList(growable: false),
+              allowClear: false,
+              hintText: 'Search month',
               onChanged: (value) {
                 if (value != null) {
                   _updateSelection(month: value);
@@ -1901,17 +1965,16 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
               },
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
+            SearchableSelectFormField<int>(
+              key: ValueKey(
+                'dob-day-$_selectedYear-$_selectedMonth-$_selectedDay',
+              ),
+              label: 'Day',
+              items: days,
+              itemLabel: (day) => day.toString().padLeft(2, '0'),
               initialValue: _selectedDay,
-              decoration: _pickerDecoration('Day'),
-              items: days
-                  .map(
-                    (day) => DropdownMenuItem<int>(
-                      value: day,
-                      child: _pickerItemText(day.toString().padLeft(2, '0')),
-                    ),
-                  )
-                  .toList(growable: false),
+              allowClear: false,
+              hintText: 'Search day',
               onChanged: (value) {
                 if (value != null) {
                   _updateSelection(day: value);
