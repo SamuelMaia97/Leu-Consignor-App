@@ -103,6 +103,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   final _detailsFormKey = GlobalKey<FormState>();
   final _representativeFormKey = GlobalKey<FormState>();
   final _auctionFormKey = GlobalKey<FormState>();
+  final _signatureFormKey = GlobalKey<FormState>();
   final Object _leaveGuardToken = Object();
 
   Timer? _searchDebounce;
@@ -718,7 +719,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }) {
     final token = '${upload.kind} ${upload.fileName}'.toLowerCase();
     final isValidationReport = token.contains('validation');
-    if (representative) {
+    final isRepresentativeDocument =
+        representative || token.contains('representative');
+    if (isRepresentativeDocument) {
       return isValidationReport
           ? _representativeIdValidationReportKind
           : _representativeIdKind;
@@ -843,7 +846,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     unawaited(_loadExistingPassportUploads(
       result,
-      targetDraft: _representativeDraft,
+      targetDraft: _draft,
       representative: true,
     ));
   }
@@ -936,6 +939,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       barrierDismissible: false,
       builder: (dialogContext) => _ConsignorReviewEditDialog(
         draft: _draft,
+        title: _draft.usesTradingName
+            ? 'Edit company details'
+            : 'Edit consignor details',
         titleOptions: _titleOptions,
         salutationOptions: _salutationOptions,
         correspondenceOptions: _correspondenceOptions,
@@ -985,6 +991,47 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     return false;
   }
 
+  Future<bool> _openRepresentativeReviewEditor({
+    bool highlightMissing = false,
+  }) async {
+    final originalState = _representativeDraft.toResumeJson();
+
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _ConsignorReviewEditDialog(
+        draft: _representativeDraft,
+        title: _representativeDraft.usesTradingName
+            ? 'Edit representative company details'
+            : 'Edit representative details',
+        titleOptions: _titleOptions,
+        salutationOptions: _salutationOptions,
+        correspondenceOptions: _correspondenceOptions,
+        phonePrefixes: context.read<AppState>().phonePrefixes,
+        highlightMissing: highlightMissing,
+        onChanged: () => setState(() {}),
+        onLookupIbanPressed: () =>
+            _handleIbanLookupPressed(_representativeDraft),
+        includeBanking: false,
+      ),
+    );
+
+    if (!mounted) return false;
+
+    if (saved == true) {
+      setState(() {
+        _generatedPdfPath = null;
+        _generatedPdfIncludesSignatures = false;
+      });
+      return true;
+    }
+
+    setState(() {
+      _representativeDraft.restoreFromResumeJson(originalState);
+    });
+    return false;
+  }
+
   Future<void> _syncEditedProfileInBackground(
     AppState state,
     String consignorId,
@@ -999,24 +1046,50 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }
 
   Future<bool> _ensureProfileReadyForContract() async {
-    final missingFields = _draft.missingRequiredFields;
-    if (missingFields.isEmpty) {
+    var missingFields = _draft.missingRequiredFields;
+    var representativeMissingFields = _requiresRepresentativeDetails
+        ? _representativeDraft.missingRequiredFields
+        : const <String>[];
+    if (missingFields.isEmpty && representativeMissingFields.isEmpty) {
       return true;
     }
 
+    final visibleMissingFields = <String>[
+      ...missingFields.map((field) => 'Consignor $field'),
+      ...representativeMissingFields.map((field) => 'Representative $field'),
+    ];
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Complete missing profile fields first: ${missingFields.take(4).join(', ')}${missingFields.length > 4 ? '...' : ''}',
+          'Complete missing profile fields first: ${visibleMissingFields.take(4).join(', ')}${visibleMissingFields.length > 4 ? '...' : ''}',
         ),
       ),
     );
 
-    final saved = await _openConsignorReviewEditor(highlightMissing: true);
-    if (!mounted) return false;
-    if (!saved) return false;
+    if (missingFields.isNotEmpty) {
+      final saved = await _openConsignorReviewEditor(highlightMissing: true);
+      if (!mounted) return false;
+      if (!saved) return false;
+    }
 
-    final stillMissing = _draft.missingRequiredFields;
+    representativeMissingFields = _requiresRepresentativeDetails
+        ? _representativeDraft.missingRequiredFields
+        : const <String>[];
+    if (representativeMissingFields.isNotEmpty) {
+      final saved =
+          await _openRepresentativeReviewEditor(highlightMissing: true);
+      if (!mounted) return false;
+      if (!saved) return false;
+    }
+
+    missingFields = _draft.missingRequiredFields;
+    representativeMissingFields = _requiresRepresentativeDetails
+        ? _representativeDraft.missingRequiredFields
+        : const <String>[];
+    final stillMissing = <String>[
+      ...missingFields.map((field) => 'Consignor $field'),
+      ...representativeMissingFields.map((field) => 'Representative $field'),
+    ];
     if (stillMissing.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1902,6 +1975,15 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     if (_saving) return false;
     if (!await _ensureProfileReadyForContract()) return false;
     if (!mounted) return false;
+    if (includeSignatures &&
+        !(_signatureFormKey.currentState?.validate() ?? true)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter the place of signature before generating.'),
+        ),
+      );
+      return false;
+    }
 
     final appState = context.read<AppState>();
     final messenger = ScaffoldMessenger.of(context);
@@ -2140,8 +2222,16 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   Future<void> _saveFullFlow() async {
     if (_saving) return;
     if (!await _ensureProfileReadyForContract()) return;
-    if (!(_detailsFormKey.currentState?.validate() ?? true)) return;
     if (!mounted) return;
+    if (!(_detailsFormKey.currentState?.validate() ?? true)) return;
+    if (!(_signatureFormKey.currentState?.validate() ?? true)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter the place of signature before saving.'),
+        ),
+      );
+      return;
+    }
     if (!_draft.signatureReady) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2490,6 +2580,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
               ),
             );
           },
+          onEditRepresentative: () {
+            unawaited(
+              _openRepresentativeReviewEditor(
+                highlightMissing:
+                    _representativeDraft.missingRequiredFields.isNotEmpty,
+              ),
+            );
+          },
           onBack: _back,
           onGeneratePdf: () => _generatePdf(),
           onSaveProvisional: _saveProvisionalContract,
@@ -2500,6 +2598,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           onContinue: _next,
         ),
       _WizardStep.signatures => _SignatureStep(
+          formKey: _signatureFormKey,
           draft: _draft,
           saving: _saving,
           generatedPdfPath: _generatedPdfPath,
@@ -2511,6 +2610,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           onClearContractSignature: _clearContractSignature,
           onClearAnnexASignature: _clearAnnexASignature,
           onClearAnnexCSignature: _clearAnnexCSignature,
+          onPlaceOfSignatureChanged: (value) {
+            setState(() {
+              _draft.placeOfSignature = value;
+              _generatedPdfIncludesSignatures = false;
+            });
+          },
           onGeneratePdf: () => _generatePdf(includeSignatures: true),
           onOpenPdf:
               _generatedPdfPath == null || !_generatedPdfIncludesSignatures
@@ -4509,19 +4614,6 @@ class _AuctionStep extends StatelessWidget {
               onChanged: onConsignmentCountryChanged,
             ),
           ),
-          const SizedBox(height: 16),
-          SectionCard(
-            title: 'Place of signature',
-            child: TextFormField(
-              key: const ValueKey('contract-field-place-of-signature'),
-              initialValue: draft.placeOfSignature,
-              decoration: const InputDecoration(
-                labelText: 'Place of signature',
-              ),
-              textCapitalization: TextCapitalization.words,
-              onChanged: (value) => draft.placeOfSignature = value,
-            ),
-          ),
           const SizedBox(height: 20),
           _WizardButtons(onBack: onBack, onNext: onNext),
         ],
@@ -5026,6 +5118,7 @@ class _FullReviewStep extends StatelessWidget {
     required this.generatedPdfPath,
     required this.provisionalContractSubmitted,
     required this.onEditConsignor,
+    required this.onEditRepresentative,
     required this.onBack,
     required this.onGeneratePdf,
     required this.onSaveProvisional,
@@ -5040,6 +5133,7 @@ class _FullReviewStep extends StatelessWidget {
   final String? generatedPdfPath;
   final bool provisionalContractSubmitted;
   final VoidCallback onEditConsignor;
+  final VoidCallback onEditRepresentative;
   final VoidCallback onBack;
   final VoidCallback onGeneratePdf;
   final Future<void> Function() onSaveProvisional;
@@ -5050,6 +5144,8 @@ class _FullReviewStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final missingFields = draft.missingRequiredFields;
+    final representativeMissingFields =
+        representative?.missingRequiredFields ?? const <String>[];
     final selectedAuctions =
         _chronologicalAuctionOptions(draft.selectedAuctions)
             .map((auction) => auction.displayName)
@@ -5076,8 +5172,19 @@ class _FullReviewStep extends StatelessWidget {
         const SizedBox(height: 16),
         if (missingFields.isNotEmpty) ...[
           _MissingFieldsReview(
+            title: 'Missing consignor fields',
             missingFields: missingFields,
             onEdit: onEditConsignor,
+            editLabel: 'Complete Consignor Details',
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (representativeMissingFields.isNotEmpty) ...[
+          _MissingFieldsReview(
+            title: 'Missing representative fields',
+            missingFields: representativeMissingFields,
+            onEdit: onEditRepresentative,
+            editLabel: 'Complete Representative Details',
           ),
           const SizedBox(height: 12),
         ],
@@ -5091,6 +5198,11 @@ class _FullReviewStep extends StatelessWidget {
           const SizedBox(height: 12),
           SectionCard(
             title: 'Authorized representative',
+            trailing: OutlinedButton.icon(
+              onPressed: onEditRepresentative,
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit'),
+            ),
             child: _ReviewLines(lines: representative!.reviewLines),
           ),
         ],
@@ -5311,6 +5423,7 @@ String _localizedAuctionDisplayName(String value, String? correspondence) {
 class _ConsignorReviewEditDialog extends StatefulWidget {
   const _ConsignorReviewEditDialog({
     required this.draft,
+    required this.title,
     required this.titleOptions,
     required this.salutationOptions,
     required this.correspondenceOptions,
@@ -5318,9 +5431,11 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
     required this.highlightMissing,
     required this.onChanged,
     required this.onLookupIbanPressed,
+    this.includeBanking = true,
   });
 
   final _WizardDraft draft;
+  final String title;
   final List<_LookupOption<int>> titleOptions;
   final List<_LookupOption<int>> salutationOptions;
   final List<_LookupOption<String>> correspondenceOptions;
@@ -5328,6 +5443,7 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
   final bool highlightMissing;
   final VoidCallback onChanged;
   final VoidCallback onLookupIbanPressed;
+  final bool includeBanking;
 
   @override
   State<_ConsignorReviewEditDialog> createState() =>
@@ -5385,9 +5501,7 @@ class _ConsignorReviewEditDialogState
                 children: [
                   Expanded(
                     child: Text(
-                      widget.draft.usesTradingName
-                          ? 'Edit company details'
-                          : 'Edit consignor details',
+                      widget.title,
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                   ),
@@ -5414,6 +5528,7 @@ class _ConsignorReviewEditDialogState
                     phonePrefixes: widget.phonePrefixes,
                     onChanged: _handleChanged,
                     onLookupIbanPressed: widget.onLookupIbanPressed,
+                    includeBanking: widget.includeBanking,
                   ),
                 ),
               ),
@@ -5506,6 +5621,7 @@ class _SignerChoiceTile extends StatelessWidget {
 
 class _SignatureStep extends StatelessWidget {
   const _SignatureStep({
+    required this.formKey,
     required this.draft,
     required this.saving,
     required this.generatedPdfPath,
@@ -5517,11 +5633,13 @@ class _SignatureStep extends StatelessWidget {
     required this.onClearContractSignature,
     required this.onClearAnnexASignature,
     required this.onClearAnnexCSignature,
+    required this.onPlaceOfSignatureChanged,
     required this.onGeneratePdf,
     required this.onOpenPdf,
     required this.onSubmit,
   });
 
+  final GlobalKey<FormState> formKey;
   final _WizardDraft draft;
   final bool saving;
   final String? generatedPdfPath;
@@ -5536,105 +5654,124 @@ class _SignatureStep extends StatelessWidget {
   final VoidCallback onClearContractSignature;
   final VoidCallback onClearAnnexASignature;
   final VoidCallback onClearAnnexCSignature;
+  final ValueChanged<String> onPlaceOfSignatureChanged;
   final VoidCallback onGeneratePdf;
   final VoidCallback? onOpenPdf;
   final VoidCallback onSubmit;
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        Text('Sign PDF', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 16),
-        SectionCard(
-          title: 'Who will sign the PDF?',
-          child: Column(
-            children: [
-              for (final signer in _LeuSigner.values)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: _SignerChoiceTile(
-                    signer: signer,
-                    selected: draft.leuSigner == signer,
-                    enabled: !saving,
-                    onSelected: () => onSignerChanged(signer),
+    return Form(
+      key: formKey,
+      child: ListView(
+        children: [
+          Text('Sign PDF', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Place of signature',
+            child: TextFormField(
+              key: const ValueKey('signature-field-place-of-signature'),
+              initialValue: draft.placeOfSignature,
+              decoration: const InputDecoration(
+                labelText: 'Place of signature *',
+              ),
+              validator: (value) =>
+                  FormValidators.requiredText(value, 'Place of signature'),
+              textCapitalization: TextCapitalization.words,
+              onChanged: onPlaceOfSignatureChanged,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
+            title: 'Who will sign the PDF?',
+            child: Column(
+              children: [
+                for (final signer in _LeuSigner.values)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _SignerChoiceTile(
+                      signer: signer,
+                      selected: draft.leuSigner == signer,
+                      enabled: !saving,
+                      onSelected: () => onSignerChanged(signer),
+                    ),
                   ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _SignatureCaptureSection(
+            title: 'Signature Consignment Agreement',
+            dialogTitle: 'Signature Consignment Agreement',
+            strokes: draft.contractSignatureStrokes,
+            canvasSize: draft.contractSignatureCanvasSize,
+            saving: saving,
+            onChanged: onContractSignatureChanged,
+            onClear: onClearContractSignature,
+          ),
+          const SizedBox(height: 12),
+          _SignatureCaptureSection(
+            title: 'Signature Annex A (Declaration on the right of disposal)',
+            dialogTitle:
+                'Signature Annex A (Declaration on the right of disposal)',
+            strokes: draft.annexASignatureStrokes,
+            canvasSize: draft.annexASignatureCanvasSize,
+            saving: saving,
+            onChanged: onAnnexASignatureChanged,
+            onClear: onClearAnnexASignature,
+          ),
+          const SizedBox(height: 12),
+          _SignatureCaptureSection(
+            title:
+                'Signature Annex C (Information sheet on existing import and export regulations)',
+            dialogTitle:
+                'Signature Annex C (Information sheet on existing import and export regulations)',
+            strokes: draft.annexCSignatureStrokes,
+            canvasSize: draft.annexCSignatureCanvasSize,
+            saving: saving,
+            onChanged: onAnnexCSignatureChanged,
+            onClear: onClearAnnexCSignature,
+          ),
+          const SizedBox(height: 12),
+          SectionCard(
+            title: 'Signed PDF',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed:
+                      saving || !draft.signatureReady ? null : onGeneratePdf,
+                  icon: const Icon(Icons.picture_as_pdf_outlined),
+                  label: const Text('Generate signed PDF'),
                 ),
-            ],
+                OutlinedButton.icon(
+                  onPressed: onOpenPdf,
+                  icon: const Icon(Icons.open_in_new_rounded),
+                  label: const Text('Open PDF'),
+                ),
+                if (generatedPdfPath != null) Text(generatedPdfPath!),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        _SignatureCaptureSection(
-          title: 'Signature Consignment Agreement',
-          dialogTitle: 'Signature Consignment Agreement',
-          strokes: draft.contractSignatureStrokes,
-          canvasSize: draft.contractSignatureCanvasSize,
-          saving: saving,
-          onChanged: onContractSignatureChanged,
-          onClear: onClearContractSignature,
-        ),
-        const SizedBox(height: 12),
-        _SignatureCaptureSection(
-          title: 'Signature Annex A (Declaration on the right of disposal)',
-          dialogTitle:
-              'Signature Annex A (Declaration on the right of disposal)',
-          strokes: draft.annexASignatureStrokes,
-          canvasSize: draft.annexASignatureCanvasSize,
-          saving: saving,
-          onChanged: onAnnexASignatureChanged,
-          onClear: onClearAnnexASignature,
-        ),
-        const SizedBox(height: 12),
-        _SignatureCaptureSection(
-          title:
-              'Signature Annex C (Information sheet on existing import and export regulations)',
-          dialogTitle:
-              'Signature Annex C (Information sheet on existing import and export regulations)',
-          strokes: draft.annexCSignatureStrokes,
-          canvasSize: draft.annexCSignatureCanvasSize,
-          saving: saving,
-          onChanged: onAnnexCSignatureChanged,
-          onClear: onClearAnnexCSignature,
-        ),
-        const SizedBox(height: 12),
-        SectionCard(
-          title: 'Signed PDF',
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              OutlinedButton.icon(
-                onPressed:
-                    saving || !draft.signatureReady ? null : onGeneratePdf,
-                icon: const Icon(Icons.picture_as_pdf_outlined),
-                label: const Text('Generate signed PDF'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onOpenPdf,
-                icon: const Icon(Icons.open_in_new_rounded),
-                label: const Text('Open PDF'),
-              ),
-              if (generatedPdfPath != null) Text(generatedPdfPath!),
-            ],
+          const SizedBox(height: 20),
+          OutlinedButton(
+              onPressed: saving ? null : onBack, child: const Text('Back')),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: saving || !draft.signatureReady ? null : onSubmit,
+            icon: saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_rounded),
+            label: Text(saving ? 'Saving…' : 'Save'),
           ),
-        ),
-        const SizedBox(height: 20),
-        OutlinedButton(
-            onPressed: saving ? null : onBack, child: const Text('Back')),
-        const SizedBox(height: 12),
-        ElevatedButton.icon(
-          onPressed: saving || !draft.signatureReady ? null : onSubmit,
-          icon: saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.save_rounded),
-          label: Text(saving ? 'Saving…' : 'Save'),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -6153,12 +6290,16 @@ class _SignaturePainter extends CustomPainter {
 
 class _MissingFieldsReview extends StatelessWidget {
   const _MissingFieldsReview({
+    required this.title,
     required this.missingFields,
     required this.onEdit,
+    this.editLabel = 'Complete Profile Details',
   });
 
+  final String title;
   final List<String> missingFields;
   final VoidCallback onEdit;
+  final String editLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -6170,11 +6311,11 @@ class _MissingFieldsReview extends StatelessWidget {
         .toList(growable: false);
 
     return SectionCard(
-      title: 'Missing fields',
+      title: title,
       trailing: OutlinedButton.icon(
         onPressed: onEdit,
         icon: const Icon(Icons.edit_outlined),
-        label: const Text('Complete Profile Details'),
+        label: Text(editLabel),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
