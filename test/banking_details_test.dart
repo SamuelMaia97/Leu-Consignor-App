@@ -29,5 +29,26 @@ void main() {
       expect(banking.bankCountryIso3, 'CHE');
       expect(banking.bankCountryName, 'Switzerland');
     });
+
+    test('bank country normalizes Swiss ISO2 code to ISO3', () {
+      final banking = BankingDetails.fromJson(const {
+        'accountNumber': 'CH9300762011623852957',
+        'BG_LAND': 'CH',
+      });
+
+      expect(banking.bankCountryIso3, 'CHE');
+      expect(banking.bankCountryName, 'Switzerland');
+    });
+
+    test('numeric bank country identifiers are not treated as country names',
+        () {
+      final banking = BankingDetails.fromJson(const {
+        'accountNumber': 'CH9300762011623852957',
+        'BG_LAND': '1',
+      });
+
+      expect(banking.bankCountryIso3, 'CHE');
+      expect(banking.bankCountryName, 'Switzerland');
+    });
   });
 }

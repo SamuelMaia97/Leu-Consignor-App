@@ -174,6 +174,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       'consignorId': _record.consignorId,
       'auctionIds': _record.auctionIds,
       'auctionDisplayNames': _record.auctionDisplayNames,
+      'placeOfSignature': _record.placeOfSignature,
       'pdfName': _record.pdfName,
       'pdfPath': _record.pdfPath,
       'signedAt': _record.signedAt.toUtc().toIso8601String(),
@@ -257,6 +258,17 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
         id: nextId,
         auctionIds: auctionIds,
         auctionDisplayNames: displayNames,
+        lastModifiedUtc: DateTime.now().toUtc(),
+      );
+    });
+  }
+
+  void _updatePlaceOfSignature(String value) {
+    if (!_ensureEditable()) return;
+
+    setState(() {
+      _record = _record.copyWith(
+        placeOfSignature: value,
         lastModifiedUtc: DateTime.now().toUtc(),
       );
     });
@@ -1006,7 +1018,6 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     final state = context.watch<AppState>();
     final consignor = state.consignorById(widget.consignorId);
     final auctions = state.auctions;
-    final auditUsername = _record.lastEditedByUsername?.trim() ?? '';
     final canEdit = _canEditRecord;
     final readinessIssues = WorkflowStatus.readinessIssuesForContract(
       consignor: consignor,
@@ -1094,13 +1105,6 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
               const SizedBox(height: 14),
               _ReadOnlyNotice(record: _record),
             ],
-            if (auditUsername.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              _AuditText(
-                username: auditUsername,
-                editedAtUtc: _record.lastEditedAtUtc,
-              ),
-            ],
             const SizedBox(height: 24),
             SectionCard(
               title: 'Contract settings',
@@ -1137,6 +1141,19 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                       value: _record.signedAt,
                       enabled: false,
                       onChanged: (_) {},
+                    ),
+                  ),
+                  SizedBox(
+                    width: 220,
+                    child: TextFormField(
+                      key: const ValueKey('contract-place-of-signature'),
+                      initialValue: _record.placeOfSignature,
+                      decoration: const InputDecoration(
+                        labelText: 'Place of signature',
+                      ),
+                      enabled: canEdit,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: _updatePlaceOfSignature,
                     ),
                   ),
                   SizedBox(
@@ -1297,27 +1314,6 @@ class _ReadOnlyNotice extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _AuditText extends StatelessWidget {
-  const _AuditText({required this.username, required this.editedAtUtc});
-
-  final String username;
-  final DateTime? editedAtUtc;
-
-  @override
-  Widget build(BuildContext context) {
-    final local = editedAtUtc?.toLocal();
-    final dateText = local == null
-        ? 'unknown date'
-        : DateFormat('dd MMM yyyy HH:mm').format(local);
-    return Text(
-      'Last edited by $username on $dateText',
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Colors.black54,
-          ),
     );
   }
 }

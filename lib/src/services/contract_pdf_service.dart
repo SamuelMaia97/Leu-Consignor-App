@@ -171,14 +171,29 @@ class ContractPdfPayloadBuilder {
     final resolvedCommissionPercent = commissionPercent.trim().isNotEmpty
         ? commissionPercent.trim()
         : _percentText(consignor.discount);
-    final resolvedConsignmentCountry = consignmentCountry.trim().isNotEmpty
+    final rawConsignmentCountry = consignmentCountry.trim().isNotEmpty
         ? consignmentCountry.trim()
         : consignor.consignorAddress.countryName;
     final resolvedConsignmentCountryIso3 = consignmentCountryIso3.trim();
-    final resolvedOriginCountry = originCountry.trim().isNotEmpty
+    final resolvedConsignmentCountry = _localizedCountryName(
+      iso3: resolvedConsignmentCountryIso3.isNotEmpty
+          ? resolvedConsignmentCountryIso3
+          : consignor.consignorAddress.countryIso3,
+      name: rawConsignmentCountry,
+      correspondence: consignor.correspondence,
+    );
+    final rawOriginCountry = originCountry.trim().isNotEmpty
         ? originCountry.trim()
         : consignor.consignorInfo.nationalityName;
+    final resolvedOriginCountry = _localizedCountryName(
+      iso3: consignor.consignorInfo.nationalityIso3,
+      name: rawOriginCountry,
+      correspondence: consignor.correspondence,
+    );
     final representative = authorizedRepresentative;
+    final representativeCompany = representative?.usesTradingName == true
+        ? representative!.tradingName
+        : '';
     final legalRepresentativeName = representative == null
         ? _contractDisplayName(consignor)
         : _contractDisplayName(representative);
@@ -190,6 +205,7 @@ class ContractPdfPayloadBuilder {
     final ownerIsLegal = owner?.usesTradingName ?? false;
     final leuRepresentativeName = signatureData?.leuRepresentativeName ?? '';
     final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
+    final placeOfSignature = _signaturePlace(record.placeOfSignature);
     final signerName = _contractDisplayName(consignor);
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
@@ -209,6 +225,8 @@ class ContractPdfPayloadBuilder {
       originCountry: resolvedOriginCountry,
       leuRepresentativeName: leuRepresentativeName,
       leuRepresentativeFunction: leuRepresentativeFunction,
+      placeOfSignature: placeOfSignature,
+      representativeCompany: representativeCompany,
       legalRepresentativeName: legalRepresentativeName,
       legalRepresentativePhone: legalRepresentativePhone,
       legalRepresentativeEmail: legalRepresentativeEmail,
@@ -216,6 +234,7 @@ class ContractPdfPayloadBuilder {
       annexASignatureBase64: annexASignatureBase64,
       annexCSignatureBase64: annexCSignatureBase64,
       leuSignatureBase64: leuSignatureBase64,
+      correspondence: consignor.correspondence,
     );
     final templateFlags = _templateFlags(
       scenario: scenario,
@@ -223,7 +242,6 @@ class ContractPdfPayloadBuilder {
       ownerIsLegal: ownerIsLegal,
       hasOrdererIdFiles: hasOrdererIdFiles,
       hasRepresentativeIdFiles: hasRepresentativeIdFiles,
-      hasCommercialRegisterFiles: record.registrationFiles.isNotEmpty,
       paragraphVisibility: paragraphVisibility,
     );
 
@@ -251,6 +269,7 @@ class ContractPdfPayloadBuilder {
         'lastModifiedUtc': record.lastModifiedUtc.toUtc().toIso8601String(),
         'pdfName': pdfFileName,
         'pdfTitle': pdfTitle,
+        'placeOfSignature': placeOfSignature,
       },
       'consignor': consignor.toJson(),
       'authorizedRepresentative': authorizedRepresentative?.toJson(),
@@ -269,6 +288,9 @@ class ContractPdfPayloadBuilder {
       'originCountry': resolvedOriginCountry,
       'leuRepresentativeName': signatureData?.leuRepresentativeName ?? '',
       'leuRepresentativeFunction': leuRepresentativeFunction,
+      'placeOfSignature': placeOfSignature,
+      'PlaceOfSignature': placeOfSignature,
+      'place_of_signature': placeOfSignature,
       'paragraphVisibility': paragraphVisibilityPayload,
       'templateFlags': templateFlags,
       ...paragraphTopLevelFlags,
@@ -305,6 +327,8 @@ class ContractPdfPayloadBuilder {
     required String originCountry,
     required String leuRepresentativeName,
     required String leuRepresentativeFunction,
+    required String placeOfSignature,
+    required String representativeCompany,
     required String legalRepresentativeName,
     required String legalRepresentativePhone,
     required String legalRepresentativeEmail,
@@ -312,9 +336,12 @@ class ContractPdfPayloadBuilder {
     required String annexASignatureBase64,
     required String annexCSignatureBase64,
     required String leuSignatureBase64,
+    required String? correspondence,
   }) {
     final ownerOrEmpty = owner;
-    final ownerAddress = ownerOrEmpty?.consignorAddress;
+    final ownerAddress = ownerOrEmpty == null
+        ? null
+        : _localizedAddress(ownerOrEmpty.consignorAddress, correspondence);
     final legalOwnerCompany =
         ownerIsLegal ? ownerOrEmpty?.tradingName ?? '' : '';
     final legalOwnerRepName =
@@ -324,8 +351,30 @@ class ContractPdfPayloadBuilder {
         ? ''
         : _personNameLastFirst(ownerOrEmpty.consignorInfo);
     final consignorName = _contractDisplayName(consignor);
+    final consignorAddress =
+        _localizedAddress(consignor.consignorAddress, correspondence);
+    final bankAddress =
+        _localizedAddress(consignor.bankingDetails.bankAddress, correspondence);
+    final beneficiaryAddress = _localizedAddress(
+      consignor.bankingDetails.beneficiaryAddress,
+      correspondence,
+    );
+    final consignorNationality = _localizedCountryName(
+      iso3: consignor.consignorInfo.nationalityIso3,
+      name: consignor.consignorInfo.nationalityName,
+      correspondence: correspondence,
+    );
+    final ownerNationality = ownerOrEmpty == null
+        ? ''
+        : _localizedCountryName(
+            iso3: ownerOrEmpty.consignorInfo.nationalityIso3,
+            name: ownerOrEmpty.consignorInfo.nationalityName,
+            correspondence: correspondence,
+          );
     final leuCompanyName = 'Leu Numismatik AG';
-    final contractDate = isProvisional ? '' : _formatDate(record.signedAt);
+    final dateSuffix = isProvisional ? '' : ', ${_formatDate(record.signedAt)}';
+    final signerPlaceDate = '$placeOfSignature$dateSuffix';
+    final leuPlaceDate = 'Winterthur$dateSuffix';
 
     final bankAccountValue = consignor.bankingDetails.accountNumber;
     final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
@@ -343,15 +392,17 @@ class ContractPdfPayloadBuilder {
       'origin_country': originCountry,
       'consignor_full_name': consignorPersonName,
       'consignor_dob': _formatDate(consignor.consignorInfo.dateOfBirth),
-      'consignor_nationality': consignor.consignorInfo.nationalityName,
-      'consignor_address_1': _addressLine1(consignor.consignorAddress),
-      'consignor_address_2': _addressLine2(consignor.consignorAddress),
-      'consignor_address_3': _addressLine3(consignor.consignorAddress),
+      'consignor_nationality': consignorNationality,
+      'consignor_address_1': _addressLine1(consignorAddress),
+      'consignor_address_2': _addressLine2(consignorAddress),
+      'consignor_address_3': _addressLine3(consignorAddress),
       'consignor_phone': consignor.fullPhoneNumber,
       'consignor_email': consignor.emailAddress,
-      'consignor_place_date': contractDate,
-      'contract_place_date': contractDate,
-      'contractPlaceDate': contractDate,
+      'place_of_signature': placeOfSignature,
+      'placeOfSignature': placeOfSignature,
+      'consignor_place_date': dateSuffix,
+      'contract_place_date': dateSuffix,
+      'contractPlaceDate': signerPlaceDate,
       'consignor_signature_image': contractSignatureBase64,
       'consignor_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'consignor_signature_name': consignorName,
@@ -361,22 +412,23 @@ class ContractPdfPayloadBuilder {
           : '',
       'legal_entity_address_1':
           scenario.consignorType == ConsignorType.legalEntity
-              ? _addressLine1(consignor.consignorAddress)
+              ? _addressLine1(consignorAddress)
               : '',
       'legal_entity_address_2':
           scenario.consignorType == ConsignorType.legalEntity
-              ? _addressLine2(consignor.consignorAddress)
+              ? _addressLine2(consignorAddress)
               : '',
       'legal_entity_address_3':
           scenario.consignorType == ConsignorType.legalEntity
-              ? _addressLine3(consignor.consignorAddress)
+              ? _addressLine3(consignorAddress)
               : '',
       'representative_name': legalRepresentativeName,
+      'representative_company': representativeCompany,
       'representative_phone': legalRepresentativePhone,
       'representative_email': legalRepresentativeEmail,
       'owner_full_name': ownerPersonName,
       'owner_dob': _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
-      'owner_nationality': ownerOrEmpty?.consignorInfo.nationalityName ?? '',
+      'owner_nationality': ownerNationality,
       'owner_address_1':
           ownerAddress == null ? '' : _addressLine1(ownerAddress),
       'owner_address_2':
@@ -388,22 +440,19 @@ class ContractPdfPayloadBuilder {
       'payment_method': consignor.paymentOption.apiName,
       'payment_method_text': consignor.paymentOption.label,
       'bank_name': consignor.bankingDetails.bankName,
-      'bank_address_1': _addressLine1(consignor.bankingDetails.bankAddress),
-      'bank_address_2': _addressLine2(consignor.bankingDetails.bankAddress),
-      'bank_address_3': _addressLine3(consignor.bankingDetails.bankAddress),
+      'bank_address_1': _addressLine1(bankAddress),
+      'bank_address_2': _addressLine2(bankAddress),
+      'bank_address_3': _addressLine3(bankAddress),
       'beneficiary_name': consignor.bankingDetails.beneficiary.fullName,
-      'beneficiary_address_1':
-          _addressLine1(consignor.bankingDetails.beneficiaryAddress),
-      'beneficiary_address_2':
-          _addressLine2(consignor.bankingDetails.beneficiaryAddress),
-      'beneficiary_address_3':
-          _addressLine3(consignor.bankingDetails.beneficiaryAddress),
+      'beneficiary_address_1': _addressLine1(beneficiaryAddress),
+      'beneficiary_address_2': _addressLine2(beneficiaryAddress),
+      'beneficiary_address_3': _addressLine3(beneficiaryAddress),
       'iban': ibanValue,
       'bic_swift': consignor.bankingDetails.bicSwift,
       'clearing_nr': consignor.bankingDetails.clearingNumber,
       'routing_nr': consignor.bankingDetails.routingNumber,
-      'leu_place_date': contractDate,
-      'leuPlaceDate': contractDate,
+      'leu_place_date': leuPlaceDate,
+      'leuPlaceDate': leuPlaceDate,
       'leu_representative_company': leuCompanyName,
       'leu_representative_name': leuRepresentativeName,
       'leu_representative_function': leuRepresentativeFunction,
@@ -414,10 +463,10 @@ class ContractPdfPayloadBuilder {
       'leu_signature_image': leuSignatureBase64,
       'annex_a_auction_name': auctionName,
       'annex_a_auction_date': _formatDate(auctionDate),
-      'annex_a_place_date': contractDate,
-      'annexAPlaceDate': contractDate,
-      'annex_place_date': contractDate,
-      'annexPlaceDate': contractDate,
+      'annex_a_place_date': dateSuffix,
+      'annexAPlaceDate': signerPlaceDate,
+      'annex_place_date': dateSuffix,
+      'annexPlaceDate': signerPlaceDate,
       'annex_a_signature_image': annexASignatureBase64,
       'annex_a_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'annex_a_signature_name': consignorName,
@@ -426,8 +475,7 @@ class ContractPdfPayloadBuilder {
       'annex_a_owner_dob': ownerIsLegal
           ? ''
           : _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
-      'annex_a_owner_nationality':
-          ownerIsLegal ? '' : ownerOrEmpty?.consignorInfo.nationalityName ?? '',
+      'annex_a_owner_nationality': ownerIsLegal ? '' : ownerNationality,
       'annex_a_owner_address_1': ownerIsLegal || ownerAddress == null
           ? ''
           : _addressLine1(ownerAddress),
@@ -446,8 +494,7 @@ class ContractPdfPayloadBuilder {
       'annex_a_legal_rep_dob': ownerIsLegal
           ? _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth)
           : '',
-      'annex_a_legal_rep_nationality':
-          ownerIsLegal ? ownerOrEmpty?.consignorInfo.nationalityName ?? '' : '',
+      'annex_a_legal_rep_nationality': ownerIsLegal ? ownerNationality : '',
       'annex_a_legal_address_1': ownerIsLegal && ownerAddress != null
           ? _addressLine1(ownerAddress)
           : '',
@@ -461,8 +508,8 @@ class ContractPdfPayloadBuilder {
           ownerIsLegal ? ownerOrEmpty?.fullPhoneNumber ?? '' : '',
       'annex_a_legal_email':
           ownerIsLegal ? ownerOrEmpty?.emailAddress ?? '' : '',
-      'annex_c_place_date': contractDate,
-      'annexCPlaceDate': contractDate,
+      'annex_c_place_date': dateSuffix,
+      'annexCPlaceDate': signerPlaceDate,
       'annex_c_signature_image': annexCSignatureBase64,
       'annex_c_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
       'annex_c_signature_name': consignorName,
@@ -538,7 +585,6 @@ class ContractPdfPayloadBuilder {
     required bool ownerIsLegal,
     required bool hasOrdererIdFiles,
     required bool hasRepresentativeIdFiles,
-    required bool hasCommercialRegisterFiles,
     required Map<String, bool> paragraphVisibility,
   }) {
     final requiresRepresentativeId = paragraphVisibility['Paragraf15'] ?? false;
@@ -550,12 +596,10 @@ class ContractPdfPayloadBuilder {
     return {
       'blockAttachIdNatural':
           hasOrdererIdFiles && (paragraphVisibility['Paragraf13'] ?? false),
-      'blockAttachCommercialRegister':
-          hasCommercialRegisterFiles && requiresConsignorRegister,
+      'blockAttachCommercialRegister': requiresConsignorRegister,
       'blockAttachIdRepresentative':
           hasRepresentativeIdFiles && requiresRepresentativeId,
-      'blockAttachRegisterLegal':
-          hasCommercialRegisterFiles && requiresRepresentativeRegister,
+      'blockAttachRegisterLegal': requiresRepresentativeRegister,
       'blockAnnexASelfOwnerStatement':
           paragraphVisibility['Paragraf17'] ?? false,
       'blockAnnexANaturalOwnerDetails': !consignorIsOwner && !ownerIsLegal,
@@ -612,6 +656,11 @@ class ContractPdfPayloadBuilder {
     return function == null || function.isEmpty ? 'CEO' : function;
   }
 
+  static String _signaturePlace(String value) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? 'Winterthur' : trimmed;
+  }
+
   static String _percentText(double? value) {
     if (value == null) return '';
     if (value == value.roundToDouble()) {
@@ -637,6 +686,40 @@ class ContractPdfPayloadBuilder {
 
   static String _addressLine3(Address address) {
     return AddressFormatter.contractLine(address, 2);
+  }
+
+  static Address _localizedAddress(Address address, String? correspondence) {
+    return Address(
+      streetAddress: address.streetAddress,
+      streetNumber: address.streetNumber,
+      streetAddressOptional: address.streetAddressOptional,
+      postalCode: address.postalCode,
+      city: address.city,
+      adminRegion: address.adminRegion,
+      countryIso3: address.countryIso3,
+      countryName: _localizedCountryName(
+        iso3: address.countryIso3,
+        name: address.countryName,
+        correspondence: correspondence,
+      ),
+    );
+  }
+
+  static String _localizedCountryName({
+    required String iso3,
+    required String name,
+    required String? correspondence,
+  }) {
+    if (correspondence?.trim().toLowerCase() != 'de') {
+      return name.trim();
+    }
+
+    final normalizedIso = iso3.trim().toUpperCase();
+    final byIso = _countryNamesDeByIso3[normalizedIso];
+    if (byIso != null) return byIso;
+
+    final normalizedName = name.trim().toLowerCase();
+    return _countryNamesDeByEnglishName[normalizedName] ?? name.trim();
   }
 
   static String _contractDisplayName(Consignor consignor) {
@@ -755,8 +838,8 @@ class ContractPdfPayloadBuilder {
     if (isGerman) {
       return trimmed
           .replaceAll(
-            RegExp(r'\bWeb\s+Auction\b', caseSensitive: false),
-            'Web Auktion',
+            RegExp(r'\bWeb\s+(?:Auction|Auktion)\b', caseSensitive: false),
+            'Webauktion',
           )
           .replaceAll(
             RegExp(r'\bAuction\b', caseSensitive: false),
@@ -766,7 +849,7 @@ class ContractPdfPayloadBuilder {
 
     return trimmed
         .replaceAll(
-          RegExp(r'\bWeb\s+Auktion\b', caseSensitive: false),
+          RegExp(r'\bWeb\s*Auktion\b', caseSensitive: false),
           'Web Auction',
         )
         .replaceAll(
@@ -790,6 +873,124 @@ const _blockMarkerNames = [
   'block_annex_a_provenance_self',
   'block_annex_a_provenance_on_behalf',
 ];
+
+const _countryNamesDeByIso3 = <String, String>{
+  'AD': 'Andorra',
+  'AND': 'Andorra',
+  'AE': 'Vereinigte Arabische Emirate',
+  'ARE': 'Vereinigte Arabische Emirate',
+  'AR': 'Argentinien',
+  'ARG': 'Argentinien',
+  'AT': 'Österreich',
+  'AUT': 'Österreich',
+  'AU': 'Australien',
+  'AUS': 'Australien',
+  'BE': 'Belgien',
+  'BEL': 'Belgien',
+  'BR': 'Brasilien',
+  'BRA': 'Brasilien',
+  'CA': 'Kanada',
+  'CAN': 'Kanada',
+  'CH': 'Schweiz',
+  'CHE': 'Schweiz',
+  'CN': 'China',
+  'CHN': 'China',
+  'DE': 'Deutschland',
+  'DEU': 'Deutschland',
+  'DK': 'Dänemark',
+  'DNK': 'Dänemark',
+  'EG': 'Ägypten',
+  'EGY': 'Ägypten',
+  'ES': 'Spanien',
+  'ESP': 'Spanien',
+  'FR': 'Frankreich',
+  'FRA': 'Frankreich',
+  'GB': 'Vereinigtes Königreich',
+  'GBR': 'Vereinigtes Königreich',
+  'HK': 'Hongkong',
+  'HKG': 'Hongkong',
+  'IL': 'Israel',
+  'ISR': 'Israel',
+  'IN': 'Indien',
+  'IND': 'Indien',
+  'IT': 'Italien',
+  'ITA': 'Italien',
+  'JP': 'Japan',
+  'JPN': 'Japan',
+  'KR': 'Südkorea',
+  'KOR': 'Südkorea',
+  'LI': 'Liechtenstein',
+  'LIE': 'Liechtenstein',
+  'LU': 'Luxemburg',
+  'LUX': 'Luxemburg',
+  'MC': 'Monaco',
+  'MCO': 'Monaco',
+  'MX': 'Mexiko',
+  'MEX': 'Mexiko',
+  'NL': 'Niederlande',
+  'NLD': 'Niederlande',
+  'NO': 'Norwegen',
+  'NOR': 'Norwegen',
+  'NZ': 'Neuseeland',
+  'NZL': 'Neuseeland',
+  'PT': 'Portugal',
+  'PRT': 'Portugal',
+  'QA': 'Katar',
+  'QAT': 'Katar',
+  'SA': 'Saudi-Arabien',
+  'SAU': 'Saudi-Arabien',
+  'SE': 'Schweden',
+  'SWE': 'Schweden',
+  'SG': 'Singapur',
+  'SGP': 'Singapur',
+  'TR': 'Türkei',
+  'TUR': 'Türkei',
+  'US': 'Vereinigte Staaten',
+  'USA': 'Vereinigte Staaten',
+  'ZA': 'Südafrika',
+  'ZAF': 'Südafrika',
+};
+
+const _countryNamesDeByEnglishName = <String, String>{
+  'andorra': 'Andorra',
+  'argentina': 'Argentinien',
+  'australia': 'Australien',
+  'austria': 'Österreich',
+  'belgium': 'Belgien',
+  'brazil': 'Brasilien',
+  'canada': 'Kanada',
+  'china': 'China',
+  'denmark': 'Dänemark',
+  'egypt': 'Ägypten',
+  'france': 'Frankreich',
+  'germany': 'Deutschland',
+  'hong kong': 'Hongkong',
+  'india': 'Indien',
+  'israel': 'Israel',
+  'italy': 'Italien',
+  'japan': 'Japan',
+  'liechtenstein': 'Liechtenstein',
+  'luxembourg': 'Luxemburg',
+  'mexico': 'Mexiko',
+  'monaco': 'Monaco',
+  'netherlands': 'Niederlande',
+  'new zealand': 'Neuseeland',
+  'norway': 'Norwegen',
+  'portugal': 'Portugal',
+  'qatar': 'Katar',
+  'saudi arabia': 'Saudi-Arabien',
+  'singapore': 'Singapur',
+  'south africa': 'Südafrika',
+  'south korea': 'Südkorea',
+  'spain': 'Spanien',
+  'sweden': 'Schweden',
+  'switzerland': 'Schweiz',
+  'turkey': 'Türkei',
+  'united arab emirates': 'Vereinigte Arabische Emirate',
+  'united kingdom': 'Vereinigtes Königreich',
+  'united states': 'Vereinigte Staaten',
+  'united states of america': 'Vereinigte Staaten',
+};
 
 enum _ContractRenderScenario {
   naturalPersonSelf(

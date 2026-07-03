@@ -714,6 +714,12 @@ class AppState extends ChangeNotifier {
       final updated = synced.copyWith(
         id: contractToSync.id,
         consignorId: contractToSync.consignorId,
+        auctionIds: synced.auctionIds.isEmpty
+            ? contractToSync.auctionIds
+            : synced.auctionIds,
+        auctionDisplayNames: synced.auctionIds.isEmpty
+            ? contractToSync.auctionDisplayNames
+            : synced.auctionDisplayNames,
         syncStatus: RecordSyncStatus.synced,
         syncErrorMessage: null,
         lastSyncedUtc: DateTime.now().toUtc(),

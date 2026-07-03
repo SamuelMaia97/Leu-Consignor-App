@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:leu_consignor_app/src/models/abacus_sync.dart';
 import 'package:leu_consignor_app/src/models/app_settings.dart';
+import 'package:leu_consignor_app/src/models/contract_record.dart';
 import 'package:leu_consignor_app/src/services/api_service.dart';
 
 void main() {
@@ -37,7 +39,8 @@ void main() {
       await request.response.close();
     }
 
-    test('imports full get-all report rows without detail fetch', () async {
+    test('falls back to full get-all report rows when detail is unavailable',
+        () async {
       handler = (request) async {
         if (request.uri.path == '/api/consignors-app/consignors/get-all') {
           await writeJson(request, [
@@ -89,8 +92,150 @@ void main() {
       );
       expect(
         requests,
-        isNot(contains('GET /api/consignors-app/consignors/get/121013')),
+        contains('GET /api/consignors-app/consignors/get/121013'),
       );
+    });
+
+    test('hydrates changed consignors from Abacus detail before bank mapping',
+        () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/get-all') {
+          await writeJson(request, [
+            {
+              'systemReferenceCustomer': 113945,
+              'tradingName': 'Stale Report Consignor',
+              'emailAddress': 'stale@example.test',
+              'phoneNumber': '+41 44 123 45 67',
+              'consignorAddress': {
+                'streetAddress': 'Report Street',
+                'postalCode': '8000',
+                'city': 'Zurich',
+                'country': {
+                  'isoCountryCode': 'CHE',
+                  'countryName': 'Switzerland',
+                },
+              },
+              'bankingDetails': {
+                'bankName': 'Stale SQL Bank',
+                'accountNumber': 'CH9300762011623852957',
+                'bankCountry': {
+                  'isoCountryCode': 'AFG',
+                  'countryName': 'Afghanistan',
+                },
+              },
+              'paymentOption': 'BankTransfer',
+              'correspondence': 'de',
+              'lastModifiedUtc': '2026-07-02T07:00:00Z',
+              'contracts': [],
+            },
+          ]);
+          return;
+        }
+
+        if (request.uri.path == '/api/consignors-app/consignors/get/113945') {
+          await writeJson(request, {
+            'systemReferenceCustomer': 113945,
+            'tradingName': 'Abacus Detail Consignor',
+            'emailAddress': 'abacus@example.test',
+            'phoneNumber': '+41 44 123 45 67',
+            'consignorAddress': {
+              'streetAddress': 'Detail Street',
+              'postalCode': '8000',
+              'city': 'Zurich',
+              'country': {
+                'isoCountryCode': 'CHE',
+                'countryName': 'Switzerland',
+              },
+            },
+            'bankingDetails': {
+              'bankName': 'Abacus Maintained Bank',
+              'accountNumber': 'CH9300762011623852957',
+              'bankCountry': {
+                'isoCountryCode': 'CHE',
+                'countryName': 'Switzerland',
+              },
+            },
+            'paymentOption': 'BankTransfer',
+            'correspondence': 'de',
+            'lastModifiedUtc': '2026-07-02T08:00:00Z',
+            'contracts': [],
+          });
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final snapshot = await buildApi().fetchRemoteSnapshot();
+      final consignor = snapshot.consignors.single;
+
+      expect(consignor.id, '113945');
+      expect(consignor.bankingDetails.bankName, 'Abacus Maintained Bank');
+      expect(consignor.bankingDetails.bankCountryIso3, 'CHE');
+      expect(consignor.bankingDetails.bankCountryName, 'Switzerland');
+      expect(
+        requests,
+        containsAll([
+          'GET /api/consignors-app/consignors/get-all',
+          'GET /api/consignors-app/consignors/get/113945',
+        ]),
+      );
+    });
+
+    test('hydrates existing customer search results from Abacus detail',
+        () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/customers/search') {
+          await writeJson(request, [
+            {
+              'customerId': 113945,
+              'displayLabel': 'Customer 113945',
+              'prefill': {
+                'customerId': 113945,
+                'tradingName': 'Search Prefill',
+                'bankingDetails': {
+                  'bankName': 'Search Bank',
+                  'accountNumber': 'CH9300762011623852957',
+                  'bankCountry': {
+                    'isoCountryCode': 'AFG',
+                    'countryName': 'Afghanistan',
+                  },
+                },
+              },
+            },
+          ]);
+          return;
+        }
+
+        if (request.uri.path == '/api/consignors-app/consignors/get/113945') {
+          await writeJson(request, {
+            'systemReferenceCustomer': 113945,
+            'tradingName': 'Abacus Detail Consignor',
+            'bankingDetails': {
+              'bankName': 'Abacus Maintained Bank',
+              'accountNumber': 'CH9300762011623852957',
+              'bankCountry': {
+                'isoCountryCode': 'CHE',
+                'countryName': 'Switzerland',
+              },
+            },
+            'lastModifiedUtc': '2026-07-02T08:00:00Z',
+            'contracts': [],
+          });
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final results = await buildApi().searchExistingCustomers('113945');
+      final prefill = results.single.prefill;
+
+      expect(prefill.bankingDetails.bankName, 'Abacus Maintained Bank');
+      expect(prefill.bankingDetails.bankCountryIso3, 'CHE');
+      expect(prefill.bankingDetails.bankCountryName, 'Switzerland');
     });
 
     test('imports summary-only rows and reports missing fields', () async {
@@ -135,7 +280,7 @@ void main() {
       expect(issue.missingFields, isNot(contains('Bank account / IBAN')));
       expect(
         requests,
-        isNot(contains('GET /api/consignors-app/consignors/get/121013')),
+        contains('GET /api/consignors-app/consignors/get/121013'),
       );
     });
 
@@ -299,6 +444,61 @@ void main() {
         requests,
         isNot(contains('GET /api/consignors-app/consignors/get/121097')),
       );
+    });
+
+    test('contract sync preserves local auction when Abacus omits auction id',
+        () async {
+      handler = (request) async {
+        if (request.uri.path ==
+            '/api/consignors-app/consignors/121097/contracts/7/sync') {
+          await writeJson(request, {
+            'contractId': 'COC-26-1',
+            'auctionDisplayName': 'COC-26-1',
+            'lastModifiedUtc': '2026-07-02T08:00:00Z',
+            'list': [
+              {
+                'localId': 'abacus-doc-1',
+                'fileId': 10,
+                'fileType': 2,
+                'fileName': 'COC-26-1.pdf',
+                'lastModifiedUtc': '2026-07-02T08:00:00Z',
+              },
+            ],
+          });
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final timestamp = DateTime.utc(2026, 7, 2, 8);
+      final record = ContractRecord.empty(
+        '121097',
+        auctionIds: [7],
+        auctionDisplayNames: ['Auction 7'],
+      ).copyWith(
+        uploads: [
+          ContractUpload(
+            localId: 'abacus-doc-1',
+            fileId: 10,
+            fileType: UploadType.agreement,
+            fileName: 'COC-26-1.pdf',
+            localLastModifiedUtc: timestamp,
+            serverLastModifiedUtc: timestamp,
+          ),
+        ],
+      );
+
+      final synced = await buildApi().syncContractRecord(
+        121097,
+        record,
+        syncEvent: AbacusContractSyncEvent.contractGenerated,
+      );
+
+      expect(synced.auctionId, 7);
+      expect(synced.auctionDisplayName, 'Auction 7');
+      expect(synced.synced, isTrue);
     });
   });
 }

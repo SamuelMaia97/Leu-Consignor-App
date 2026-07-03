@@ -133,7 +133,7 @@ class Address {
           '';
     }
     if (value is String && _looksLikeCountryCode(value)) {
-      return value.trim().toUpperCase();
+      return _normalizeCountryCode(value);
     }
     return '';
   }
@@ -142,7 +142,9 @@ class Address {
     if (value is Map) {
       return (value['countryName'] ?? value['CountryName'])?.toString() ?? '';
     }
-    if (value is String && !_looksLikeCountryCode(value)) {
+    if (value is String &&
+        !_looksLikeCountryCode(value) &&
+        !_looksLikeNumericIdentifier(value)) {
       return value.trim();
     }
     return '';
@@ -163,5 +165,35 @@ class Address {
   static bool _looksLikeCountryCode(String value) {
     final normalized = value.trim();
     return RegExp(r'^[A-Za-z]{2,3}$').hasMatch(normalized);
+  }
+
+  static String _normalizeCountryCode(String value) {
+    final normalized = value.trim().toUpperCase();
+    if (normalized.length != 2) return normalized;
+
+    switch (normalized) {
+      case 'AT':
+        return 'AUT';
+      case 'CH':
+        return 'CHE';
+      case 'DE':
+        return 'DEU';
+      case 'FR':
+        return 'FRA';
+      case 'GB':
+        return 'GBR';
+      case 'IT':
+        return 'ITA';
+      case 'LI':
+        return 'LIE';
+      case 'US':
+        return 'USA';
+      default:
+        return normalized;
+    }
+  }
+
+  static bool _looksLikeNumericIdentifier(String value) {
+    return RegExp(r'^\d+$').hasMatch(value.trim());
   }
 }

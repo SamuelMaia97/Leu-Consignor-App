@@ -146,10 +146,7 @@ class ContractUpload {
             UploadType.agreement.apiValue,
       ),
       kind: (json['kind'] ?? json['Kind'])?.toString() ?? '',
-      path:
-          (json['path'] ?? json['Path'] ?? json['fileName'] ?? json['FileName'])
-                  ?.toString() ??
-              '',
+      path: (json['path'] ?? json['Path'])?.toString() ?? '',
       fileData: (json['fileData'] ?? json['FileData'])?.toString() ?? '',
       isDeleted: (json['isDeleted'] ?? json['IsDeleted']) as bool? ?? false,
       signedAt: DateTime.tryParse(
@@ -227,6 +224,7 @@ class ContractRecord {
     String? auctionDisplayName,
     this.systemReferenceContract = 0,
     this.pdfName = '',
+    this.placeOfSignature = 'Winterthur',
     DateTime? signedAt,
     DateTime? lastModifiedUtc,
     this.pdfPath = '',
@@ -236,8 +234,6 @@ class ContractRecord {
     this.syncErrorMessage,
     this.lastSyncedUtc,
     this.remoteLastModifiedUtc,
-    this.lastEditedByUsername,
-    this.lastEditedAtUtc,
   })  : auctionIds = List<int>.unmodifiable(
           auctionIds ?? (auctionId == null ? const <int>[] : <int>[auctionId]),
         ),
@@ -257,6 +253,7 @@ class ContractRecord {
   List<String> auctionDisplayNames;
   int systemReferenceContract;
   String pdfName;
+  String placeOfSignature;
   DateTime signedAt;
   DateTime lastModifiedUtc;
   String pdfPath;
@@ -266,8 +263,6 @@ class ContractRecord {
   String? syncErrorMessage;
   DateTime? lastSyncedUtc;
   DateTime? remoteLastModifiedUtc;
-  String? lastEditedByUsername;
-  DateTime? lastEditedAtUtc;
 
   int? get auctionId => auctionIds.isEmpty ? null : auctionIds.first;
 
@@ -452,6 +447,8 @@ class ContractRecord {
       auctionIds: auctionIds,
       auctionDisplayNames: resolvedDisplayNames,
       systemReferenceContract: systemReferenceContract,
+      placeOfSignature:
+          _signaturePlace(json['placeOfSignature'] ?? json['PlaceOfSignature']),
       pdfName: ((json['pdfName'] ??
                           json['PdfName'] ??
                           json['fileName'] ??
@@ -492,12 +489,6 @@ class ContractRecord {
                 ?.toString() ??
             '',
       )?.toUtc(),
-      lastEditedByUsername:
-          (json['lastEditedByUsername'] ?? json['LastEditedByUsername'])
-              ?.toString(),
-      lastEditedAtUtc: DateTime.tryParse(
-        (json['lastEditedAtUtc'] ?? json['LastEditedAtUtc'])?.toString() ?? '',
-      )?.toUtc(),
     );
   }
 
@@ -508,6 +499,7 @@ class ContractRecord {
         'auctionIds': auctionIds,
         'auctionDisplayNames': auctionDisplayNames,
         'systemReferenceContract': systemReferenceContract,
+        'placeOfSignature': placeOfSignature,
         'pdfName': pdfName,
         'signedAt': signedAt.toUtc().toIso8601String(),
         'lastModifiedUtc': lastModifiedUtc.toUtc().toIso8601String(),
@@ -519,13 +511,11 @@ class ContractRecord {
         'lastSyncedUtc': lastSyncedUtc?.toUtc().toIso8601String(),
         'remoteLastModifiedUtc':
             remoteLastModifiedUtc?.toUtc().toIso8601String(),
-        'lastEditedByUsername': lastEditedByUsername,
-        'lastEditedAtUtc': lastEditedAtUtc?.toUtc().toIso8601String(),
         'synced': synced,
       };
 
   void markLocalChange([String? editorUsername]) {
-    _markEdited(editorUsername);
+    _markEdited();
     syncErrorMessage = null;
     if (syncStatus == RecordSyncStatus.pendingSync) {
       return;
@@ -562,6 +552,7 @@ class ContractRecord {
     int? auctionId,
     String? auctionDisplayName,
     int? systemReferenceContract,
+    String? placeOfSignature,
     String? pdfPath,
     String? pdfName,
     DateTime? signedAt,
@@ -572,8 +563,6 @@ class ContractRecord {
     String? syncErrorMessage,
     DateTime? lastSyncedUtc,
     DateTime? remoteLastModifiedUtc,
-    String? lastEditedByUsername,
-    DateTime? lastEditedAtUtc,
   }) {
     final nextAuctionIds =
         auctionIds ?? (auctionId == null ? this.auctionIds : <int>[auctionId]);
@@ -591,6 +580,7 @@ class ContractRecord {
       auctionDisplayNames: nextDisplayNames,
       systemReferenceContract:
           systemReferenceContract ?? this.systemReferenceContract,
+      placeOfSignature: placeOfSignature ?? this.placeOfSignature,
       pdfName: pdfName ?? this.pdfName,
       signedAt: signedAt ?? this.signedAt,
       lastModifiedUtc: lastModifiedUtc ?? this.lastModifiedUtc,
@@ -603,19 +593,12 @@ class ContractRecord {
       lastSyncedUtc: lastSyncedUtc ?? this.lastSyncedUtc,
       remoteLastModifiedUtc:
           remoteLastModifiedUtc ?? this.remoteLastModifiedUtc,
-      lastEditedByUsername: lastEditedByUsername ?? this.lastEditedByUsername,
-      lastEditedAtUtc: lastEditedAtUtc ?? this.lastEditedAtUtc,
     );
   }
 
-  void _markEdited(String? editorUsername) {
+  void _markEdited() {
     final nowUtc = DateTime.now().toUtc();
     lastModifiedUtc = nowUtc;
-    lastEditedAtUtc = nowUtc;
-    final normalized = editorUsername?.trim();
-    if (normalized != null && normalized.isNotEmpty) {
-      lastEditedByUsername = normalized;
-    }
   }
 
   static List<ContractUpload> _deduplicateUploads(
@@ -624,10 +607,16 @@ class ContractRecord {
     final result = <ContractUpload>[];
 
     for (final upload in uploads) {
+      final normalizedId = upload.localId.trim();
       final normalizedPath = upload.path.trim();
-      final key = '${upload.fileType.index}|${upload.kind}|$normalizedPath';
+      final normalizedName = upload.fileName.trim();
+      final key = normalizedId.isNotEmpty
+          ? '${upload.fileType.index}|${upload.kind}|id:$normalizedId'
+          : normalizedPath.isNotEmpty
+              ? '${upload.fileType.index}|${upload.kind}|path:$normalizedPath'
+              : '${upload.fileType.index}|${upload.kind}|name:$normalizedName';
 
-      if (normalizedPath.isEmpty || seenKeys.add(key)) {
+      if (seenKeys.add(key)) {
         result.add(upload);
       }
     }
@@ -640,6 +629,11 @@ class ContractRecord {
       return DateTime.now().microsecondsSinceEpoch.toString();
     }
     return '${consignorId}_${auctionIds.join('_')}';
+  }
+
+  static String _signaturePlace(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? 'Winterthur' : text;
   }
 
   static List<int> _parseIntList(Object? value) {

@@ -31,33 +31,48 @@ void main() {
       expect(consignor.phoneNumber, '89 123456');
     });
 
-    test('markLocalChange sets audit fields', () {
-      final consignor = Consignor.empty();
+    test('markLocalChange updates last modified timestamp', () {
+      final consignor = Consignor.empty()..lastModifiedUtc = DateTime.utc(2000);
+      final before = consignor.lastModifiedUtc;
 
       consignor.markLocalChange('admin');
 
-      expect(consignor.lastEditedByUsername, 'admin');
-      expect(consignor.lastEditedAtUtc, isNotNull);
-      expect(consignor.lastEditedAtUtc!.isUtc, isTrue);
+      expect(consignor.lastModifiedUtc.isUtc, isTrue);
+      expect(consignor.lastModifiedUtc, isNot(before));
     });
 
-    test('markDraft sets audit fields', () {
-      final consignor = Consignor.empty();
+    test('markDraft updates last modified timestamp', () {
+      final consignor = Consignor.empty()..lastModifiedUtc = DateTime.utc(2000);
+      final before = consignor.lastModifiedUtc;
 
       consignor.markDraft('admin');
 
-      expect(consignor.lastEditedByUsername, 'admin');
-      expect(consignor.lastEditedAtUtc, isNotNull);
-      expect(consignor.lastEditedAtUtc!.isUtc, isTrue);
+      expect(consignor.lastModifiedUtc.isUtc, isTrue);
+      expect(consignor.lastModifiedUtc, isNot(before));
     });
 
-    test('audit fields round-trip through json', () {
-      final consignor = Consignor.empty()..markLocalChange('admin');
+    test('passport valid-until date writes and reads Abacus UserField16', () {
+      final consignor = Consignor.empty()
+        ..passportValidUntil = DateTime.utc(2030, 12, 31);
 
-      final restored = Consignor.fromJson(consignor.toJson());
+      final json = consignor.toJson();
+      expect(json['passportValidUntil'], '2030-12-31');
+      expect(json['UserField16'], '2030-12-31');
 
-      expect(restored.lastEditedByUsername, 'admin');
-      expect(restored.lastEditedAtUtc, consignor.lastEditedAtUtc);
+      final restored = Consignor.fromJson({
+        'id': '1',
+        'UserField16': '31.12.2030',
+      });
+      final restoredDateOnly = Consignor.fromJson({
+        'id': '2',
+        'UserField16': '2030-12-31',
+      });
+
+      expect(restored.passportValidUntil, DateTime.utc(2030, 12, 31));
+      expect(
+        restoredDateOnly.passportValidUntil,
+        DateTime.utc(2030, 12, 31),
+      );
     });
 
     test(

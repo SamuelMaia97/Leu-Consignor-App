@@ -65,6 +65,21 @@ class _SyncHealthScreenState extends State<SyncHealthScreen> {
             consignors: state.consignors,
             contracts: syncCandidateContracts,
           );
+          final draftContracts = state.contracts
+              .where((contract) => contract.isEditableDraft)
+              .toList(growable: false);
+          final consignorsById = {
+            for (final consignor in state.consignors) consignor.id: consignor,
+          };
+          final draftIssues = draftContracts
+              .expand(
+                (contract) => WorkflowStatus.readinessIssuesForContract(
+                  consignor: consignorsById[contract.consignorId],
+                  contract: contract,
+                  allContracts: state.contracts,
+                ),
+              )
+              .toList(growable: false);
           final conflicts = WorkflowStatus.findContractConflicts(
             state.contracts,
           );
@@ -242,6 +257,25 @@ class _SyncHealthScreenState extends State<SyncHealthScreen> {
                   consignors: state.consignors,
                   contracts: state.contracts,
                   issues: issues,
+                  emptyTitle: 'All sync candidates ready',
+                  emptyMessage:
+                      'No missing or suspicious items detected for contracts waiting to sync.',
+                ),
+              ),
+              const SizedBox(height: 18),
+              SectionCard(
+                title: 'Draft contracts needing completion',
+                icon: Icons.edit_note_outlined,
+                child: _ContractChecklistSection(
+                  consignors: state.consignors,
+                  contracts: draftContracts,
+                  issues: draftIssues,
+                  emptyTitle: draftContracts.isEmpty
+                      ? 'No draft contracts'
+                      : 'Draft contracts complete',
+                  emptyMessage: draftContracts.isEmpty
+                      ? 'Saved draft contracts will appear here until they are ready to submit.'
+                      : 'No missing or suspicious draft contract items detected.',
                 ),
               ),
               if (conflicts.isNotEmpty) ...[
@@ -351,19 +385,23 @@ class _ContractChecklistSection extends StatelessWidget {
     required this.consignors,
     required this.contracts,
     required this.issues,
+    this.emptyTitle = 'All contracts ready',
+    this.emptyMessage = 'No missing or suspicious contract items detected.',
   });
 
   final List<Consignor> consignors;
   final List<ContractRecord> contracts;
   final List<ReadinessIssue> issues;
+  final String emptyTitle;
+  final String emptyMessage;
 
   @override
   Widget build(BuildContext context) {
     if (issues.isEmpty) {
-      return const ReadyToSyncChecklist(
+      return ReadyToSyncChecklist(
         issues: [],
-        emptyTitle: 'All contracts ready',
-        emptyMessage: 'No missing or suspicious contract items detected.',
+        emptyTitle: emptyTitle,
+        emptyMessage: emptyMessage,
       );
     }
 
