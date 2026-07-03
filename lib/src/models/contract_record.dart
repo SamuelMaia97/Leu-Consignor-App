@@ -227,6 +227,7 @@ class ContractRecord {
     String? auctionDisplayName,
     this.systemReferenceContract = 0,
     this.pdfName = '',
+    this.placeOfSignature = 'Winterthur',
     DateTime? signedAt,
     DateTime? lastModifiedUtc,
     this.pdfPath = '',
@@ -257,6 +258,7 @@ class ContractRecord {
   List<String> auctionDisplayNames;
   int systemReferenceContract;
   String pdfName;
+  String placeOfSignature;
   DateTime signedAt;
   DateTime lastModifiedUtc;
   String pdfPath;
@@ -452,6 +454,8 @@ class ContractRecord {
       auctionIds: auctionIds,
       auctionDisplayNames: resolvedDisplayNames,
       systemReferenceContract: systemReferenceContract,
+      placeOfSignature:
+          _signaturePlace(json['placeOfSignature'] ?? json['PlaceOfSignature']),
       pdfName: ((json['pdfName'] ??
                           json['PdfName'] ??
                           json['fileName'] ??
@@ -508,6 +512,7 @@ class ContractRecord {
         'auctionIds': auctionIds,
         'auctionDisplayNames': auctionDisplayNames,
         'systemReferenceContract': systemReferenceContract,
+        'placeOfSignature': placeOfSignature,
         'pdfName': pdfName,
         'signedAt': signedAt.toUtc().toIso8601String(),
         'lastModifiedUtc': lastModifiedUtc.toUtc().toIso8601String(),
@@ -562,6 +567,7 @@ class ContractRecord {
     int? auctionId,
     String? auctionDisplayName,
     int? systemReferenceContract,
+    String? placeOfSignature,
     String? pdfPath,
     String? pdfName,
     DateTime? signedAt,
@@ -591,6 +597,7 @@ class ContractRecord {
       auctionDisplayNames: nextDisplayNames,
       systemReferenceContract:
           systemReferenceContract ?? this.systemReferenceContract,
+      placeOfSignature: placeOfSignature ?? this.placeOfSignature,
       pdfName: pdfName ?? this.pdfName,
       signedAt: signedAt ?? this.signedAt,
       lastModifiedUtc: lastModifiedUtc ?? this.lastModifiedUtc,
@@ -640,6 +647,11 @@ class ContractRecord {
       return DateTime.now().microsecondsSinceEpoch.toString();
     }
     return '${consignorId}_${auctionIds.join('_')}';
+  }
+
+  static String _signaturePlace(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? 'Winterthur' : text;
   }
 
   static List<int> _parseIntList(Object? value) {

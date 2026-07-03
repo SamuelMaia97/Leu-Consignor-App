@@ -50,6 +50,20 @@ void main() {
       expect(upload.toAttachment().kind, 'RepresentativeId');
     });
 
+    test('place of signature defaults and round-trips through json', () {
+      final defaultRecord = ContractRecord.empty('100', auctionId: 1);
+      final zurichRecord = defaultRecord.copyWith(placeOfSignature: 'Zurich');
+      final restored = ContractRecord.fromJson(zurichRecord.toJson());
+      final legacyRestored = ContractRecord.fromJson({
+        'id': 'legacy',
+        'consignorId': '100',
+      });
+
+      expect(defaultRecord.placeOfSignature, 'Winterthur');
+      expect(restored.placeOfSignature, 'Zurich');
+      expect(legacyRestored.placeOfSignature, 'Winterthur');
+    });
+
     test('parses finalized sync status from backend values', () {
       expect(
         RecordSyncStatusX.fromAny('Finalized', hasRemoteReference: true),

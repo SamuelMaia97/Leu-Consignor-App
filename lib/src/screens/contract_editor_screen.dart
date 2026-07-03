@@ -174,6 +174,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       'consignorId': _record.consignorId,
       'auctionIds': _record.auctionIds,
       'auctionDisplayNames': _record.auctionDisplayNames,
+      'placeOfSignature': _record.placeOfSignature,
       'pdfName': _record.pdfName,
       'pdfPath': _record.pdfPath,
       'signedAt': _record.signedAt.toUtc().toIso8601String(),
@@ -257,6 +258,17 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
         id: nextId,
         auctionIds: auctionIds,
         auctionDisplayNames: displayNames,
+        lastModifiedUtc: DateTime.now().toUtc(),
+      );
+    });
+  }
+
+  void _updatePlaceOfSignature(String value) {
+    if (!_ensureEditable()) return;
+
+    setState(() {
+      _record = _record.copyWith(
+        placeOfSignature: value,
         lastModifiedUtc: DateTime.now().toUtc(),
       );
     });
@@ -1137,6 +1149,19 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
                       value: _record.signedAt,
                       enabled: false,
                       onChanged: (_) {},
+                    ),
+                  ),
+                  SizedBox(
+                    width: 220,
+                    child: TextFormField(
+                      key: const ValueKey('contract-place-of-signature'),
+                      initialValue: _record.placeOfSignature,
+                      decoration: const InputDecoration(
+                        labelText: 'Place of signature',
+                      ),
+                      enabled: canEdit,
+                      textCapitalization: TextCapitalization.words,
+                      onChanged: _updatePlaceOfSignature,
                     ),
                   ),
                   SizedBox(

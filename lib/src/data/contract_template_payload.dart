@@ -85,7 +85,11 @@ class ContractRenderPayloadBuilder {
     final annexCSignature = _encodeBytes(signatureData?.annexCSignaturePng);
     final auctionDate = record.signedAt;
     final isProvisional = signatureData == null;
-    final placeDate = isProvisional ? '' : _dateFormat.format(record.signedAt);
+    final placeOfSignature = _signaturePlace(record.placeOfSignature);
+    final dateSuffix =
+        isProvisional ? '' : ', ${_dateFormat.format(record.signedAt)}';
+    final signerPlaceDate = '$placeOfSignature$dateSuffix';
+    final leuPlaceDate = 'Winterthur$dateSuffix';
     final watermarkText = isProvisional ? 'PROVISIONAL' : '';
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
@@ -170,15 +174,27 @@ class ContractRenderPayloadBuilder {
       'commissionPercent': consignor.discount,
       'consignmentCountry': consignor.consignorAddress.countryName,
       'originCountry': consignor.consignorInfo.nationalityName,
-      'contractPlaceDate': placeDate,
-      'leuPlaceDate': placeDate,
-      'annexPlaceDate': placeDate,
-      'annexAPlaceDate': placeDate,
-      'annexCPlaceDate': placeDate,
+      'placeOfSignature': placeOfSignature,
+      'PlaceOfSignature': placeOfSignature,
+      'place_of_signature': placeOfSignature,
+      'contract_place_date': dateSuffix,
+      'contractPlaceDate': signerPlaceDate,
+      'leu_place_date': leuPlaceDate,
+      'leuPlaceDate': leuPlaceDate,
+      'annex_place_date': dateSuffix,
+      'annexPlaceDate': signerPlaceDate,
+      'annex_a_place_date': dateSuffix,
+      'annexAPlaceDate': signerPlaceDate,
+      'annex_c_place_date': dateSuffix,
+      'annexCPlaceDate': signerPlaceDate,
       'leuRepresentativeName':
           signatureData?.leuRepresentativeName ?? 'Yves Gunzenreiner',
       'leuRepresentativeCompany': 'Leu Numismatik AG',
       'leuRepresentativeFunction': 'CEO',
+      'representative_company':
+          authorizedRepresentative?.usesTradingName == true
+              ? authorizedRepresentative!.tradingName
+              : '',
       'consignorSignatureBase64Png': contractSignature,
       'leuSignatureBase64Png': leuSignature,
       'annexConsignorSignatureBase64Png': annexASignature,
@@ -318,6 +334,11 @@ class ContractRenderPayloadBuilder {
 
   static String? _dateOrNull(DateTime? value) =>
       value?.toUtc().toIso8601String();
+
+  static String _signaturePlace(String value) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? 'Winterthur' : trimmed;
+  }
 
   static String _addressLine1(Address address) {
     return AddressFormatter.contractLine(address, 0);

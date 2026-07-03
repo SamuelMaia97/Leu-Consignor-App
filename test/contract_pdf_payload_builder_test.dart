@@ -176,17 +176,43 @@ void main() {
       expect(payload['pageWatermarkText'], 'PROVISIONAL');
       expect(payload['watermark'], {'text': 'PROVISIONAL'});
       expect(payload['pageWatermark'], {'text': 'PROVISIONAL'});
+      expect(payload['place_of_signature'], 'Winterthur');
       expect(payload['consignor_place_date'], '');
       expect(payload['contract_place_date'], '');
-      expect(payload['contractPlaceDate'], '');
-      expect(payload['leu_place_date'], '');
-      expect(payload['leuPlaceDate'], '');
+      expect(payload['contractPlaceDate'], 'Winterthur');
+      expect(payload['leu_place_date'], 'Winterthur');
+      expect(payload['leuPlaceDate'], 'Winterthur');
       expect(payload['annex_a_place_date'], '');
-      expect(payload['annexAPlaceDate'], '');
+      expect(payload['annexAPlaceDate'], 'Winterthur');
       expect(payload['annex_place_date'], '');
-      expect(payload['annexPlaceDate'], '');
+      expect(payload['annexPlaceDate'], 'Winterthur');
       expect(payload['annex_c_place_date'], '');
-      expect(payload['annexCPlaceDate'], '');
+      expect(payload['annexCPlaceDate'], 'Winterthur');
+    });
+
+    test('emits editable signature place and date suffix for templates',
+        () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          signedAt: DateTime.utc(2026, 6, 9),
+          placeOfSignature: 'Zurich',
+        ),
+        signatureData: ContractSignatureData(
+          leuRepresentativeName: 'Yves Gunzenreiner',
+          leuRepresentativeSignatureAsset: '',
+          contractSignaturePng: Uint8List.fromList([1]),
+          annexASignaturePng: Uint8List.fromList([2]),
+          annexCSignaturePng: Uint8List.fromList([3]),
+        ),
+      );
+
+      expect(payload['place_of_signature'], 'Zurich');
+      expect(payload['consignor_place_date'], ', 09-06-2026');
+      expect(payload['contractPlaceDate'], 'Zurich, 09-06-2026');
+      expect(payload['leu_place_date'], 'Winterthur, 09-06-2026');
+      expect(payload['annex_a_place_date'], ', 09-06-2026');
+      expect(payload['annexAPlaceDate'], 'Zurich, 09-06-2026');
     });
 
     test('emits desired payment method and country-specific address lines',
@@ -253,6 +279,28 @@ void main() {
         containsPair('blockAttachCommercialRegister', true),
       );
       expect(attachments.single, containsPair('kind', 'CommercialRegister'));
+    });
+
+    test('shows both commercial register blocks for legal through legal',
+        () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.legalEntity),
+        authorizedRepresentative: _consignor(ConsignorType.legalEntity)
+          ..tradingName = 'Representative AG',
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['representative_company'], 'Representative AG');
+      expect(payload['block_attach_commercial_register'], isTrue);
+      expect(payload['block_attach_register_legal'], isTrue);
+      expect(
+        payload['templateFlags'],
+        containsPair('blockAttachCommercialRegister', true),
+      );
+      expect(
+        payload['templateFlags'],
+        containsPair('blockAttachRegisterLegal', true),
+      );
     });
 
     test('emits agreement, Annex A, and Annex C signatures in order', () async {

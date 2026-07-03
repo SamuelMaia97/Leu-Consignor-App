@@ -1546,6 +1546,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           : persistedContractId,
       uploads: uploads,
       authorizedRepresentative: authorizedRepresentative,
+      placeOfSignature: _WizardDraft._signaturePlace(
+        _draft.placeOfSignature,
+      ),
       pdfPath: pdfPath,
       pdfName: pdfName ?? baseRecord.pdfName,
       lastModifiedUtc: nowUtc,
@@ -2637,6 +2640,7 @@ class _WizardDraft {
   String commissionRate = '10';
   String consignmentCountryIso3 = '';
   String consignmentCountryName = '';
+  String placeOfSignature = 'Winterthur';
 
   List<AuctionOption> selectedAuctions = const [];
   final List<ContractUpload> uploads = [];
@@ -2795,6 +2799,7 @@ class _WizardDraft {
         'commissionRate': commissionRate,
         'consignmentCountryIso3': consignmentCountryIso3,
         'consignmentCountryName': consignmentCountryName,
+        'placeOfSignature': placeOfSignature,
         'selectedAuctions': selectedAuctions
             .map(
               (auction) => {
@@ -2928,6 +2933,7 @@ class _WizardDraft {
     commissionRate = _toString(json['commissionRate']);
     consignmentCountryIso3 = _toString(json['consignmentCountryIso3']);
     consignmentCountryName = _toString(json['consignmentCountryName']);
+    placeOfSignature = _signaturePlace(json['placeOfSignature']);
 
     selectedAuctions = (((json['selectedAuctions'] as List?) ?? const [])
         .whereType<Map>()
@@ -2968,6 +2974,11 @@ class _WizardDraft {
   }
 
   static String _toString(Object? value) => value?.toString() ?? '';
+
+  static String _signaturePlace(Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? 'Winterthur' : text;
+  }
 
   static String? _stringOrNull(Object? value) {
     final text = value?.toString().trim();
@@ -4498,6 +4509,19 @@ class _AuctionStep extends StatelessWidget {
               onChanged: onConsignmentCountryChanged,
             ),
           ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Place of signature',
+            child: TextFormField(
+              key: const ValueKey('contract-field-place-of-signature'),
+              initialValue: draft.placeOfSignature,
+              decoration: const InputDecoration(
+                labelText: 'Place of signature',
+              ),
+              textCapitalization: TextCapitalization.words,
+              onChanged: (value) => draft.placeOfSignature = value,
+            ),
+          ),
           const SizedBox(height: 20),
           _WizardButtons(onBack: onBack, onNext: onNext),
         ],
@@ -5038,6 +5062,8 @@ class _FullReviewStep extends StatelessWidget {
             ? commissionRate
             : '$commissionRate%';
     final consignmentCountry = draft.consignmentCountryName.trim();
+    final placeOfSignature =
+        _WizardDraft._signaturePlace(draft.placeOfSignature);
     final readinessIssues = _draftReadinessIssues(
       draft: draft,
       representative: representative,
@@ -5086,6 +5112,7 @@ class _FullReviewStep extends StatelessWidget {
                     ? 'Not selected'
                     : consignmentCountry,
               ),
+              _ReviewLine('Place of signature', placeOfSignature),
             ],
           ),
         ),
