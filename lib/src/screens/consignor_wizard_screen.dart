@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -105,6 +106,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   final _auctionFormKey = GlobalKey<FormState>();
   final _signatureFormKey = GlobalKey<FormState>();
   final Object _leaveGuardToken = Object();
+  static const _draftSnapshotEquality = DeepCollectionEquality();
 
   Timer? _searchDebounce;
   Timer? _representativeSearchDebounce;
@@ -123,6 +125,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   List<CustomerLookupResult> _matches = const [];
   List<CustomerLookupResult> _representativeMatches = const [];
   String _activeIbanLookup = '';
+  Map<String, dynamic>? _lastSavedDraftSnapshot;
 
   bool get _isContractOnly => _resumeContractOnly ?? widget.contractOnly;
 
@@ -204,6 +207,13 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         _draft.selectedAuctions.isNotEmpty ||
         _draft.uploads.isNotEmpty ||
         _representativeDraft.hasMeaningfulInput;
+  }
+
+  bool get _hasUnsavedCreationProgress {
+    if (!_hasCreationProgress) return false;
+    final lastSaved = _lastSavedDraftSnapshot;
+    if (lastSaved == null) return true;
+    return !_draftSnapshotEquality.equals(_currentDraftSnapshot(), lastSaved);
   }
 
   @override
@@ -298,6 +308,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       final fallback = _asInt(savedState['stepIndex']) ?? 0;
       _step = fallback.clamp(0, _steps.length - 1);
     }
+
+    _lastSavedDraftSnapshot = _currentDraftSnapshot(
+      consignorId: consignorId,
+      contractId: _activeContractId,
+    );
   }
 
   void _restoreFromSavedRecords(
@@ -362,19 +377,13 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _draft.localConsignorId = consignorId;
     _activeContractId = contractId ?? _activeContractId;
 
+    final snapshot = _currentDraftSnapshot(
+      consignorId: consignorId,
+      contractId: _activeContractId,
+    );
     final state = <String, dynamic>{
       'schemaVersion': 1,
-      'contractOnly': _isContractOnly,
-      'step': _currentStep.name,
-      'stepIndex': _step,
-      'businessStepNumber': _businessStepNumber,
-      'consignorId': consignorId,
-      'contractId': _activeContractId,
-      'generatedPdfPath': _generatedPdfPath,
-      'generatedPdfIncludesSignatures': _generatedPdfIncludesSignatures,
-      'provisionalContractSubmitted': _provisionalContractSubmitted,
-      'draft': _draft.toResumeJson(),
-      'representativeDraft': _representativeDraft.toResumeJson(),
+      ...snapshot,
       'savedAtUtc': DateTime.now().toUtc().toIso8601String(),
     };
 
@@ -389,6 +398,27 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         state: state,
       );
     }
+
+    _lastSavedDraftSnapshot = snapshot;
+  }
+
+  Map<String, dynamic> _currentDraftSnapshot({
+    String? consignorId,
+    String? contractId,
+  }) {
+    return <String, dynamic>{
+      'contractOnly': _isContractOnly,
+      'step': _currentStep.name,
+      'stepIndex': _step,
+      'businessStepNumber': _businessStepNumber,
+      'consignorId': consignorId ?? _draft.localConsignorId,
+      'contractId': contractId ?? _activeContractId,
+      'generatedPdfPath': _generatedPdfPath,
+      'generatedPdfIncludesSignatures': _generatedPdfIncludesSignatures,
+      'provisionalContractSubmitted': _provisionalContractSubmitted,
+      'draft': _draft.toResumeJson(),
+      'representativeDraft': _representativeDraft.toResumeJson(),
+    };
   }
 
   Future<void> _clearWizardResumeState({
@@ -2368,7 +2398,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }
 
   Future<bool> _handlePendingCreationBeforeLeave() async {
-    if (!_hasCreationProgress) return true;
+    if (!_hasUnsavedCreationProgress) return true;
 
     final action = await showDialog<_CreationExitAction>(
       context: context,
