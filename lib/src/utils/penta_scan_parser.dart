@@ -1,6 +1,22 @@
 import 'dart:convert';
 
+class PentaPassportReport {
+  const PentaPassportReport({
+    this.validUntil,
+    this.validationPassed,
+    this.validationResult,
+  });
+
+  final DateTime? validUntil;
+  final bool? validationPassed;
+  final String? validationResult;
+}
+
 DateTime? parsePentaPassportExpiryDate(String content) {
+  return parsePentaPassportReport(content)?.validUntil;
+}
+
+PentaPassportReport? parsePentaPassportReport(String content) {
   if (content.trim().isEmpty) return null;
 
   dynamic decoded;
@@ -11,7 +27,12 @@ DateTime? parsePentaPassportExpiryDate(String content) {
   }
 
   if (decoded is! Map<String, dynamic>) return null;
-  return _parseDateFromDynamic(_fieldBestValue(decoded, 'ExpiryDate'));
+  final validationResult = _validationResult(decoded);
+  return PentaPassportReport(
+    validUntil: _parseDateFromDynamic(_fieldBestValue(decoded, 'ExpiryDate')),
+    validationPassed: _validationPassed(validationResult),
+    validationResult: validationResult,
+  );
 }
 
 dynamic _fieldBestValue(Map<String, dynamic> decoded, String fieldName) {
@@ -26,6 +47,48 @@ dynamic _fieldBestValue(Map<String, dynamic> decoded, String fieldName) {
   }
 
   return decoded[fieldName];
+}
+
+String? _validationResult(Map<String, dynamic> decoded) {
+  final validations = decoded['Validations'];
+  if (validations is! Map<String, dynamic>) return null;
+
+  final expiryResult = _validationFieldResult(validations, 'Expiry');
+  if (_isFailedValidationResult(expiryResult)) return expiryResult;
+
+  for (final fieldName in const ['OverallManual', 'Overall', 'OverallAuto']) {
+    final result = _validationFieldResult(validations, fieldName);
+    if (result != null && result.trim().isNotEmpty) {
+      return result;
+    }
+  }
+
+  return expiryResult;
+}
+
+String? _validationFieldResult(
+  Map<String, dynamic> validations,
+  String fieldName,
+) {
+  final field = validations[fieldName];
+  if (field is Map<String, dynamic>) {
+    return field['Result']?.toString();
+  }
+
+  return field?.toString();
+}
+
+bool? _validationPassed(String? result) {
+  if (result == null || result.trim().isEmpty) return null;
+  final normalized = result.trim().toLowerCase();
+  if (normalized == 'passed') return true;
+  if (normalized == 'none') return null;
+  return false;
+}
+
+bool _isFailedValidationResult(String? result) {
+  final passed = _validationPassed(result);
+  return passed == false;
 }
 
 DateTime? _parseDateFromDynamic(dynamic value) {

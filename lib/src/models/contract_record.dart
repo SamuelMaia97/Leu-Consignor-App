@@ -108,6 +108,20 @@ class ContractUpload {
         normalizedName.contains('provconsignoragreement');
   }
 
+  bool get isValidationReport {
+    final normalizedKind = _normalizeGeneratedContractToken(kind);
+    if (normalizedKind.contains('validationreport')) {
+      return true;
+    }
+
+    final name =
+        fileName.trim().isNotEmpty ? fileName : _fileNameFromPath(path);
+    final normalizedName = _normalizeGeneratedContractToken(name);
+    return normalizedName.contains('validationreport') ||
+        (normalizedName.contains('validation') &&
+            normalizedName.contains('report'));
+  }
+
   bool get needsSync {
     final server = serverLastModifiedUtc;
     if (server == null) return true;
@@ -211,6 +225,14 @@ class ContractUpload {
         .toLowerCase()
         .replaceAll(RegExp(r'\.[a-z0-9]+$'), '')
         .replaceAll(RegExp(r'[^a-z0-9]+'), '');
+  }
+
+  static String _fileNameFromPath(String value) {
+    if (value.trim().isEmpty) return '';
+    final normalized = value.replaceAll('\\', '/');
+    final slash = normalized.lastIndexOf('/');
+    if (slash < 0) return normalized;
+    return normalized.substring(slash + 1);
   }
 }
 
