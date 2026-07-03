@@ -7,6 +7,7 @@ import '../domain/consignor_type.dart';
 import '../models/address.dart';
 import '../models/consignor.dart';
 import '../models/contract_record.dart';
+import '../models/country.dart';
 import '../models/payment_option.dart';
 import '../models/person.dart';
 import '../models/sync_status.dart';
@@ -108,7 +109,10 @@ class ConsignorOverviewScreen extends StatelessWidget {
                         child: SectionCard(
                           title: 'Profile',
                           icon: Icons.badge_outlined,
-                          child: _ProfileSection(consignor: consignor),
+                          child: _ProfileSection(
+                            consignor: consignor,
+                            countries: state.countries,
+                          ),
                         ),
                       ),
                       SizedBox(
@@ -116,7 +120,10 @@ class ConsignorOverviewScreen extends StatelessWidget {
                         child: SectionCard(
                           title: 'Bank and payment',
                           icon: Icons.account_balance_outlined,
-                          child: _BankSection(consignor: consignor),
+                          child: _BankSection(
+                            consignor: consignor,
+                            countries: state.countries,
+                          ),
                         ),
                       ),
                     ],
@@ -260,9 +267,13 @@ class _OverviewHero extends StatelessWidget {
 }
 
 class _ProfileSection extends StatelessWidget {
-  const _ProfileSection({required this.consignor});
+  const _ProfileSection({
+    required this.consignor,
+    required this.countries,
+  });
 
   final Consignor consignor;
+  final List<Country> countries;
 
   @override
   Widget build(BuildContext context) {
@@ -271,24 +282,6 @@ class _ProfileSection extends StatelessWidget {
     return Column(
       children: [
         _InfoRow(label: 'Abacus ID', value: _abacusId(consignor)),
-        _InfoRow(
-          label: 'Customer ID',
-          value: _idOrMissing(consignor.systemReferenceCustomer),
-        ),
-        _InfoRow(
-          label: 'Consignor ID',
-          value: _idOrMissing(consignor.systemReferenceConsignor),
-        ),
-        _InfoRow(
-          label: 'Subject ID',
-          value: consignor.abacusSubjectId?.toString() ?? 'Missing',
-        ),
-        _InfoRow(
-          label: 'Existing customer',
-          value: consignor.existingCustomerLabel ??
-              consignor.existingCustomerId?.toString() ??
-              'Missing',
-        ),
         _InfoRow(
           label: 'Type',
           value: consignor.consignorType.label,
@@ -300,20 +293,16 @@ class _ProfileSection extends StatelessWidget {
         if (contactPerson.isNotEmpty)
           _InfoRow(label: 'Contact person', value: contactPerson),
         _InfoRow(
-          label: 'First name',
-          value: person.firstName,
+          label: 'Name',
+          value: person.fullName,
         ),
         _InfoRow(
-          label: 'Last name',
-          value: person.lastName,
+          label: 'Title',
+          value: _titleLabel(person.title),
         ),
         _InfoRow(
-          label: 'Title ID',
-          value: person.title?.toString() ?? 'Missing',
-        ),
-        _InfoRow(
-          label: 'Salutation ID',
-          value: person.salutation?.toString() ?? 'Missing',
+          label: 'Salutation',
+          value: _salutationLabel(person.salutation),
         ),
         _InfoRow(
           label: 'Date of birth',
@@ -324,6 +313,7 @@ class _ProfileSection extends StatelessWidget {
           value: _countryLabel(
             iso3: person.nationalityIso3,
             name: person.nationalityName,
+            countries: countries,
           ),
         ),
         _InfoRow(
@@ -331,14 +321,6 @@ class _ProfileSection extends StatelessWidget {
           value: consignor.emailAddress.trim().isEmpty
               ? 'Missing'
               : consignor.emailAddress.trim(),
-        ),
-        _InfoRow(
-          label: 'Phone prefix',
-          value: consignor.phonePrefix,
-        ),
-        _InfoRow(
-          label: 'Phone number',
-          value: consignor.phoneNumber,
         ),
         _InfoRow(
           label: 'Phone',
@@ -355,6 +337,7 @@ class _ProfileSection extends StatelessWidget {
           value: _countryLabel(
             iso3: consignor.consignorAddress.countryIso3,
             name: consignor.consignorAddress.countryName,
+            countries: countries,
           ),
         ),
       ],
@@ -363,9 +346,13 @@ class _ProfileSection extends StatelessWidget {
 }
 
 class _BankSection extends StatelessWidget {
-  const _BankSection({required this.consignor});
+  const _BankSection({
+    required this.consignor,
+    required this.countries,
+  });
 
   final Consignor consignor;
+  final List<Country> countries;
 
   @override
   Widget build(BuildContext context) {
@@ -392,11 +379,11 @@ class _BankSection extends StatelessWidget {
         ),
         _InfoRow(
           label: 'Bank country',
-          value: bank.bankCountryName.trim().isNotEmpty
-              ? bank.bankCountryName
-              : bank.bankCountryIso3.trim().isNotEmpty
-                  ? bank.bankCountryIso3
-                  : 'Missing',
+          value: _countryLabel(
+            iso3: bank.bankCountryIso3,
+            name: bank.bankCountryName,
+            countries: countries,
+          ),
         ),
         _InfoRow(
           label: 'BIC/SWIFT',
@@ -436,10 +423,12 @@ class _LegalTermsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        _InfoRow(label: 'EORI', value: consignor.eori),
-        _InfoRow(
-            label: 'VAT liable', value: _formatBool(consignor.vatLiability)),
-        _InfoRow(label: 'VAT number', value: consignor.vatNumber),
+        if (consignor.usesTradingName) ...[
+          _InfoRow(label: 'EORI', value: consignor.eori),
+          _InfoRow(
+              label: 'VAT liable', value: _formatBool(consignor.vatLiability)),
+          _InfoRow(label: 'VAT number', value: consignor.vatNumber),
+        ],
         _InfoRow(
           label: 'Checked by Leu',
           value: _formatBool(consignor.checkedByLeu),
@@ -483,28 +472,12 @@ class _PreferencesSection extends StatelessWidget {
           value: _formatBool(consignor.newsletterSubscribed),
         ),
         _InfoRow(
-          label: 'Ancient coins',
+          label: 'Catalogue ancient coins',
           value: _formatBool(consignor.ancientCoinsSubscribed),
         ),
         _InfoRow(
-          label: 'World coins',
+          label: 'Catalogue medieval and world coins',
           value: _formatBool(consignor.worldCoinsSubscribed),
-        ),
-        _InfoRow(
-          label: 'Collecting area',
-          value: consignor.collectingArea,
-        ),
-        _InfoRow(
-          label: 'References',
-          value: consignor.references,
-        ),
-        _InfoRow(
-          label: 'Last edited by',
-          value: consignor.lastEditedByUsername ?? 'Missing',
-        ),
-        _InfoRow(
-          label: 'Last edited',
-          value: _formatDateTime(consignor.lastEditedAtUtc),
         ),
         _InfoRow(
           label: 'Last synced',
@@ -726,16 +699,13 @@ class _InfoRow extends StatelessWidget {
 }
 
 String _abacusId(Consignor consignor) {
+  if (consignor.abacusSubjectId != null && consignor.abacusSubjectId! > 0) {
+    return consignor.abacusSubjectId.toString();
+  }
   if (consignor.systemReferenceCustomer > 0) {
     return consignor.systemReferenceCustomer.toString();
   }
-  if (consignor.systemReferenceConsignor > 0) {
-    return consignor.systemReferenceConsignor.toString();
-  }
-  if (consignor.existingCustomerId != null) {
-    return consignor.existingCustomerId.toString();
-  }
-  return consignor.id;
+  return 'Missing';
 }
 
 String _contactPersonName(Consignor consignor) {
@@ -746,8 +716,6 @@ String _contactPersonName(Consignor consignor) {
   }
   return name;
 }
-
-String _idOrMissing(int value) => value > 0 ? value.toString() : 'Missing';
 
 String _formatAddress(Address address) {
   final value = address.toSingleLine().trim();
@@ -799,13 +767,65 @@ String _correspondenceLabel(String? value) {
   }
 }
 
-String _countryLabel({required String iso3, required String name}) {
+String _titleLabel(int? value) {
+  switch (value) {
+    case 1:
+      return 'Dr.';
+    case 5:
+      return 'Prof.';
+    case 6:
+      return 'Prof. Dr.';
+    default:
+      return 'Missing';
+  }
+}
+
+String _salutationLabel(int? value) {
+  switch (value) {
+    case 2:
+      return 'Mr.';
+    case 4:
+      return 'Ms.';
+    default:
+      return 'Missing';
+  }
+}
+
+String _countryLabel({
+  required String iso3,
+  required String name,
+  required List<Country> countries,
+}) {
   final cleanIso = iso3.trim();
   final cleanName = name.trim();
   if (cleanIso.isEmpty && cleanName.isEmpty) return 'Missing';
-  if (cleanIso.isEmpty) return cleanName;
-  if (cleanName.isEmpty) return cleanIso;
-  return '$cleanName ($cleanIso)';
+  final iso2 = _iso2For(cleanIso, countries);
+  if (cleanName.isEmpty) return iso2.isEmpty ? cleanIso : iso2;
+  if (iso2.isEmpty) return cleanName;
+  return '$cleanName ($iso2)';
+}
+
+String _iso2For(String value, List<Country> countries) {
+  final clean = value.trim().toUpperCase();
+  if (clean.isEmpty) return '';
+  if (clean.length == 2) return clean;
+
+  for (final country in countries) {
+    if (country.matchesCode(clean) && country.iso2.trim().isNotEmpty) {
+      return country.iso2.trim().toUpperCase();
+    }
+  }
+
+  return switch (clean) {
+    'CHE' => 'CH',
+    'DEU' => 'DE',
+    'AUT' => 'AT',
+    'FRA' => 'FR',
+    'ITA' => 'IT',
+    'GBR' => 'GB',
+    'USA' => 'US',
+    _ => clean,
+  };
 }
 
 RecordSyncStatus _effectiveStatus(ContractRecord contract) {

@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../domain/consignor_type.dart';
@@ -164,8 +163,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       'newsletterSubscribed': _model.newsletterSubscribed,
       'ancientCoinsSubscribed': _model.ancientCoinsSubscribed,
       'worldCoinsSubscribed': _model.worldCoinsSubscribed,
-      'collectingArea': _model.collectingArea,
-      'references': _model.references,
       'creditLimit': _model.creditLimit,
       'discount': _model.discount,
       'consignmentFeeFloorAuction': _model.consignmentFeeFloorAuction,
@@ -192,6 +189,15 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
 
   String _normalizeLookupQuery(String value) =>
       value.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  String _abacusIdValue(Consignor consignor) {
+    final subjectId = consignor.abacusSubjectId;
+    if (subjectId != null && subjectId > 0) return subjectId.toString();
+    if (consignor.systemReferenceCustomer > 0) {
+      return consignor.systemReferenceCustomer.toString();
+    }
+    return 'Missing';
+  }
 
   double? _parseDecimalInput(String? value) {
     final normalized = (value ?? '').trim().replaceAll(',', '.');
@@ -697,16 +703,14 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     _model.phoneNumber = _model.phoneNumber.trim();
     _model.emailAddress = _model.emailAddress.trim();
     _model.vatNumber = _model.vatNumber.trim();
-    _model.collectingArea = _model.collectingArea.trim();
-    _model.references = _model.references.trim();
     if (_model.consignorType == ConsignorType.naturalPerson) {
       _model.vatLiability = false;
       _model.vatNumber = '';
+      _model.eori = '';
     } else {
       _model.vatLiability = _model.vatNumber.trim().isNotEmpty;
     }
     _model.checkedByLeu = true;
-    _model.collectingArea = '';
     _model.creditLimit = 500000;
     _model.eori = _model.eori.trim();
     _model.correspondence = _model.correspondence?.trim();
@@ -837,7 +841,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
     final phonePrefixes = state.phonePrefixes;
     final syncing = !_isNew && state.isSyncingConsignor(_model.id);
     final showSyncButton = !_isNew && _model.needsSync;
-    final auditUsername = _model.lastEditedByUsername?.trim() ?? '';
     final isIndividual = _model.consignorType == ConsignorType.naturalPerson;
     final showVatFields = !isIndividual;
     final bankTransfer = _model.paymentOption == PaymentOption.bankTransfer;
@@ -911,59 +914,24 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                     ),
                   ],
                 ),
-                if (auditUsername.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  _AuditText(
-                    username: auditUsername,
-                    editedAtUtc: _model.lastEditedAtUtc,
-                  ),
-                ],
                 const SizedBox(height: 24),
                 if (_isNew) ...[
                   _buildExistingCustomerSection(),
                   const SizedBox(height: 18),
                 ],
-                if (!_isNew) ...[
-                  SectionCard(
-                    title: 'Audit',
-                    icon: Icons.history_outlined,
-                    child: _ResponsiveFormGrid(
-                      children: [
-                        TextFormField(
-                          key: const ValueKey('editor-field-last-modified-by'),
-                          initialValue: _model.lastEditedByUsername ?? '—',
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            labelText: 'Last modified by',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                ],
                 if (!_isNew && _model.hasRemoteReference) ...[
                   SectionCard(
                     title: 'Consignor identification',
-                    subtitle: 'These identifiers are assigned by backend sync.',
+                    subtitle: 'Assigned by Abacus sync.',
                     icon: Icons.tag_outlined,
                     child: _ResponsiveFormGrid(
                       children: [
                         TextFormField(
-                          key: const ValueKey('editor-field-consignor-id'),
-                          initialValue:
-                              _model.systemReferenceConsignor.toString(),
+                          key: const ValueKey('editor-field-abacus-id'),
+                          initialValue: _abacusIdValue(_model),
                           readOnly: true,
                           decoration:
-                              const InputDecoration(labelText: 'Consignor ID'),
-                        ),
-                        TextFormField(
-                          key: const ValueKey('editor-field-customer-id'),
-                          initialValue:
-                              _model.systemReferenceCustomer.toString(),
-                          readOnly: true,
-                          decoration:
-                              const InputDecoration(labelText: 'Customer ID'),
+                              const InputDecoration(labelText: 'Abacus ID'),
                         ),
                       ],
                     ),
@@ -1012,6 +980,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                                   ConsignorType.naturalPerson) {
                                 _model.vatLiability = false;
                                 _model.vatNumber = '';
+                                _model.eori = '';
                               }
                             }),
                           ),
@@ -1153,13 +1122,13 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             onChanged: (value) => _model.emailAddress = value,
                             keyboardType: TextInputType.emailAddress,
                           ),
-                          if (_model.isLegalEntity)
+                          if (_model.usesTradingName)
                             TextFormField(
                               key: const ValueKey('editor-field-eori'),
                               initialValue: _model.eori,
                               decoration:
                                   const InputDecoration(labelText: 'EORI *'),
-                              validator: (value) => _model.isLegalEntity
+                              validator: (value) => _model.usesTradingName
                                   ? FormValidators.requiredText(value, 'EORI')
                                   : null,
                               onChanged: (value) => _model.eori = value,
@@ -1296,14 +1265,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                                 _model.correspondence = value?.value,
                           ),
                           TextFormField(
-                            key: const ValueKey('editor-field-references'),
-                            initialValue: _model.references,
-                            decoration: const InputDecoration(
-                              labelText: 'References',
-                            ),
-                            onChanged: (value) => _model.references = value,
-                          ),
-                          TextFormField(
                             key: const ValueKey('editor-field-discount'),
                             initialValue: _formatDecimalInput(_model.discount),
                             decoration: const InputDecoration(
@@ -1344,7 +1305,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             key: const ValueKey(
                               'editor-field-ancient-coins-subscribed',
                             ),
-                            title: 'Catalogue Ancient coins',
+                            title: 'Catalogue ancient coins',
                             subtitle: 'Collector preference.',
                             value: _model.ancientCoinsSubscribed,
                             onChanged: (value) => setState(
@@ -1355,7 +1316,7 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             key: const ValueKey(
                               'editor-field-world-coins-subscribed',
                             ),
-                            title: 'Catalogue Medieval and Modern coins',
+                            title: 'Catalogue medieval and world coins',
                             subtitle: 'Collector preference.',
                             value: _model.worldCoinsSubscribed,
                             onChanged: (value) => setState(
@@ -1623,27 +1584,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _AuditText extends StatelessWidget {
-  const _AuditText({required this.username, required this.editedAtUtc});
-
-  final String username;
-  final DateTime? editedAtUtc;
-
-  @override
-  Widget build(BuildContext context) {
-    final local = editedAtUtc?.toLocal();
-    final dateText = local == null
-        ? 'unknown date'
-        : DateFormat('dd MMM yyyy HH:mm').format(local);
-    return Text(
-      'Last edited by $username on $dateText',
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Colors.black54,
-          ),
     );
   }
 }

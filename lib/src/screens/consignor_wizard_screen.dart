@@ -647,8 +647,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
             );
             for (var index = 0; index < targetDraft.uploads.length; index++) {
               final existing = targetDraft.uploads[index];
-              if (existing.localId == upload.localId ||
-                  existing.fileName == upload.fileName) {
+              if (_isSameDossierUpload(existing, upload)) {
                 targetDraft.uploads[index] = hydrated.copyWith(kind: kind);
               }
             }
@@ -685,13 +684,32 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           !item.isDeleted &&
           item.fileType == UploadType.passport &&
           item.kind == kind &&
-          (item.localId == upload.localId ||
-              item.fileName == upload.fileName ||
-              item.path == upload.path));
+          _isSameDossierUpload(item, upload));
       if (exists) continue;
 
       targetDraft.uploads.add(upload.copyWith(kind: kind));
     }
+  }
+
+  bool _isSameDossierUpload(ContractUpload existing, ContractUpload incoming) {
+    final existingId = existing.localId.trim();
+    final incomingId = incoming.localId.trim();
+    if (existingId.isNotEmpty || incomingId.isNotEmpty) {
+      return existingId.isNotEmpty &&
+          incomingId.isNotEmpty &&
+          existingId == incomingId;
+    }
+
+    final existingPath = existing.path.trim();
+    final incomingPath = incoming.path.trim();
+    if (existingPath.isNotEmpty || incomingPath.isNotEmpty) {
+      return existingPath.isNotEmpty &&
+          incomingPath.isNotEmpty &&
+          existingPath == incomingPath;
+    }
+
+    return existing.fileName.trim().isNotEmpty &&
+        existing.fileName == incoming.fileName;
   }
 
   String _passportKindForLookupUpload(
@@ -2631,8 +2649,6 @@ class _WizardDraft {
   bool newsletterSubscribed = true;
   bool ancientCoinsSubscribed = false;
   bool worldCoinsSubscribed = false;
-  String collectingArea = '';
-  String references = '';
   double creditLimit = 0;
   double? discount;
   double? consignmentFeeFloorAuction;
@@ -2790,8 +2806,6 @@ class _WizardDraft {
         'newsletterSubscribed': newsletterSubscribed,
         'ancientCoinsSubscribed': ancientCoinsSubscribed,
         'worldCoinsSubscribed': worldCoinsSubscribed,
-        'collectingArea': collectingArea,
-        'references': references,
         'creditLimit': creditLimit,
         'discount': discount,
         'consignmentFeeFloorAuction': consignmentFeeFloorAuction,
@@ -2924,8 +2938,6 @@ class _WizardDraft {
     newsletterSubscribed = _toBool(json['newsletterSubscribed']) ?? true;
     ancientCoinsSubscribed = _toBool(json['ancientCoinsSubscribed']) ?? false;
     worldCoinsSubscribed = _toBool(json['worldCoinsSubscribed']) ?? false;
-    collectingArea = _toString(json['collectingArea']);
-    references = _toString(json['references']);
     creditLimit = _toDouble(json['creditLimit']) ?? 0;
     discount = _toDouble(json['discount']);
     consignmentFeeFloorAuction = _toDouble(json['consignmentFeeFloorAuction']);
@@ -3122,8 +3134,6 @@ class _WizardDraft {
     newsletterSubscribed = prefill.newsletterSubscribed;
     ancientCoinsSubscribed = prefill.ancientCoinsSubscribed;
     worldCoinsSubscribed = prefill.worldCoinsSubscribed;
-    collectingArea = prefill.collectingArea;
-    references = prefill.references;
     creditLimit = prefill.creditLimit;
     discount = prefill.discount;
     consignmentFeeFloorAuction = prefill.consignmentFeeFloorAuction;
@@ -3211,7 +3221,7 @@ class _WizardDraft {
     requireText(postalCode, 'Postal code');
     requireText(city, 'City');
     requireText(countryIso3, 'Country');
-    if (isLegalEntity) requireText(eori, 'EORI');
+    if (usesTradingName) requireText(eori, 'EORI');
     if (paymentOption == PaymentOption.bankTransfer) {
       requireText(iban, 'IBAN / Account No');
     }
@@ -3319,8 +3329,6 @@ class _WizardDraft {
     consignor.newsletterSubscribed = newsletterSubscribed;
     consignor.ancientCoinsSubscribed = ancientCoinsSubscribed;
     consignor.worldCoinsSubscribed = worldCoinsSubscribed;
-    consignor.collectingArea = '';
-    consignor.references = references.trim();
     consignor.creditLimit = 500000;
     consignor.discount = discount;
     consignor.consignmentFeeFloorAuction = consignmentFeeFloorAuction;
@@ -4037,13 +4045,14 @@ class _ConsignorDetailsForm extends StatelessWidget {
                 onChanged: (value) => draft.email = value,
                 keyboardType: TextInputType.emailAddress,
               ),
-              if (draft.isLegalEntity)
+              if (draft.usesTradingName)
                 TextFormField(
                   key: ValueKey('$_keyPrefix-field-eori'),
                   initialValue: draft.eori,
                   decoration: const InputDecoration(labelText: 'EORI *'),
-                  validator: (value) =>
-                      FormValidators.requiredText(value, 'EORI'),
+                  validator: (value) => draft.usesTradingName
+                      ? FormValidators.requiredText(value, 'EORI')
+                      : null,
                   onChanged: (value) => draft.eori = value,
                 ),
             ],
@@ -4145,15 +4154,6 @@ class _ConsignorDetailsForm extends StatelessWidget {
                     onChanged: (value) => draft.correspondence = value?.value,
                   ),
                   TextFormField(
-                    key: ValueKey('$_keyPrefix-field-references'),
-                    initialValue: draft.references,
-                    decoration: const InputDecoration(labelText: 'References'),
-                    onChanged: (value) {
-                      draft.references = value;
-                      onChanged();
-                    },
-                  ),
-                  TextFormField(
                     key: ValueKey('$_keyPrefix-field-discount'),
                     initialValue: _formatNullablePercent(draft.discount),
                     decoration: const InputDecoration(
@@ -4183,7 +4183,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-ancient-coins-subscribed'),
-                    title: 'Catalogue Ancient coins',
+                    title: 'Catalogue ancient coins',
                     value: draft.ancientCoinsSubscribed,
                     onChanged: (value) {
                       draft.ancientCoinsSubscribed = value;
@@ -4192,7 +4192,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   ),
                   _BooleanCard(
                     key: ValueKey('$_keyPrefix-field-world-coins-subscribed'),
-                    title: 'Catalogue Medieval and Modern coins',
+                    title: 'Catalogue medieval and world coins',
                     value: draft.worldCoinsSubscribed,
                     onChanged: (value) {
                       draft.worldCoinsSubscribed = value;

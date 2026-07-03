@@ -1018,7 +1018,6 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
     final state = context.watch<AppState>();
     final consignor = state.consignorById(widget.consignorId);
     final auctions = state.auctions;
-    final auditUsername = _record.lastEditedByUsername?.trim() ?? '';
     final canEdit = _canEditRecord;
     final readinessIssues = WorkflowStatus.readinessIssuesForContract(
       consignor: consignor,
@@ -1105,13 +1104,6 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
             if (!canEdit) ...[
               const SizedBox(height: 14),
               _ReadOnlyNotice(record: _record),
-            ],
-            if (auditUsername.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              _AuditText(
-                username: auditUsername,
-                editedAtUtc: _record.lastEditedAtUtc,
-              ),
             ],
             const SizedBox(height: 24),
             SectionCard(
@@ -1322,27 +1314,6 @@ class _ReadOnlyNotice extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _AuditText extends StatelessWidget {
-  const _AuditText({required this.username, required this.editedAtUtc});
-
-  final String username;
-  final DateTime? editedAtUtc;
-
-  @override
-  Widget build(BuildContext context) {
-    final local = editedAtUtc?.toLocal();
-    final dateText = local == null
-        ? 'unknown date'
-        : DateFormat('dd MMM yyyy HH:mm').format(local);
-    return Text(
-      'Last edited by $username on $dateText',
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Colors.black54,
-          ),
     );
   }
 }

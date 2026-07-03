@@ -34,9 +34,7 @@ class Consignor {
     this.ancientCoinsSubscribed = false,
     this.worldCoinsSubscribed = false,
     this.newsletterSubscribed = true,
-    this.collectingArea = '',
     this.correspondence,
-    this.references = '',
     this.creditLimit = 0,
     this.discount,
     this.consignmentFeeFloorAuction,
@@ -49,8 +47,6 @@ class Consignor {
     this.syncErrorMessage,
     this.lastSyncedUtc,
     this.remoteLastModifiedUtc,
-    this.lastEditedByUsername,
-    this.lastEditedAtUtc,
   })  : consignorType = consignorType ??
             (isLegalEntity
                 ? ConsignorType.legalEntity
@@ -83,9 +79,7 @@ class Consignor {
   bool ancientCoinsSubscribed;
   bool worldCoinsSubscribed;
   bool newsletterSubscribed;
-  String collectingArea;
   String? correspondence;
-  String references;
   double creditLimit;
   double? discount;
   double? consignmentFeeFloorAuction;
@@ -98,8 +92,6 @@ class Consignor {
   String? syncErrorMessage;
   DateTime? lastSyncedUtc;
   DateTime? remoteLastModifiedUtc;
-  String? lastEditedByUsername;
-  DateTime? lastEditedAtUtc;
 
   bool get hasRemoteReference => systemReferenceConsignor > 0;
 
@@ -142,9 +134,7 @@ class Consignor {
       ancientCoinsSubscribed: false,
       worldCoinsSubscribed: false,
       newsletterSubscribed: true,
-      collectingArea: '',
       correspondence: 'en',
-      references: '',
       creditLimit: 0,
       discount: null,
       consignmentFeeFloorAuction: null,
@@ -364,12 +354,9 @@ class Consignor {
       newsletterSubscribed: (json['newsletterSubscribed'] ??
               json['NewsletterSubscribed']) as bool? ??
           true,
-      collectingArea:
-          _toString(json['collectingArea'] ?? json['CollectingArea']),
       correspondence: _normalizeCorrespondence(
         json['correspondence'] ?? json['Correspondence'],
       ),
-      references: _toString(json['references'] ?? json['References']),
       creditLimit: _toDouble(json['creditLimit'] ?? json['CreditLimit']) ?? 0,
       discount: _toDouble(json['discount'] ?? json['Discount']),
       consignmentFeeFloorAuction: _toDouble(
@@ -408,12 +395,6 @@ class Consignor {
                 ?.toString() ??
             '',
       )?.toUtc(),
-      lastEditedByUsername: _toNullableString(
-        json['lastEditedByUsername'] ?? json['LastEditedByUsername'],
-      ),
-      lastEditedAtUtc: DateTime.tryParse(
-        (json['lastEditedAtUtc'] ?? json['LastEditedAtUtc'])?.toString() ?? '',
-      )?.toUtc(),
     );
   }
 
@@ -445,10 +426,7 @@ class Consignor {
         'ancientCoinsSubscribed': ancientCoinsSubscribed,
         'worldCoinsSubscribed': worldCoinsSubscribed,
         'newsletterSubscribed': newsletterSubscribed,
-        'collectingArea':
-            collectingArea.trim().isEmpty ? null : collectingArea.trim(),
         'correspondence': _normalizeCorrespondence(correspondence),
-        'references': references.trim().isEmpty ? null : references.trim(),
         'creditLimit': creditLimit,
         'discount': discount,
         'consignmentFeeFloorAuction': consignmentFeeFloorAuction,
@@ -462,8 +440,6 @@ class Consignor {
         'lastSyncedUtc': lastSyncedUtc?.toUtc().toIso8601String(),
         'remoteLastModifiedUtc':
             remoteLastModifiedUtc?.toUtc().toIso8601String(),
-        'lastEditedByUsername': lastEditedByUsername,
-        'lastEditedAtUtc': lastEditedAtUtc?.toUtc().toIso8601String(),
         'synced': synced,
       };
 
@@ -490,33 +466,28 @@ class Consignor {
   }
 
   void markDraft([String? editorUsername]) {
-    _markEdited(editorUsername);
+    _markEdited();
     syncErrorMessage = null;
     syncStatus = RecordSyncStatus.draft;
   }
 
   void markReadyForSync([String? editorUsername]) {
-    _markEdited(editorUsername);
+    _markEdited();
     syncErrorMessage = null;
     syncStatus = RecordSyncStatus.pendingSync;
   }
 
   void markLocalChange([String? editorUsername]) {
-    _markEdited(editorUsername);
+    _markEdited();
     syncErrorMessage = null;
     syncStatus = hasRemoteReference
         ? RecordSyncStatus.pendingSync
         : RecordSyncStatus.draft;
   }
 
-  void _markEdited(String? editorUsername) {
+  void _markEdited() {
     final nowUtc = DateTime.now().toUtc();
     lastModifiedUtc = nowUtc;
-    lastEditedAtUtc = nowUtc;
-    final normalized = editorUsername?.trim();
-    if (normalized != null && normalized.isNotEmpty) {
-      lastEditedByUsername = normalized;
-    }
   }
 
   void markSynced({DateTime? remoteModifiedUtc}) {

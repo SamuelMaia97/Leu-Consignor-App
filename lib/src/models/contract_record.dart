@@ -146,10 +146,7 @@ class ContractUpload {
             UploadType.agreement.apiValue,
       ),
       kind: (json['kind'] ?? json['Kind'])?.toString() ?? '',
-      path:
-          (json['path'] ?? json['Path'] ?? json['fileName'] ?? json['FileName'])
-                  ?.toString() ??
-              '',
+      path: (json['path'] ?? json['Path'])?.toString() ?? '',
       fileData: (json['fileData'] ?? json['FileData'])?.toString() ?? '',
       isDeleted: (json['isDeleted'] ?? json['IsDeleted']) as bool? ?? false,
       signedAt: DateTime.tryParse(
@@ -237,8 +234,6 @@ class ContractRecord {
     this.syncErrorMessage,
     this.lastSyncedUtc,
     this.remoteLastModifiedUtc,
-    this.lastEditedByUsername,
-    this.lastEditedAtUtc,
   })  : auctionIds = List<int>.unmodifiable(
           auctionIds ?? (auctionId == null ? const <int>[] : <int>[auctionId]),
         ),
@@ -268,8 +263,6 @@ class ContractRecord {
   String? syncErrorMessage;
   DateTime? lastSyncedUtc;
   DateTime? remoteLastModifiedUtc;
-  String? lastEditedByUsername;
-  DateTime? lastEditedAtUtc;
 
   int? get auctionId => auctionIds.isEmpty ? null : auctionIds.first;
 
@@ -496,12 +489,6 @@ class ContractRecord {
                 ?.toString() ??
             '',
       )?.toUtc(),
-      lastEditedByUsername:
-          (json['lastEditedByUsername'] ?? json['LastEditedByUsername'])
-              ?.toString(),
-      lastEditedAtUtc: DateTime.tryParse(
-        (json['lastEditedAtUtc'] ?? json['LastEditedAtUtc'])?.toString() ?? '',
-      )?.toUtc(),
     );
   }
 
@@ -524,13 +511,11 @@ class ContractRecord {
         'lastSyncedUtc': lastSyncedUtc?.toUtc().toIso8601String(),
         'remoteLastModifiedUtc':
             remoteLastModifiedUtc?.toUtc().toIso8601String(),
-        'lastEditedByUsername': lastEditedByUsername,
-        'lastEditedAtUtc': lastEditedAtUtc?.toUtc().toIso8601String(),
         'synced': synced,
       };
 
   void markLocalChange([String? editorUsername]) {
-    _markEdited(editorUsername);
+    _markEdited();
     syncErrorMessage = null;
     if (syncStatus == RecordSyncStatus.pendingSync) {
       return;
@@ -578,8 +563,6 @@ class ContractRecord {
     String? syncErrorMessage,
     DateTime? lastSyncedUtc,
     DateTime? remoteLastModifiedUtc,
-    String? lastEditedByUsername,
-    DateTime? lastEditedAtUtc,
   }) {
     final nextAuctionIds =
         auctionIds ?? (auctionId == null ? this.auctionIds : <int>[auctionId]);
@@ -610,19 +593,12 @@ class ContractRecord {
       lastSyncedUtc: lastSyncedUtc ?? this.lastSyncedUtc,
       remoteLastModifiedUtc:
           remoteLastModifiedUtc ?? this.remoteLastModifiedUtc,
-      lastEditedByUsername: lastEditedByUsername ?? this.lastEditedByUsername,
-      lastEditedAtUtc: lastEditedAtUtc ?? this.lastEditedAtUtc,
     );
   }
 
-  void _markEdited(String? editorUsername) {
+  void _markEdited() {
     final nowUtc = DateTime.now().toUtc();
     lastModifiedUtc = nowUtc;
-    lastEditedAtUtc = nowUtc;
-    final normalized = editorUsername?.trim();
-    if (normalized != null && normalized.isNotEmpty) {
-      lastEditedByUsername = normalized;
-    }
   }
 
   static List<ContractUpload> _deduplicateUploads(
@@ -631,10 +607,16 @@ class ContractRecord {
     final result = <ContractUpload>[];
 
     for (final upload in uploads) {
+      final normalizedId = upload.localId.trim();
       final normalizedPath = upload.path.trim();
-      final key = '${upload.fileType.index}|${upload.kind}|$normalizedPath';
+      final normalizedName = upload.fileName.trim();
+      final key = normalizedId.isNotEmpty
+          ? '${upload.fileType.index}|${upload.kind}|id:$normalizedId'
+          : normalizedPath.isNotEmpty
+              ? '${upload.fileType.index}|${upload.kind}|path:$normalizedPath'
+              : '${upload.fileType.index}|${upload.kind}|name:$normalizedName';
 
-      if (normalizedPath.isEmpty || seenKeys.add(key)) {
+      if (seenKeys.add(key)) {
         result.add(upload);
       }
     }
