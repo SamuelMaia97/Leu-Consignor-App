@@ -281,6 +281,49 @@ void main() {
       expect(attachments.single, containsPair('kind', 'CommercialRegister'));
     });
 
+    test('excludes validation report files from COC render attachments',
+        () async {
+      final tempDir = await Directory.systemTemp.createTemp('penta_payload_');
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final passportFile = File('${tempDir.path}/passport.jpg');
+      await passportFile.writeAsBytes([0xFF, 0xD8, 0xFF], flush: true);
+      final reportFile = File('${tempDir.path}/validation_report.json');
+      await reportFile.writeAsString('{"validUntil":"2026-07-03"}',
+          flush: true);
+
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          uploads: [
+            ContractUpload(
+              localId: 'passport',
+              fileName: 'passport.jpg',
+              fileType: UploadType.passport,
+              kind: 'NaturalPersonId',
+              path: passportFile.path,
+            ),
+            ContractUpload(
+              localId: 'validation-report',
+              fileName: 'validation_report.json',
+              fileType: UploadType.passport,
+              kind: 'NaturalPersonIdValidationReport',
+              path: reportFile.path,
+            ),
+          ],
+        ),
+      );
+
+      final attachments = payload['attachments'] as List<dynamic>;
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single, containsPair('fileName', 'passport.jpg'));
+    });
+
     test('shows both commercial register blocks for legal through legal',
         () async {
       final payload = await builder.build(

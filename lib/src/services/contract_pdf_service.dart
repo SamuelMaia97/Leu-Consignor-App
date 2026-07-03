@@ -118,6 +118,7 @@ class ContractPdfPayloadBuilder {
     for (final upload in record.uploads) {
       if (upload.isDeleted) continue;
       if (upload.isGeneratedContractPdf) continue;
+      if (upload.isValidationReport) continue;
 
       final fileData = await _uploadFileData(upload);
       if (fileData.trim().isEmpty) continue;
@@ -141,6 +142,7 @@ class ContractPdfPayloadBuilder {
       (upload) =>
           !upload.isDeleted &&
           upload.fileType == UploadType.passport &&
+          !upload.isValidationReport &&
           upload.kind != 'RepresentativeId' &&
           upload.kind != 'RepresentativeIdValidationReport' &&
           upload.kind != 'NaturalPersonIdValidationReport',
@@ -149,6 +151,7 @@ class ContractPdfPayloadBuilder {
       (upload) =>
           !upload.isDeleted &&
           upload.fileType == UploadType.passport &&
+          !upload.isValidationReport &&
           upload.kind == 'RepresentativeId',
     );
 

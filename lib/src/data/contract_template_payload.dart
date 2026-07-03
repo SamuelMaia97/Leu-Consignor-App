@@ -58,6 +58,7 @@ class ContractRenderPayloadBuilder {
       (upload) =>
           !upload.isDeleted &&
           upload.fileType == UploadType.passport &&
+          !upload.isValidationReport &&
           upload.kind != 'RepresentativeId' &&
           upload.kind != 'RepresentativeIdValidationReport' &&
           upload.kind != 'NaturalPersonIdValidationReport',
@@ -66,6 +67,7 @@ class ContractRenderPayloadBuilder {
       (upload) =>
           !upload.isDeleted &&
           upload.fileType == UploadType.passport &&
+          !upload.isValidationReport &&
           upload.kind == 'RepresentativeId',
     );
     final consignorIsOwner = authorizedRepresentative == null;
@@ -235,6 +237,9 @@ class ContractRenderPayloadBuilder {
       if (_isGeneratedContractAttachment(attachment)) {
         continue;
       }
+      if (_isValidationReportAttachment(attachment)) {
+        continue;
+      }
 
       final file = File(attachment.path);
       if (!await file.exists()) {
@@ -296,6 +301,19 @@ class ContractRenderPayloadBuilder {
         normalizedName.contains('consignorcontract') ||
         normalizedName.contains('consignoragreement') ||
         normalizedName.contains('provconsignoragreement');
+  }
+
+  bool _isValidationReportAttachment(ContractAttachment attachment) {
+    final normalizedKind = _normalizeGeneratedContractToken(attachment.kind);
+    if (normalizedKind.contains('validationreport')) {
+      return true;
+    }
+
+    final normalizedName =
+        _normalizeGeneratedContractToken(_fileName(attachment.path));
+    return normalizedName.contains('validationreport') ||
+        (normalizedName.contains('validation') &&
+            normalizedName.contains('report'));
   }
 
   String _normalizeGeneratedContractToken(String value) {

@@ -112,6 +112,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   bool _saving = false;
   bool _searching = false;
   bool _representativeSearching = false;
+  int _representativeSearchGeneration = 0;
   bool _guardRegistered = false;
   bool _auctionRefreshInFlight = false;
   bool? _resumeContractOnly;
@@ -203,11 +204,6 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         _draft.selectedAuctions.isNotEmpty ||
         _draft.uploads.isNotEmpty ||
         _representativeDraft.hasMeaningfulInput;
-  }
-
-  bool get _showHeaderSaveDraft {
-    return _currentStep == _WizardStep.fullReview ||
-        _currentStep == _WizardStep.signatures;
   }
 
   @override
@@ -781,22 +777,30 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   void _queueRepresentativeSearch(String query) {
     _representativeSearchDebounce?.cancel();
-    if (query.trim().isEmpty) {
-      setState(() => _representativeMatches = const []);
+    final trimmedQuery = query.trim();
+    final generation = ++_representativeSearchGeneration;
+    if (trimmedQuery.isEmpty) {
+      setState(() {
+        _representativeSearching = false;
+        _representativeMatches = const [];
+      });
       return;
     }
     setState(() => _representativeSearching = true);
     _representativeSearchDebounce = Timer(
       const Duration(milliseconds: 350),
-      () => _searchExistingRepresentatives(query.trim()),
+      () => _searchExistingRepresentatives(trimmedQuery, generation),
     );
   }
 
-  Future<void> _searchExistingRepresentatives(String query) async {
+  Future<void> _searchExistingRepresentatives(
+    String query,
+    int generation,
+  ) async {
     final state = context.read<AppState>();
     await state.refreshAuthSessionState(notify: false);
+    if (!mounted || generation != _representativeSearchGeneration) return;
     if (!state.hasValidToken) {
-      if (!mounted) return;
       setState(() {
         _representativeSearching = false;
         _representativeMatches = const [];
@@ -812,13 +816,13 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     try {
       final matches = await ApiService(state.settings, state.token)
           .searchExistingCustomers(query, take: 10);
-      if (!mounted) return;
+      if (!mounted || generation != _representativeSearchGeneration) return;
       setState(() {
         _representativeMatches = matches;
         _representativeSearching = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _representativeSearchGeneration) return;
       setState(() {
         _representativeMatches = const [];
         _representativeSearching = false;
@@ -830,6 +834,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   }
 
   void _selectExistingRepresentative(CustomerLookupResult result) {
+    _representativeSearchDebounce?.cancel();
+    _representativeSearchGeneration++;
     setState(() {
       _representativeDraft.applyPrefill(result.prefill);
       _representativeDraft.usesExistingCustomer = true;
@@ -840,6 +846,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         _representativeDraft.consignorType = ConsignorType.legalEntity;
       }
       _representativeMatches = const [];
+      _representativeSearching = false;
       _generatedPdfPath = null;
       _generatedPdfIncludesSignatures = false;
     });
@@ -1013,6 +1020,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         onLookupIbanPressed: () =>
             _handleIbanLookupPressed(_representativeDraft),
         includeBanking: false,
+        includeTerms: false,
       ),
     );
 
@@ -1048,7 +1056,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   Future<bool> _ensureProfileReadyForContract() async {
     var missingFields = _draft.missingRequiredFields;
     var representativeMissingFields = _requiresRepresentativeDetails
-        ? _representativeDraft.missingRequiredFields
+        ? _representativeDraft.missingRequiredProfileFields
         : const <String>[];
     if (missingFields.isEmpty && representativeMissingFields.isEmpty) {
       return true;
@@ -1073,7 +1081,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     }
 
     representativeMissingFields = _requiresRepresentativeDetails
-        ? _representativeDraft.missingRequiredFields
+        ? _representativeDraft.missingRequiredProfileFields
         : const <String>[];
     if (representativeMissingFields.isNotEmpty) {
       final saved =
@@ -1084,7 +1092,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     missingFields = _draft.missingRequiredFields;
     representativeMissingFields = _requiresRepresentativeDetails
-        ? _representativeDraft.missingRequiredFields
+        ? _representativeDraft.missingRequiredProfileFields
         : const <String>[];
     final stillMissing = <String>[
       ...missingFields.map((field) => 'Consignor $field'),
@@ -1215,9 +1223,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       UploadType.passport,
     );
 
-    final passportValidUntil = await _readPentaPassportValidUntil(
+    final passportReport = await _readPentaPassportReport(
       scanFiles.validationReportPaths,
     );
+    final passportValidUntil = passportReport?.validUntil;
 
     if (importedImagePaths.isEmpty && importedReportPaths.isEmpty) {
       if (!mounted) return;
@@ -1241,6 +1250,10 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           _draft.passportValidUntil = passportValidUntil;
         }
       }
+      final targetDraft =
+          kind == _representativeIdKind ? _representativeDraft : _draft;
+      targetDraft.passportValidationPassed = passportReport?.validationPassed;
+      targetDraft.passportValidationResult = passportReport?.validationResult;
     });
 
     if (!mounted) return;
@@ -1249,26 +1262,33 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     final validUntilText = passportValidUntil == null
         ? ''
         : ' Passport valid until ${_formatEuropeanDate(passportValidUntil)}.';
+    final validationText = passportReport?.validationPassed == false
+        ? ' Penta validation failed.'
+        : '';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Penta scan imported: $importedCount file${importedCount == 1 ? '' : 's'}.$validUntilText',
+          'Penta scan imported: $importedCount file${importedCount == 1 ? '' : 's'}.$validUntilText$validationText',
         ),
       ),
     );
   }
 
-  Future<DateTime?> _readPentaPassportValidUntil(
+  Future<PentaPassportReport?> _readPentaPassportReport(
     List<String> validationReportPaths,
   ) async {
     for (final path in validationReportPaths) {
       if (!path.toLowerCase().endsWith('.json')) continue;
 
       try {
-        final parsed = parsePentaPassportExpiryDate(
-          await File(path).readAsString(),
-        );
-        if (parsed != null) return parsed;
+        final parsed =
+            parsePentaPassportReport(await File(path).readAsString());
+        if (parsed != null &&
+            (parsed.validUntil != null ||
+                parsed.validationPassed != null ||
+                (parsed.validationResult?.trim().isNotEmpty ?? false))) {
+          return parsed;
+        }
       } on FileSystemException {
         // Ignore unreadable sidecar reports and still import the scan images.
       }
@@ -1318,8 +1338,17 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         folder,
         isCancelled: isCancelled,
       );
-      final scanFiles = _selectPentaScanFiles(stableFiles);
+      var scanFiles = _selectPentaScanFiles(stableFiles);
       if (scanFiles != null) {
+        if (scanFiles.validationReportPaths.isEmpty) {
+          onStatusChanged('Waiting for validation report...');
+          final filesWithReports = await _waitForPentaReportFiles(
+            folder,
+            fallbackFiles: stableFiles,
+            isCancelled: isCancelled,
+          );
+          scanFiles = _selectPentaScanFiles(filesWithReports) ?? scanFiles;
+        }
         return scanFiles;
       }
 
@@ -1405,6 +1434,37 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         .where((entity) => entity is File)
         .cast<File>()
         .toList();
+  }
+
+  Future<List<File>> _waitForPentaReportFiles(
+    Directory folder, {
+    required List<File> fallbackFiles,
+    required bool Function() isCancelled,
+  }) async {
+    var latestFiles = fallbackFiles;
+
+    for (var attempt = 0; attempt < 10; attempt++) {
+      if (isCancelled()) {
+        throw const _PentaScanCancelledException();
+      }
+
+      final files = await folder
+          .list(recursive: true)
+          .where((entity) => entity is File)
+          .cast<File>()
+          .toList();
+      if (files.isNotEmpty) {
+        latestFiles = files;
+      }
+
+      if (files.any(_isPentaValidationReportFile)) {
+        return files;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+
+    return latestFiles;
   }
 
   _PentaScanFiles? _selectPentaScanFiles(List<File> files) {
@@ -2369,32 +2429,12 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         onPointerDown: (_) => _dismissTextInput(),
         child: Column(
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _StepIndicator(
-                    currentIndex: _step,
-                    steps: _steps,
-                    businessStepFor: _businessStepFor,
-                    labelFor: _stepLabelFor,
-                    onStepSelected: _saving ? null : _goToStep,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                if (_showHeaderSaveDraft) ...[
-                  OutlinedButton.icon(
-                    onPressed: _saving ? null : _saveCurrentProgressAsDraft,
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('Save as draft'),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                OutlinedButton.icon(
-                  onPressed: _saving ? null : _close,
-                  icon: const Icon(Icons.close_rounded),
-                  label: const Text('Close'),
-                ),
-              ],
+            _StepIndicator(
+              currentIndex: _step,
+              steps: _steps,
+              businessStepFor: _businessStepFor,
+              labelFor: _stepLabelFor,
+              onStepSelected: _saving ? null : _goToStep,
             ),
             const SizedBox(height: 16),
             Expanded(
@@ -2520,8 +2560,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           representativePassportLookupAttempted:
               _representativeDraft.usesExistingCustomer,
           ordererPassportValidUntil: _draft.passportValidUntil,
+          ordererPassportValidationPassed: _draft.passportValidationPassed,
+          ordererPassportValidationResult: _draft.passportValidationResult,
           representativePassportValidUntil:
               _representativeDraft.passportValidUntil,
+          representativePassportValidationPassed:
+              _representativeDraft.passportValidationPassed,
+          representativePassportValidationResult:
+              _representativeDraft.passportValidationResult,
           showRepresentativePictures: _requiresRepresentativeDetails,
           onOrdererPassportValidUntilChanged: (value) {
             setState(() => _draft.passportValidUntil = value);
@@ -2583,12 +2629,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           onEditRepresentative: () {
             unawaited(
               _openRepresentativeReviewEditor(
-                highlightMissing:
-                    _representativeDraft.missingRequiredFields.isNotEmpty,
+                highlightMissing: _representativeDraft
+                    .missingRequiredProfileFields.isNotEmpty,
               ),
             );
           },
           onBack: _back,
+          onSaveDraft: _saveCurrentProgressAsDraft,
+          onClose: _close,
           onGeneratePdf: () => _generatePdf(),
           onSaveProvisional: _saveProvisionalContract,
           onOpenPdf: _generatedPdfPath == null
@@ -2603,6 +2651,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           saving: _saving,
           generatedPdfPath: _generatedPdfPath,
           onBack: _back,
+          onSaveDraft: _saveCurrentProgressAsDraft,
+          onClose: _close,
           onSignerChanged: _selectLeuSigner,
           onContractSignatureChanged: _updateContractSignature,
           onAnnexASignatureChanged: _updateAnnexASignature,
@@ -2739,6 +2789,8 @@ class _WizardDraft {
   String bankAddressCountryIso3 = '';
   String bankAddressCountryName = '';
   DateTime? passportValidUntil;
+  bool? passportValidationPassed;
+  String? passportValidationResult;
   String beneficiaryFirstName = '';
   String beneficiaryLastName = '';
   String beneficiaryAddressStreet = '';
@@ -2815,12 +2867,16 @@ class _WizardDraft {
   }
 
   List<ContractUpload> get passportFiles => uploads
-      .where((e) => e.fileType == UploadType.passport && !e.isDeleted)
+      .where((e) =>
+          e.fileType == UploadType.passport &&
+          !e.isDeleted &&
+          !e.isValidationReport)
       .toList(growable: false);
   List<ContractUpload> get ordererIdFiles => uploads
       .where((e) =>
           e.fileType == UploadType.passport &&
           !e.isDeleted &&
+          !e.isValidationReport &&
           (e.kind != _representativeIdKind &&
               e.kind != _representativeIdValidationReportKind))
       .toList(growable: false);
@@ -2828,14 +2884,17 @@ class _WizardDraft {
       .where((e) =>
           e.fileType == UploadType.passport &&
           !e.isDeleted &&
-          (e.kind == _representativeIdKind ||
-              e.kind == _representativeIdValidationReportKind))
+          !e.isValidationReport &&
+          e.kind == _representativeIdKind)
       .toList(growable: false);
   List<ContractUpload> get productFiles => uploads
       .where((e) => e.fileType == UploadType.product && !e.isDeleted)
       .toList(growable: false);
   List<ContractUpload> get registrationFiles => uploads
       .where((e) => e.fileType == UploadType.agreement && !e.isDeleted)
+      .toList(growable: false);
+  List<ContractUpload> get cocAttachmentFiles => uploads
+      .where((e) => !e.isDeleted && !e.isValidationReport)
       .toList(growable: false);
 
   Map<String, dynamic> toResumeJson() => {
@@ -2895,6 +2954,8 @@ class _WizardDraft {
         'bankAddressCountryIso3': bankAddressCountryIso3,
         'bankAddressCountryName': bankAddressCountryName,
         'passportValidUntil': passportValidUntil?.toIso8601String(),
+        'passportValidationPassed': passportValidationPassed,
+        'passportValidationResult': passportValidationResult,
         'beneficiaryFirstName': beneficiaryFirstName,
         'beneficiaryLastName': beneficiaryLastName,
         'beneficiaryAddressStreet': beneficiaryAddressStreet,
@@ -3022,6 +3083,8 @@ class _WizardDraft {
     bankAddressCountryName = _toString(json['bankAddressCountryName']);
     passportValidUntil =
         DateTime.tryParse(_toString(json['passportValidUntil']));
+    passportValidationPassed = _toBool(json['passportValidationPassed']);
+    passportValidationResult = _stringOrNull(json['passportValidationResult']);
     beneficiaryFirstName = _toString(json['beneficiaryFirstName']);
     beneficiaryLastName = _toString(json['beneficiaryLastName']);
     beneficiaryAddressStreet = _toString(json['beneficiaryAddressStreet']);
@@ -3306,7 +3369,13 @@ class _WizardDraft {
     beneficiaryAddressCountryName = '';
   }
 
-  List<String> get missingRequiredFields {
+  List<String> get missingRequiredFields =>
+      _missingRequiredFields(includePayment: true);
+
+  List<String> get missingRequiredProfileFields =>
+      _missingRequiredFields(includePayment: false);
+
+  List<String> _missingRequiredFields({required bool includePayment}) {
     final missing = <String>[];
 
     void requireText(String value, String label) {
@@ -3327,7 +3396,7 @@ class _WizardDraft {
     requireText(city, 'City');
     requireText(countryIso3, 'Country');
     if (usesTradingName) requireText(eori, 'EORI');
-    if (paymentOption == PaymentOption.bankTransfer) {
+    if (includePayment && paymentOption == PaymentOption.bankTransfer) {
       requireText(iban, 'IBAN / Account No');
     }
 
@@ -3930,6 +3999,7 @@ class _RepresentativeStep extends StatelessWidget {
               onChanged: onChanged,
               onLookupIbanPressed: onLookupIbanPressed,
               includeBanking: false,
+              includeTerms: false,
             ),
           ],
           const SizedBox(height: 20),
@@ -3950,6 +4020,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
     required this.onChanged,
     required this.onLookupIbanPressed,
     this.includeBanking = true,
+    this.includeTerms = true,
   });
 
   final _WizardDraft draft;
@@ -3960,6 +4031,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
   final VoidCallback onChanged;
   final VoidCallback onLookupIbanPressed;
   final bool includeBanking;
+  final bool includeTerms;
 
   String get _keyPrefix => draft.representativeMode
       ? 'representative-${draft.formRevision}'
@@ -4309,57 +4381,60 @@ class _ConsignorDetailsForm extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        SectionCard(
-          title: 'Terms',
-          child: _ResponsiveFormGrid(
-            children: [
-              TextFormField(
-                key: ValueKey(
-                  '$_keyPrefix-field-consignment-fee-floor-auction',
+        if (includeTerms) ...[
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Terms',
+            child: _ResponsiveFormGrid(
+              children: [
+                TextFormField(
+                  key: ValueKey(
+                    '$_keyPrefix-field-consignment-fee-floor-auction',
+                  ),
+                  initialValue:
+                      _formatNullablePercent(draft.consignmentFeeFloorAuction),
+                  decoration: const InputDecoration(
+                    labelText: 'Floor auction consignment commission',
+                    suffixText: '%',
+                  ),
+                  validator: (value) =>
+                      _optionalPercentage(value, 'Floor auction commission'),
+                  onChanged: (value) {
+                    draft.consignmentFeeFloorAuction =
+                        _parseOptionalPercent(value);
+                  },
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
+                  ],
                 ),
-                initialValue:
-                    _formatNullablePercent(draft.consignmentFeeFloorAuction),
-                decoration: const InputDecoration(
-                  labelText: 'Floor auction consignment commission',
-                  suffixText: '%',
+                TextFormField(
+                  key: ValueKey(
+                    '$_keyPrefix-field-consignment-fee-web-auction',
+                  ),
+                  initialValue:
+                      _formatNullablePercent(draft.consignmentFeeWebAuction),
+                  decoration: const InputDecoration(
+                    labelText: 'Web auction consignment commission',
+                    suffixText: '%',
+                  ),
+                  validator: (value) =>
+                      _optionalPercentage(value, 'Web auction commission'),
+                  onChanged: (value) {
+                    draft.consignmentFeeWebAuction =
+                        _parseOptionalPercent(value);
+                  },
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
+                  ],
                 ),
-                validator: (value) =>
-                    _optionalPercentage(value, 'Floor auction commission'),
-                onChanged: (value) {
-                  draft.consignmentFeeFloorAuction =
-                      _parseOptionalPercent(value);
-                },
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
-                ],
-              ),
-              TextFormField(
-                key: ValueKey(
-                  '$_keyPrefix-field-consignment-fee-web-auction',
-                ),
-                initialValue:
-                    _formatNullablePercent(draft.consignmentFeeWebAuction),
-                decoration: const InputDecoration(
-                  labelText: 'Web auction consignment commission',
-                  suffixText: '%',
-                ),
-                validator: (value) =>
-                    _optionalPercentage(value, 'Web auction commission'),
-                onChanged: (value) {
-                  draft.consignmentFeeWebAuction = _parseOptionalPercent(value);
-                },
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9,.% ]')),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
         if (includeBanking) ...[
           const SizedBox(height: 16),
           SectionCard(
@@ -4692,7 +4767,11 @@ class _PicturesStep extends StatelessWidget {
     required this.ordererPassportLookupAttempted,
     required this.representativePassportLookupAttempted,
     required this.ordererPassportValidUntil,
+    required this.ordererPassportValidationPassed,
+    required this.ordererPassportValidationResult,
     required this.representativePassportValidUntil,
+    required this.representativePassportValidationPassed,
+    required this.representativePassportValidationResult,
     required this.showRepresentativePictures,
     required this.onOrdererPassportValidUntilChanged,
     required this.onRepresentativePassportValidUntilChanged,
@@ -4717,7 +4796,11 @@ class _PicturesStep extends StatelessWidget {
   final bool ordererPassportLookupAttempted;
   final bool representativePassportLookupAttempted;
   final DateTime? ordererPassportValidUntil;
+  final bool? ordererPassportValidationPassed;
+  final String? ordererPassportValidationResult;
   final DateTime? representativePassportValidUntil;
+  final bool? representativePassportValidationPassed;
+  final String? representativePassportValidationResult;
   final bool showRepresentativePictures;
   final ValueChanged<DateTime?> onOrdererPassportValidUntilChanged;
   final ValueChanged<DateTime?> onRepresentativePassportValidUntilChanged;
@@ -4766,6 +4849,8 @@ class _PicturesStep extends StatelessWidget {
         _PassportValidityField(
           label: 'Consignor Passport Valid Until',
           value: ordererPassportValidUntil,
+          validationPassed: ordererPassportValidationPassed,
+          validationResult: ordererPassportValidationResult,
           onChanged: onOrdererPassportValidUntilChanged,
         ),
         if (showRepresentativePictures) ...[
@@ -4786,6 +4871,8 @@ class _PicturesStep extends StatelessWidget {
           _PassportValidityField(
             label: 'Representative Passport Valid Until',
             value: representativePassportValidUntil,
+            validationPassed: representativePassportValidationPassed,
+            validationResult: representativePassportValidationResult,
             onChanged: onRepresentativePassportValidUntilChanged,
           ),
         ],
@@ -4809,11 +4896,15 @@ class _PassportValidityField extends StatelessWidget {
   const _PassportValidityField({
     required this.label,
     required this.value,
+    required this.validationPassed,
+    required this.validationResult,
     required this.onChanged,
   });
 
   final String label;
   final DateTime? value;
+  final bool? validationPassed;
+  final String? validationResult;
   final ValueChanged<DateTime?> onChanged;
 
   @override
@@ -4824,11 +4915,25 @@ class _PassportValidityField extends StatelessWidget {
         value == null ? null : DateTime(value!.year, value!.month, value!.day);
     final valid =
         selectedDate == null ? null : !selectedDate.isBefore(todayDate);
-    final statusText = valid == null
-        ? 'Not set'
-        : valid
-            ? 'Valid'
-            : 'Expired';
+    final invalidByReport = validationPassed == false;
+    final statusText = invalidByReport
+        ? 'Invalid'
+        : valid == null
+            ? 'Not set'
+            : valid
+                ? 'Valid'
+                : 'Expired';
+    final statusTone = invalidByReport || valid == false
+        ? StatusBadgeTone.error
+        : valid == true
+            ? StatusBadgeTone.success
+            : StatusBadgeTone.info;
+    final statusIcon = invalidByReport || valid == false
+        ? Icons.error_outline
+        : valid == true
+            ? Icons.check_circle_outline
+            : Icons.calendar_today_outlined;
+    final validationText = validationResult?.trim();
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4846,18 +4951,15 @@ class _PassportValidityField extends StatelessWidget {
         const SizedBox(width: 12),
         Padding(
           padding: const EdgeInsets.only(top: 8),
-          child: StatusBadge(
-            label: statusText,
-            tone: valid == true
-                ? StatusBadgeTone.success
-                : valid == false
-                    ? StatusBadgeTone.error
-                    : StatusBadgeTone.info,
-            icon: valid == true
-                ? Icons.check_circle_outline
-                : valid == false
-                    ? Icons.error_outline
-                    : Icons.calendar_today_outlined,
+          child: Tooltip(
+            message: validationText == null || validationText.isEmpty
+                ? statusText
+                : 'Penta validation: $validationText',
+            child: StatusBadge(
+              label: statusText,
+              tone: statusTone,
+              icon: statusIcon,
+            ),
           ),
         ),
       ],
@@ -5120,6 +5222,8 @@ class _FullReviewStep extends StatelessWidget {
     required this.onEditConsignor,
     required this.onEditRepresentative,
     required this.onBack,
+    required this.onSaveDraft,
+    required this.onClose,
     required this.onGeneratePdf,
     required this.onSaveProvisional,
     required this.onOpenPdf,
@@ -5135,6 +5239,8 @@ class _FullReviewStep extends StatelessWidget {
   final VoidCallback onEditConsignor;
   final VoidCallback onEditRepresentative;
   final VoidCallback onBack;
+  final VoidCallback onSaveDraft;
+  final VoidCallback onClose;
   final VoidCallback onGeneratePdf;
   final Future<void> Function() onSaveProvisional;
   final VoidCallback? onOpenPdf;
@@ -5145,7 +5251,7 @@ class _FullReviewStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final missingFields = draft.missingRequiredFields;
     final representativeMissingFields =
-        representative?.missingRequiredFields ?? const <String>[];
+        representative?.missingRequiredProfileFields ?? const <String>[];
     final selectedAuctions =
         _chronologicalAuctionOptions(draft.selectedAuctions)
             .map((auction) => auction.displayName)
@@ -5160,6 +5266,7 @@ class _FullReviewStep extends StatelessWidget {
     final consignmentCountry = draft.consignmentCountryName.trim();
     final placeOfSignature =
         _WizardDraft._signaturePlace(draft.placeOfSignature);
+    final visibleAttachments = draft.cocAttachmentFiles;
     final readinessIssues = _draftReadinessIssues(
       draft: draft,
       representative: representative,
@@ -5238,7 +5345,7 @@ class _FullReviewStep extends StatelessWidget {
           title: 'Attachments',
           child: Column(
             children: [
-              for (final file in draft.uploads)
+              for (final file in visibleAttachments)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: _FileTile(
@@ -5248,7 +5355,7 @@ class _FullReviewStep extends StatelessWidget {
                     canRemove: false,
                   ),
                 ),
-              if (draft.uploads.isEmpty)
+              if (visibleAttachments.isEmpty)
                 const Align(
                   alignment: Alignment.centerLeft,
                   child: Text('No attachments selected.'),
@@ -5279,15 +5386,25 @@ class _FullReviewStep extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
-        OutlinedButton(
-            onPressed: saving ? null : onBack, child: const Text('Back')),
-        const SizedBox(height: 12),
-        ElevatedButton.icon(
-          onPressed: saving || provisionalContractSubmitted
-              ? null
-              : () => unawaited(onSaveProvisional()),
-          icon: const Icon(Icons.cloud_upload_outlined),
-          label: const Text('Save Provisional Consignor Contract'),
+        _ReviewFooterActions(
+          saving: saving,
+          onBack: onBack,
+          onSaveDraft: onSaveDraft,
+          onClose: onClose,
+          primaryActions: [
+            ElevatedButton.icon(
+              onPressed: saving || provisionalContractSubmitted
+                  ? null
+                  : () => unawaited(onSaveProvisional()),
+              icon: const Icon(Icons.cloud_upload_outlined),
+              label: const Text('Save Provisional Consignor Contract'),
+            ),
+            ElevatedButton.icon(
+              onPressed: saving ? null : onContinue,
+              icon: const Icon(Icons.draw_outlined),
+              label: const Text('Continue to signatures'),
+            ),
+          ],
         ),
         if (provisionalContractSubmitted) ...[
           const SizedBox(height: 6),
@@ -5296,12 +5413,6 @@ class _FullReviewStep extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
-        const SizedBox(height: 12),
-        ElevatedButton.icon(
-          onPressed: saving ? null : onContinue,
-          icon: const Icon(Icons.draw_outlined),
-          label: const Text('Continue to signatures'),
-        ),
       ],
     );
   }
@@ -5318,6 +5429,15 @@ class _FullReviewStep extends StatelessWidget {
           title: 'No consignor passport',
           detail: 'Add or download a passport image before saving.',
           severity: ReadinessSeverity.warning,
+        ),
+      );
+    }
+    if (draft.passportValidationPassed == false) {
+      issues.add(
+        ReadinessIssue(
+          title: 'Consignor passport validation failed',
+          detail: _pentaValidationDetail(draft.passportValidationResult),
+          severity: ReadinessSeverity.error,
         ),
       );
     }
@@ -5379,6 +5499,17 @@ class _FullReviewStep extends StatelessWidget {
         ),
       );
     }
+    if (representative?.passportValidationPassed == false) {
+      issues.add(
+        ReadinessIssue(
+          title: 'Representative passport validation failed',
+          detail: _pentaValidationDetail(
+            representative?.passportValidationResult,
+          ),
+          severity: ReadinessSeverity.error,
+        ),
+      );
+    }
     if (generatedPdfPath == null || generatedPdfPath.trim().isEmpty) {
       issues.add(
         const ReadinessIssue(
@@ -5389,6 +5520,15 @@ class _FullReviewStep extends StatelessWidget {
       );
     }
     return issues;
+  }
+
+  static String _pentaValidationDetail(String? result) {
+    final trimmed = result?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return 'The Penta validation report did not pass.';
+    }
+
+    return 'The Penta validation report result is $trimmed.';
   }
 }
 
@@ -5432,6 +5572,7 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
     required this.onChanged,
     required this.onLookupIbanPressed,
     this.includeBanking = true,
+    this.includeTerms = true,
   });
 
   final _WizardDraft draft;
@@ -5444,6 +5585,7 @@ class _ConsignorReviewEditDialog extends StatefulWidget {
   final VoidCallback onChanged;
   final VoidCallback onLookupIbanPressed;
   final bool includeBanking;
+  final bool includeTerms;
 
   @override
   State<_ConsignorReviewEditDialog> createState() =>
@@ -5529,6 +5671,7 @@ class _ConsignorReviewEditDialogState
                     onChanged: _handleChanged,
                     onLookupIbanPressed: widget.onLookupIbanPressed,
                     includeBanking: widget.includeBanking,
+                    includeTerms: widget.includeTerms,
                   ),
                 ),
               ),
@@ -5626,6 +5769,8 @@ class _SignatureStep extends StatelessWidget {
     required this.saving,
     required this.generatedPdfPath,
     required this.onBack,
+    required this.onSaveDraft,
+    required this.onClose,
     required this.onSignerChanged,
     required this.onContractSignatureChanged,
     required this.onAnnexASignatureChanged,
@@ -5644,6 +5789,8 @@ class _SignatureStep extends StatelessWidget {
   final bool saving;
   final String? generatedPdfPath;
   final VoidCallback onBack;
+  final VoidCallback onSaveDraft;
+  final VoidCallback onClose;
   final ValueChanged<_LeuSigner> onSignerChanged;
   final void Function(List<List<Offset>> strokes, Size size)
       onContractSignatureChanged;
@@ -5756,19 +5903,24 @@ class _SignatureStep extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          OutlinedButton(
-              onPressed: saving ? null : onBack, child: const Text('Back')),
-          const SizedBox(height: 12),
-          ElevatedButton.icon(
-            onPressed: saving || !draft.signatureReady ? null : onSubmit,
-            icon: saving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save_rounded),
-            label: Text(saving ? 'Saving…' : 'Save'),
+          _ReviewFooterActions(
+            saving: saving,
+            onBack: onBack,
+            onSaveDraft: onSaveDraft,
+            onClose: onClose,
+            primaryActions: [
+              ElevatedButton.icon(
+                onPressed: saving || !draft.signatureReady ? null : onSubmit,
+                icon: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_rounded),
+                label: Text(saving ? 'Saving…' : 'Save'),
+              ),
+            ],
           ),
         ],
       ),
@@ -6451,45 +6603,50 @@ extension _WizardDraftReview on _WizardDraft {
         _ => correspondence!,
       };
 
-  List<_ReviewLine> get reviewLines => [
-        _ReviewLine(
-          'Type',
-          switch (consignorType) {
-            ConsignorType.naturalPerson => 'Individual',
-            ConsignorType.soleProprietor => 'Sole proprietor',
-            ConsignorType.legalEntity => 'Company or legal entity',
-          },
+  List<_ReviewLine> get reviewLines {
+    final lines = <_ReviewLine>[
+      _ReviewLine(
+        'Type',
+        switch (consignorType) {
+          ConsignorType.naturalPerson => 'Individual',
+          ConsignorType.soleProprietor => 'Sole proprietor',
+          ConsignorType.legalEntity => 'Company or legal entity',
+        },
+      ),
+      _ReviewLine(
+          'Name', usesTradingName ? tradingName : '$firstName $lastName'),
+      _ReviewLine('Title', _titleLabel),
+      _ReviewLine('Salutation', _salutationLabel),
+      _ReviewLine(
+        'Date of birth',
+        dateOfBirth == null ? '' : _formatEuropeanDate(dateOfBirth!),
+      ),
+      _ReviewLine('Nationality', nationalityName),
+      _ReviewLine('Email', email),
+      _ReviewLine(
+        'Phone',
+        PhoneNumberParser.combine(
+          prefix: phonePrefix,
+          localNumber: phone,
         ),
-        _ReviewLine(
-            'Name', usesTradingName ? tradingName : '$firstName $lastName'),
-        _ReviewLine('Title', _titleLabel),
-        _ReviewLine('Salutation', _salutationLabel),
-        _ReviewLine(
-          'Date of birth',
-          dateOfBirth == null ? '' : _formatEuropeanDate(dateOfBirth!),
-        ),
-        _ReviewLine('Nationality', nationalityName),
-        _ReviewLine('Email', email),
-        _ReviewLine(
-          'Phone',
-          PhoneNumberParser.combine(
-            prefix: phonePrefix,
-            localNumber: phone,
-          ),
-        ),
-        _ReviewLine(
-          'Address',
-          [
-            street,
-            streetNumber,
-            streetAddressOptional,
-            '$postalCode $city',
-            adminRegion,
-            countryName,
-          ].where((part) => part.trim().isNotEmpty).join(', '),
-        ),
-        _ReviewLine('VAT number', vatNumber),
-        _ReviewLine('EORI', eori),
+      ),
+      _ReviewLine(
+        'Address',
+        [
+          street,
+          streetNumber,
+          streetAddressOptional,
+          '$postalCode $city',
+          adminRegion,
+          countryName,
+        ].where((part) => part.trim().isNotEmpty).join(', '),
+      ),
+      _ReviewLine('VAT number', vatNumber),
+      _ReviewLine('EORI', eori),
+    ];
+
+    if (!representativeMode) {
+      lines.addAll([
         _ReviewLine('Payment method', paymentOption.label),
         _ReviewLine('IBAN / Account No', iban),
         _ReviewLine('BIC / SWIFT', bicSwift),
@@ -6503,7 +6660,13 @@ extension _WizardDraftReview on _WizardDraft {
             bankAddressAdminRegion,
           ].where((part) => part.trim().isNotEmpty).join(', '),
         ),
-        _ReviewLine('Correspondence', _correspondenceLabel),
+      ]);
+    }
+
+    lines.add(_ReviewLine('Correspondence', _correspondenceLabel));
+
+    if (!representativeMode) {
+      lines.addAll([
         _ReviewLine(
           'Floor auction consignment commission',
           _formatNullablePercent(consignmentFeeFloorAuction),
@@ -6512,7 +6675,11 @@ extension _WizardDraftReview on _WizardDraft {
           'Web auction consignment commission',
           _formatNullablePercent(consignmentFeeWebAuction),
         ),
-      ];
+      ]);
+    }
+
+    return lines;
+  }
 }
 
 class _ReviewLine {
@@ -7070,6 +7237,72 @@ class _WizardButtons extends StatelessWidget {
         const Spacer(),
         ElevatedButton(onPressed: onNext, child: const Text('Next')),
       ],
+    );
+  }
+}
+
+class _ReviewFooterActions extends StatelessWidget {
+  const _ReviewFooterActions({
+    required this.saving,
+    required this.onBack,
+    required this.onSaveDraft,
+    required this.onClose,
+    this.primaryActions = const [],
+  });
+
+  final bool saving;
+  final VoidCallback onBack;
+  final VoidCallback onSaveDraft;
+  final VoidCallback onClose;
+  final List<Widget> primaryActions;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondaryActions = <Widget>[
+      OutlinedButton(
+        onPressed: saving ? null : onBack,
+        child: const Text('Back'),
+      ),
+      OutlinedButton.icon(
+        onPressed: saving ? null : onSaveDraft,
+        icon: const Icon(Icons.save_outlined),
+        label: const Text('Save draft'),
+      ),
+      OutlinedButton.icon(
+        onPressed: saving ? null : onClose,
+        icon: const Icon(Icons.close_rounded),
+        label: const Text('Close'),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final actions = [
+          ...secondaryActions,
+          ...primaryActions,
+        ];
+
+        if (constraints.maxWidth < 720) {
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: actions,
+          );
+        }
+
+        return Row(
+          children: [
+            Wrap(spacing: 8, runSpacing: 8, children: secondaryActions),
+            const Spacer(),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: primaryActions,
+            ),
+          ],
+        );
+      },
     );
   }
 }
