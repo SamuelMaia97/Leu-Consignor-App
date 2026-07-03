@@ -745,7 +745,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
       countryName: _model.bankingDetails.bankCountryName,
     );
     if (requiresIbanOnly) {
-      _model.bankingDetails.bankName = '';
       _model.bankingDetails.bicSwift = '';
       _model.bankingDetails.clearingNumber = '';
       _model.bankingDetails.routingNumber = '';
@@ -1475,6 +1474,14 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                         }),
                       ),
                       TextFormField(
+                        key: const ValueKey('editor-field-bank-name'),
+                        initialValue: _model.bankingDetails.bankName,
+                        decoration:
+                            const InputDecoration(labelText: 'Bank name'),
+                        onChanged: (value) =>
+                            _model.bankingDetails.bankName = value,
+                      ),
+                      TextFormField(
                         key: const ValueKey('editor-field-iban'),
                         initialValue: _model.bankingDetails.accountNumber,
                         decoration: InputDecoration(
@@ -1492,14 +1499,6 @@ class _ConsignorEditorScreenState extends State<ConsignorEditorScreen> {
                             _model.bankingDetails.accountNumber = value,
                       ),
                       if (!requiresIbanOnly) ...[
-                        TextFormField(
-                          key: const ValueKey('editor-field-bank-name'),
-                          initialValue: _model.bankingDetails.bankName,
-                          decoration:
-                              const InputDecoration(labelText: 'Bank name'),
-                          onChanged: (value) =>
-                              _model.bankingDetails.bankName = value,
-                        ),
                         TextFormField(
                           key: const ValueKey('editor-field-bic-swift'),
                           initialValue: _model.bankingDetails.bicSwift,

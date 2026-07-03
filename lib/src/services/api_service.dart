@@ -210,7 +210,50 @@ class ApiService {
       preview.customerId,
       json['passportUploads'] ?? json['PassportUploads'],
     );
-    return CustomerLookupResult.fromJson(json, passportUploads: uploads);
+    final hydratedPrefill =
+        await _customerDetailPrefill(preview.customerId, fallbackJson: json);
+    if (hydratedPrefill == null) {
+      return CustomerLookupResult.fromJson(json, passportUploads: uploads);
+    }
+
+    hydratedPrefill.existingCustomerId ??= preview.customerId;
+    if (hydratedPrefill.systemReferenceCustomer <= 0) {
+      hydratedPrefill.systemReferenceCustomer = preview.customerId;
+    }
+    if ((hydratedPrefill.existingCustomerLabel ?? '').trim().isEmpty) {
+      hydratedPrefill.existingCustomerLabel = preview.displayLabel;
+    }
+
+    return CustomerLookupResult(
+      customerId: preview.customerId,
+      displayLabel: preview.displayLabel,
+      emailAddress: preview.emailAddress,
+      prefill: hydratedPrefill,
+      passportUploads: uploads,
+    );
+  }
+
+  Future<Consignor?> _customerDetailPrefill(
+    int customerId, {
+    required Map<String, dynamic> fallbackJson,
+  }) async {
+    if (customerId <= 0) return null;
+
+    final candidates = _reportDetailCandidateIds(fallbackJson);
+    if (!candidates.contains(customerId)) {
+      candidates.add(customerId);
+    }
+
+    for (final id in candidates) {
+      try {
+        final detail = await _fetchConsignorDetailUnchecked(id);
+        if (detail.consignor != null) return detail.consignor;
+      } on DioException catch (e) {
+        if (_mustRethrowDetailError(e)) rethrow;
+      }
+    }
+
+    return null;
   }
 
   Future<List<ContractUpload>> _uploadsFromJson(
@@ -306,7 +349,7 @@ class ApiService {
           missingReportFields.add(fieldIssue);
         }
 
-        final details = await _remoteDetailFromReportJson(
+        final details = await _detailFromBestAvailableSource(
           json: item,
           fallbackConsignorId: _reportConsignorId(item),
         );
@@ -349,6 +392,67 @@ class ApiService {
         '${_friendlyDioError(e)}',
       );
     }
+  }
+
+  Future<RemoteConsignorDetail> _detailFromBestAvailableSource({
+    required Map<String, dynamic> json,
+    required int? fallbackConsignorId,
+  }) async {
+    final detail = await _fetchDetailForReportRow(json);
+    if (detail != null) return detail;
+
+    return _remoteDetailFromReportJson(
+      json: json,
+      fallbackConsignorId: fallbackConsignorId,
+    );
+  }
+
+  Future<RemoteConsignorDetail?> _fetchDetailForReportRow(
+    Map<String, dynamic> row,
+  ) async {
+    for (final id in _reportDetailCandidateIds(row)) {
+      try {
+        final detail = await _fetchConsignorDetailUnchecked(id);
+        if (detail.consignor != null || detail.contracts.isNotEmpty) {
+          return detail;
+        }
+      } on DioException catch (e) {
+        if (_mustRethrowDetailError(e)) rethrow;
+      }
+    }
+
+    return null;
+  }
+
+  bool _mustRethrowDetailError(DioException error) {
+    final status = error.response?.statusCode;
+    return status == 401 || status == 403;
+  }
+
+  List<int> _reportDetailCandidateIds(Map<String, dynamic> row) {
+    final candidates = <int>[];
+
+    void add(Object? value) {
+      final id = _toInt(value);
+      if (id == null || id <= 0 || candidates.contains(id)) return;
+      candidates.add(id);
+    }
+
+    add(row['systemReferenceConsignor']);
+    add(row['SystemReferenceConsignor']);
+    add(row['consignorId']);
+    add(row['ConsignorId']);
+    add(row['systemReferenceCustomer']);
+    add(row['SystemReferenceCustomer']);
+    add(row['abacusSubjectId']);
+    add(row['AbacusSubjectId']);
+    add(row['customerId']);
+    add(row['CustomerId']);
+    add(row['id']);
+    add(row['Id']);
+    add(_reportConsignorId(row));
+
+    return candidates;
   }
 
   Future<RemoteContractFetchResult> fetchAllContracts({
@@ -683,6 +787,43 @@ class ApiService {
     }
   }
 
+  Future<void> sendConsignmentAgreementEmail({
+    required Consignor consignor,
+    required ContractRecord contract,
+    required bool provisional,
+  }) async {
+    _ensureConfigured();
+
+    final attachment = await _contractAgreementAttachment(contract);
+    if (attachment == null) {
+      throw Exception('No contract PDF is available to email.');
+    }
+
+    final backendConsignorId = consignor.systemReferenceConsignor > 0
+        ? consignor.systemReferenceConsignor
+        : int.tryParse(consignor.id) ?? int.tryParse(contract.consignorId) ?? 0;
+    final customerId = consignor.systemReferenceCustomer > 0
+        ? consignor.systemReferenceCustomer
+        : consignor.existingCustomerId ?? consignor.abacusSubjectId ?? 0;
+
+    try {
+      await _dio.post(
+        '/api/consignors-app/contracts/email-consignment-agreement',
+        data: {
+          'consignorId': backendConsignorId,
+          'customerId': customerId,
+          'auctionId': contract.auctionId,
+          'provisional': provisional,
+          'pdfFileName': attachment.fileName,
+          'pdfBase64': attachment.base64Content,
+          'consignor': consignor.toJson(),
+        },
+      );
+    } on DioException catch (e) {
+      throw Exception(_friendlyDioError(e));
+    }
+  }
+
   Future<ContractRecord> createContract(
     int consignorId,
     int auctionId,
@@ -845,11 +986,12 @@ class ApiService {
 
     if (!hasPendingUploadWork &&
         syncEvent != AbacusContractSyncEvent.manualSync) {
-      final refreshed = await syncContract(
+      var refreshed = await syncContract(
         consignorId,
         auctionId,
         syncEvent: syncEvent,
       );
+      refreshed = _preserveLocalAuctionSelection(refreshed, record);
       refreshed.markSynced(remoteModifiedUtc: refreshed.lastModifiedUtc);
       return refreshed;
     }
@@ -1006,6 +1148,8 @@ class ApiService {
       settledRecord = workingRecord.copyWith(uploads: settledUploads);
     }
 
+    settledRecord = _preserveLocalAuctionSelection(settledRecord, record);
+
     settledRecord = settledRecord.copyWith(
       syncStatus: RecordSyncStatus.synced,
       syncErrorMessage: null,
@@ -1019,6 +1163,17 @@ class ApiService {
     );
 
     return settledRecord;
+  }
+
+  ContractRecord _preserveLocalAuctionSelection(
+    ContractRecord remote,
+    ContractRecord local,
+  ) {
+    final remoteHasAuction = remote.auctionIds.isNotEmpty;
+    return remote.copyWith(
+      auctionIds: remoteHasAuction ? null : local.auctionIds,
+      auctionDisplayNames: remoteHasAuction ? null : local.auctionDisplayNames,
+    );
   }
 
   Future<ContractRecord> _contractFromGroupJson({
@@ -1278,6 +1433,67 @@ class ApiService {
     }
 
     return payload;
+  }
+
+  Future<_EmailAttachment?> _contractAgreementAttachment(
+    ContractRecord contract,
+  ) async {
+    final uploads = contract.uploads
+        .where((upload) =>
+            !upload.isDeleted && upload.fileType == UploadType.agreement)
+        .toList(growable: false);
+
+    final preferred = uploads.where((upload) {
+      return upload.isGeneratedContractPdf ||
+          upload.fileName.toUpperCase().contains('COC-') ||
+          upload.path.toUpperCase().contains('COC-');
+    }).toList(growable: false);
+
+    final candidates = <ContractUpload>[
+      ...preferred,
+      ...uploads.where((upload) => !preferred.contains(upload)),
+    ];
+
+    for (final upload in candidates) {
+      final base64Content = upload.fileData.trim().isNotEmpty
+          ? upload.fileData.trim()
+          : await _readFileAsBase64(upload.path);
+      if (base64Content.trim().isEmpty) continue;
+
+      final fileName = upload.fileName.trim().isNotEmpty
+          ? upload.fileName.trim()
+          : _fileNameFromPath(upload.path) ?? contract.pdfName;
+      return _EmailAttachment(
+        fileName: _ensurePdfFileName(fileName),
+        base64Content: base64Content,
+      );
+    }
+
+    final pdfPath = contract.pdfPath.trim();
+    if (pdfPath.isNotEmpty) {
+      final base64Content = await _readFileAsBase64(pdfPath);
+      if (base64Content.trim().isNotEmpty) {
+        return _EmailAttachment(
+          fileName: _ensurePdfFileName(
+            _fileNameFromPath(pdfPath) ?? contract.pdfName,
+          ),
+          base64Content: base64Content,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  String _ensurePdfFileName(String value) {
+    final trimmed = value.trim().isEmpty ? 'COC.pdf' : value.trim();
+    return trimmed.toLowerCase().endsWith('.pdf') ? trimmed : '$trimmed.pdf';
+  }
+
+  String? _fileNameFromPath(String path) {
+    final trimmed = path.trim();
+    if (trimmed.isEmpty) return null;
+    return trimmed.split(RegExp(r'[\\/]')).last;
   }
 
   Future<String?> _persistRemoteFile({
@@ -1784,3 +2000,13 @@ class PushConsignorResult {
 
 int? _toIntAny(Object? value) =>
     value is int ? value : int.tryParse(value?.toString() ?? '');
+
+class _EmailAttachment {
+  const _EmailAttachment({
+    required this.fileName,
+    required this.base64Content,
+  });
+
+  final String fileName;
+  final String base64Content;
+}

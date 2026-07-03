@@ -112,6 +112,26 @@ void main() {
       expect(payload['CountryOfConsignment'], 'France');
     });
 
+    test('localizes country names and web auction text for German contracts',
+        () async {
+      final consignor = _consignor(ConsignorType.naturalPerson)
+        ..correspondence = 'de';
+      final record = ContractRecord.empty('100', auctionId: 1).copyWith(
+        auctionDisplayName: 'Web Auction 12',
+      );
+
+      final payload = await builder.build(
+        consignor: consignor,
+        record: record,
+      );
+
+      expect(payload['auction_name'], 'Webauktion 12');
+      expect(payload['consignor_nationality'], 'Schweiz');
+      expect(payload['consignor_address_2'], '8400 Winterthur, Schweiz');
+      expect(payload['consignmentCountry'], 'Schweiz');
+      expect(payload['originCountry'], 'Schweiz');
+    });
+
     test('includes selected academic title in contract person names', () async {
       final consignor = _consignor(ConsignorType.naturalPerson);
       consignor.consignorInfo.title = 1;

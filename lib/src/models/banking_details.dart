@@ -180,7 +180,7 @@ class BankingDetails {
           '';
     }
     if (value is String && _looksLikeCountryCode(value)) {
-      return value.trim().toUpperCase();
+      return _normalizeCountryCode(value);
     }
     return '';
   }
@@ -189,7 +189,9 @@ class BankingDetails {
     if (value is Map) {
       return (value['countryName'] ?? value['CountryName'])?.toString() ?? '';
     }
-    if (value is String && !_looksLikeCountryCode(value)) {
+    if (value is String &&
+        !_looksLikeCountryCode(value) &&
+        !_looksLikeNumericIdentifier(value)) {
       return value.trim();
     }
     return '';
@@ -253,6 +255,14 @@ class BankingDetails {
     return _iso2ToIso3(normalized.substring(0, 2));
   }
 
+  static String _normalizeCountryCode(String value) {
+    final normalized = value.trim().toUpperCase();
+    if (normalized.length == 2) {
+      return _iso2ToIso3(normalized);
+    }
+    return normalized;
+  }
+
   static String _iso2ToIso3(String iso2) {
     switch (iso2.trim().toUpperCase()) {
       case 'AD':
@@ -311,5 +321,9 @@ class BankingDetails {
 
   static bool _looksLikeCountryCode(String value) {
     return RegExp(r'^[A-Za-z]{2,3}$').hasMatch(value.trim());
+  }
+
+  static bool _looksLikeNumericIdentifier(String value) {
+    return RegExp(r'^\d+$').hasMatch(value.trim());
   }
 }

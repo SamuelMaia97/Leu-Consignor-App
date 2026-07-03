@@ -127,6 +127,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   List<_WizardStep> get _steps => _isContractOnly
       ? [
           _WizardStep.existingCustomer,
+          _WizardStep.details,
           _WizardStep.auctions,
           _WizardStep.representative,
           _WizardStep.pictures,
@@ -201,6 +202,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         _draft.selectedAuctions.isNotEmpty ||
         _draft.uploads.isNotEmpty ||
         _representativeDraft.hasMeaningfulInput;
+  }
+
+  bool get _showHeaderSaveDraft {
+    return _currentStep == _WizardStep.fullReview ||
+        _currentStep == _WizardStep.signatures;
   }
 
   @override
@@ -331,7 +337,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       _step = reviewStep >= 0 ? reviewStep : _steps.length - 1;
     } else if (consignor != null) {
       final startStep = _isContractOnly
-          ? _steps.indexOf(_WizardStep.auctions)
+          ? _steps.indexOf(_WizardStep.details)
           : _steps.indexOf(_WizardStep.details);
       _step = startStep >= 0 ? startStep : 0;
     }
@@ -559,6 +565,19 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _goToStep(_steps.indexOf(_WizardStep.consignorType));
   }
 
+  void _continueAfterExistingSelection() {
+    final hasSelection = _draft.usesExistingCustomer ||
+        _draft.existingCustomerId != null ||
+        (_draft.existingCustomerLabel ?? '').trim().isNotEmpty;
+    if (!hasSelection) return;
+
+    _goToStep(
+      _steps.indexOf(
+        _isContractOnly ? _WizardStep.details : _WizardStep.consignorType,
+      ),
+    );
+  }
+
   Future<void> _selectExisting(CustomerLookupResult result) async {
     setState(() {
       _draft.applyPrefill(result.prefill);
@@ -576,7 +595,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     ));
 
     if (_isContractOnly) {
-      _goToStep(_steps.indexOf(_WizardStep.auctions));
+      _goToStep(_steps.indexOf(_WizardStep.details));
       return;
     }
 
@@ -1632,6 +1651,46 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     return saved;
   }
 
+  Future<void> _saveDraftProgress() async {
+    final appState = context.read<AppState>();
+    final consignor = await _saveConsignorLocal(draft: true);
+    if (_businessStepNumber <= 4) {
+      await _saveWizardResumeState(consignorId: consignor.id);
+      return;
+    }
+
+    final contract = _buildContract(consignor.id).copyWith(
+      syncStatus: RecordSyncStatus.draft,
+      lastModifiedUtc: DateTime.now().toUtc(),
+    );
+    _activeContractId = contract.id;
+    await appState.saveContract(contract);
+    await _saveWizardResumeState(
+      consignorId: consignor.id,
+      contractId: contract.id,
+    );
+  }
+
+  Future<void> _saveCurrentProgressAsDraft() async {
+    if (_saving) return;
+
+    setState(() => _saving = true);
+    try {
+      await _saveDraftProgress();
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Draft saved.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saving draft failed: $e')),
+      );
+    }
+  }
+
   Future<Consignor> _saveAndTrySyncConsignor() async {
     final state = context.read<AppState>();
     var saved = await state.saveConsignor(_draft.toConsignor());
@@ -1941,6 +2000,33 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     return saved;
   }
 
+  Future<void> _sendConsignmentAgreementEmail({
+    required Consignor consignor,
+    required ContractRecord contract,
+    required bool provisional,
+  }) async {
+    final state = context.read<AppState>();
+    if (!state.hasValidToken) return;
+
+    final apiService = ApiService(state.settings, state.token);
+    await apiService.sendConsignmentAgreementEmail(
+      consignor: consignor,
+      contract: contract,
+      provisional: provisional,
+    );
+
+    await state.addActivity(
+      ActivityEventType.syncSucceeded,
+      provisional
+          ? 'Provisional contract email sent'
+          : 'Consignment agreement email sent',
+      description: consignor.emailAddress,
+      relatedConsignorId: consignor.id,
+      relatedContractId: contract.id,
+      notify: false,
+    );
+  }
+
   Future<void> _saveProvisionalContract() async {
     if (_saving || _provisionalContractSubmitted) return;
     if (!await _ensureProfileReadyForContract()) return;
@@ -1992,6 +2078,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         savedToAbacus = synced.synced;
       }
 
+      if (savedToAbacus) {
+        await _sendConsignmentAgreementEmail(
+          consignor: savedConsignor,
+          contract: contract,
+          provisional: true,
+        );
+      }
+
       _provisionalContractSubmitted = true;
       await _saveWizardResumeState(
         consignorId: savedConsignor.id,
@@ -2008,7 +2102,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         SnackBar(
           content: Text(
             savedToAbacus
-                ? 'Provisional Consignor Contract saved to Abacus.'
+                ? 'Provisional Consignor Contract saved to Abacus and emailed.'
                 : 'Provisional Consignor Contract saved locally and pending sync.',
           ),
         ),
@@ -2058,7 +2152,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
         );
       }
 
-      final contract = _buildContract(savedConsignor.id).copyWith(
+      var contract = _buildContract(savedConsignor.id).copyWith(
         syncStatus: RecordSyncStatus.pendingSync,
         lastModifiedUtc: DateTime.now().toUtc(),
       );
@@ -2076,6 +2170,13 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           throw Exception(
               error ?? state.lastMessage ?? 'Contract sync failed.');
         }
+        contract = synced;
+
+        await _sendConsignmentAgreementEmail(
+          consignor: savedConsignor,
+          contract: contract,
+          provisional: false,
+        );
       }
 
       await _clearWizardResumeState(
@@ -2097,8 +2198,6 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   Future<bool> _handlePendingCreationBeforeLeave() async {
     if (!_hasCreationProgress) return true;
-
-    final appState = context.read<AppState>();
 
     final action = await showDialog<_CreationExitAction>(
       context: context,
@@ -2134,18 +2233,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       case _CreationExitAction.closeWithoutSaving:
         return true;
       case _CreationExitAction.addToDraft:
-        final consignor = await _saveConsignorLocal(draft: true);
-        if (_businessStepNumber <= 4) {
-          await _saveWizardResumeState(consignorId: consignor.id);
-        } else {
-          final contract = _buildContract(consignor.id);
-          _activeContractId = contract.id;
-          await appState.saveContract(contract);
-          await _saveWizardResumeState(
-            consignorId: consignor.id,
-            contractId: contract.id,
-          );
-        }
+        await _saveDraftProgress();
         return true;
       case _CreationExitAction.cancel:
       case null:
@@ -2182,6 +2270,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
+                if (_showHeaderSaveDraft) ...[
+                  OutlinedButton.icon(
+                    onPressed: _saving ? null : _saveCurrentProgressAsDraft,
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('Save as draft'),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 OutlinedButton.icon(
                   onPressed: _saving ? null : _close,
                   icon: const Icon(Icons.close_rounded),
@@ -2215,10 +2311,13 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           contractOnly: _isContractOnly,
           searching: _searching,
           showSearch: _draft.showExistingSearch,
+          selectedCustomerId: _draft.existingCustomerId,
+          selectedCustomerLabel: _draft.existingCustomerLabel,
           matches: _matches,
           onFindExisting: _showExistingSearch,
           onSearchChanged: _queueSearch,
           onExistingSelected: _selectExisting,
+          onContinueWithSelected: _continueAfterExistingSelection,
           onNewConsignor: _selectNewConsignor,
         ),
       _WizardStep.consignorType => _ConsignorTypeStep(
@@ -3163,7 +3262,7 @@ class _WizardDraft {
       countryIso3: bankCountryIso3,
       countryName: bankCountryName,
     );
-    consignor.bankingDetails.bankName = requiresIbanOnly ? '' : bankName.trim();
+    consignor.bankingDetails.bankName = bankName.trim();
     consignor.bankingDetails.accountNumber = iban.trim();
     consignor.bankingDetails.isIban = _looksLikeIban(iban);
     consignor.bankingDetails.bicSwift = requiresIbanOnly ? '' : bicSwift.trim();
@@ -3385,24 +3484,34 @@ class _ExistingCustomerStep extends StatelessWidget {
     required this.contractOnly,
     required this.searching,
     required this.showSearch,
+    required this.selectedCustomerId,
+    required this.selectedCustomerLabel,
     required this.matches,
     required this.onFindExisting,
     required this.onSearchChanged,
     required this.onExistingSelected,
+    required this.onContinueWithSelected,
     required this.onNewConsignor,
   });
 
   final bool contractOnly;
   final bool searching;
   final bool showSearch;
+  final int? selectedCustomerId;
+  final String? selectedCustomerLabel;
   final List<CustomerLookupResult> matches;
   final VoidCallback onFindExisting;
   final ValueChanged<String> onSearchChanged;
   final Future<void> Function(CustomerLookupResult) onExistingSelected;
+  final VoidCallback onContinueWithSelected;
   final VoidCallback onNewConsignor;
 
   @override
   Widget build(BuildContext context) {
+    final selectedLabel = selectedCustomerLabel?.trim() ?? '';
+    final hasSelectedCustomer =
+        selectedCustomerId != null || selectedLabel.isNotEmpty;
+
     return ListView(
       children: [
         Text(
@@ -3412,6 +3521,28 @@ class _ExistingCustomerStep extends StatelessWidget {
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
+        if (hasSelectedCustomer) ...[
+          SectionCard(
+            title: contractOnly ? 'Selected consignor' : 'Selected customer',
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.person_outline_rounded),
+              title: Text(
+                selectedLabel.isEmpty
+                    ? 'Customer ${selectedCustomerId ?? ''}'.trim()
+                    : selectedLabel,
+              ),
+              subtitle: selectedCustomerId == null
+                  ? null
+                  : Text('ID $selectedCustomerId'),
+              trailing: FilledButton(
+                onPressed: onContinueWithSelected,
+                child: const Text('Continue'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
         ...[
           const SizedBox(height: 12),
           TextField(
@@ -4146,6 +4277,14 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   },
                 ),
                 TextFormField(
+                  key: ValueKey(
+                    '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
+                  ),
+                  initialValue: draft.bankName,
+                  decoration: const InputDecoration(labelText: 'Bank name'),
+                  onChanged: (value) => draft.bankName = value,
+                ),
+                TextFormField(
                   key: ValueKey('$_keyPrefix-field-iban'),
                   initialValue: draft.iban,
                   decoration: InputDecoration(
@@ -4171,14 +4310,6 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   },
                 ),
                 if (!requiresIbanOnly) ...[
-                  TextFormField(
-                    key: ValueKey(
-                      '$_keyPrefix-field-bank-name-${draft.bankName.trim()}',
-                    ),
-                    initialValue: draft.bankName,
-                    decoration: const InputDecoration(labelText: 'Bank name'),
-                    onChanged: (value) => draft.bankName = value,
-                  ),
                   TextFormField(
                     key: ValueKey(
                       '$_keyPrefix-field-bic-swift-${draft.bicSwift.trim()}',
@@ -5130,8 +5261,8 @@ String _localizedAuctionDisplayName(String value, String? correspondence) {
   if (isGerman) {
     return trimmed
         .replaceAll(
-          RegExp(r'\bWeb\s+Auction\b', caseSensitive: false),
-          'Web Auktion',
+          RegExp(r'\bWeb\s+(?:Auction|Auktion)\b', caseSensitive: false),
+          'Webauktion',
         )
         .replaceAll(
           RegExp(r'\bAuction\b', caseSensitive: false),
@@ -5141,7 +5272,7 @@ String _localizedAuctionDisplayName(String value, String? correspondence) {
 
   return trimmed
       .replaceAll(
-        RegExp(r'\bWeb\s+Auktion\b', caseSensitive: false),
+        RegExp(r'\bWeb\s*Auktion\b', caseSensitive: false),
         'Web Auction',
       )
       .replaceAll(

@@ -344,13 +344,14 @@ class Consignor {
       bankingDetails: BankingDetails.fromJson(bankingJson),
       paymentOption: PaymentOptionX.fromAny(
           json['paymentOption'] ?? json['PaymentOption']),
-      passportValidUntil: DateTime.tryParse(
-        (json['passportValidUntil'] ??
-                    json['PassportValidUntil'] ??
-                    json['passportDate'] ??
-                    json['PassportDate'])
-                ?.toString() ??
-            '',
+      passportValidUntil: _parseDate(
+        _firstNonEmptyValue(json, const [
+          'passportValidUntil',
+          'PassportValidUntil',
+          'passportDate',
+          'PassportDate',
+          'UserField16',
+        ]),
       ),
       checkedByLeu:
           (json['checkedByLeu'] ?? json['CheckedByLeu']) as bool? ?? true,
@@ -438,7 +439,8 @@ class Consignor {
         'bankingDetails': bankingDetails.toJson(),
         'bankingDetailsDto': bankingDetails.toJson(),
         'paymentOption': paymentOption.apiName,
-        'passportValidUntil': passportValidUntil?.toUtc().toIso8601String(),
+        'passportValidUntil': _formatDateOnly(passportValidUntil),
+        'UserField16': _formatDateOnly(passportValidUntil),
         'checkedByLeu': checkedByLeu,
         'ancientCoinsSubscribed': ancientCoinsSubscribed,
         'worldCoinsSubscribed': worldCoinsSubscribed,
@@ -554,6 +556,44 @@ class Consignor {
     if (text == 'true' || text == '1' || text == 'yes') return true;
     if (text == 'false' || text == '0' || text == 'no') return false;
     return null;
+  }
+
+  static DateTime? _parseDate(Object? value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) return null;
+
+    final isoDateOnly =
+        RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$').firstMatch(text);
+    if (isoDateOnly != null) {
+      final year = int.tryParse(isoDateOnly.group(1)!);
+      final month = int.tryParse(isoDateOnly.group(2)!);
+      final day = int.tryParse(isoDateOnly.group(3)!);
+      if (day == null || month == null || year == null) return null;
+      return DateTime.utc(year, month, day);
+    }
+
+    final parsed = DateTime.tryParse(text);
+    if (parsed != null) return parsed;
+
+    final european =
+        RegExp(r'^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$').firstMatch(text);
+    if (european == null) return null;
+
+    final day = int.tryParse(european.group(1)!);
+    final month = int.tryParse(european.group(2)!);
+    final year = int.tryParse(european.group(3)!);
+    if (day == null || month == null || year == null) return null;
+
+    return DateTime.utc(year, month, day);
+  }
+
+  static String? _formatDateOnly(DateTime? value) {
+    if (value == null) return null;
+
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
   }
 
   static Map<String, dynamic>? _firstMap(
