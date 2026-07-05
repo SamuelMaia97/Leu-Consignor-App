@@ -293,7 +293,7 @@ class _ContractsOverviewScreenState extends State<ContractsOverviewScreen> {
                                     prefixIcon: Icon(Icons.search_rounded),
                                     labelText: 'Search contracts',
                                     hintText:
-                                        'Try COC-26-1, representative, auction, or file name',
+                                        'Try COA-26-1, representative, auction, or file name',
                                   ),
                                 ),
                               ),

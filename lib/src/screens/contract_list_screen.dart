@@ -376,7 +376,7 @@ class _ContractListScreenState extends State<ContractListScreen> {
                               prefixIcon: Icon(Icons.search_rounded),
                               labelText: 'Search contracts',
                               hintText:
-                                  'Try COC-26-1, Abacus ID, email, IBAN ending, or representative',
+                                  'Try COA-26-1, Abacus ID, email, IBAN ending, or representative',
                             ),
                           ),
                           const SizedBox(height: 18),
@@ -1127,7 +1127,7 @@ class _ContractListRow extends StatelessWidget {
 
   static String _contractNumber(ContractRecord contract) {
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     final candidates = <String>[
       contract.pdfName,
       contract.id,

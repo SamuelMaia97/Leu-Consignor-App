@@ -42,7 +42,7 @@ Future<bool> showSyncPreviewDialog({
               _PreviewLine(
                 icon: Icons.description_outlined,
                 label:
-                    '${summary.knownContractCount} known COC contract${summary.knownContractCount == 1 ? '' : 's'} in the local workspace',
+                    '${summary.knownContractCount} known COA contract${summary.knownContractCount == 1 ? '' : 's'} in the local workspace',
               ),
               _PreviewLine(
                 icon: Icons.cloud_upload_outlined,

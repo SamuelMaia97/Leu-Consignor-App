@@ -141,8 +141,31 @@ void main() {
         record: ContractRecord.empty('100', auctionId: 1),
       );
 
-      expect(payload['consignor_full_name'], 'Dr. Muster Anna');
-      expect(payload['consignor_signature_name'], 'Dr. Muster Anna');
+      expect(payload['consignor_full_name'], 'Dr. Anna Muster');
+      expect(payload['consignor_signature_name'], 'Dr. Anna Muster');
+    });
+
+    test('uses authorized representative name for signer placeholders',
+        () async {
+      final representative = _consignor(ConsignorType.naturalPerson)
+        ..id = '200';
+      representative.consignorInfo
+        ..firstName = 'Marco'
+        ..lastName = 'Signer';
+
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        authorizedRepresentative: representative,
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['consignor_full_name'], 'Anna Muster');
+      expect(payload['representative_name'], 'Marco Signer');
+      expect(payload['representativeName'], 'Marco Signer');
+      expect(payload['ownerFullName'], 'Marco Signer');
+      expect(payload['consignor_signature_name'], 'Marco Signer');
+      expect(payload['annex_a_signature_name'], 'Marco Signer');
+      expect(payload['annex_c_signature_name'], 'Marco Signer');
     });
 
     test('formats visible template dates day first', () async {
@@ -157,18 +180,34 @@ void main() {
       expect(payload['auction_date'], '15-09-2026');
     });
 
+    test('sends effective auction date to backend when no explicit date exists',
+        () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          signedAt: DateTime.utc(2026, 9, 15),
+        ),
+      );
+
+      final record = payload['record'] as Map<String, dynamic>;
+
+      expect(payload['auctionDate'], '2026-09-15T00:00:00.000Z');
+      expect(record['auctionDate'], '2026-09-15T00:00:00.000Z');
+      expect(payload['auction_date'], '15-09-2026');
+    });
+
     test('emits PDF name, title, page numbers, and provisional flags',
         () async {
       final payload = await builder.build(
         consignor: _consignor(ConsignorType.naturalPerson),
         record: ContractRecord.empty('100', auctionId: 1).copyWith(
-          pdfName: 'COC-100_1-202606091435.pdf',
+          pdfName: 'COA-100_1-202606091435.pdf',
         ),
       );
 
-      expect(payload['pdfName'], 'COC-100_1-202606091435.pdf');
-      expect(payload['pdfTitle'], 'COC-100_1-202606091435');
-      expect(payload['documentTitle'], 'COC-100_1-202606091435');
+      expect(payload['pdfName'], 'COA-100_1-202606091435.pdf');
+      expect(payload['pdfTitle'], 'COA-100_1-202606091435');
+      expect(payload['documentTitle'], 'COA-100_1-202606091435');
       expect(payload['includePageNumbers'], isTrue);
       expect(payload['isProvisional'], isTrue);
       expect(payload['watermarkText'], 'PROVISIONAL');
@@ -177,16 +216,16 @@ void main() {
       expect(payload['watermark'], {'text': 'PROVISIONAL'});
       expect(payload['pageWatermark'], {'text': 'PROVISIONAL'});
       expect(payload['place_of_signature'], 'Winterthur');
-      expect(payload['consignor_place_date'], '');
-      expect(payload['contract_place_date'], '');
+      expect(payload['consignor_place_date'], 'Winterthur');
+      expect(payload['contract_place_date'], 'Winterthur');
       expect(payload['contractPlaceDate'], 'Winterthur');
       expect(payload['leu_place_date'], 'Winterthur');
       expect(payload['leuPlaceDate'], 'Winterthur');
-      expect(payload['annex_a_place_date'], '');
+      expect(payload['annex_a_place_date'], 'Winterthur');
       expect(payload['annexAPlaceDate'], 'Winterthur');
-      expect(payload['annex_place_date'], '');
+      expect(payload['annex_place_date'], 'Winterthur');
       expect(payload['annexPlaceDate'], 'Winterthur');
-      expect(payload['annex_c_place_date'], '');
+      expect(payload['annex_c_place_date'], 'Winterthur');
       expect(payload['annexCPlaceDate'], 'Winterthur');
     });
 
@@ -208,11 +247,39 @@ void main() {
       );
 
       expect(payload['place_of_signature'], 'Zurich');
-      expect(payload['consignor_place_date'], ', 09-06-2026');
+      expect(payload['consignor_place_date'], 'Zurich, 09-06-2026');
       expect(payload['contractPlaceDate'], 'Zurich, 09-06-2026');
       expect(payload['leu_place_date'], 'Winterthur, 09-06-2026');
-      expect(payload['annex_a_place_date'], ', 09-06-2026');
+      expect(payload['annex_a_place_date'], 'Zurich, 09-06-2026');
       expect(payload['annexAPlaceDate'], 'Zurich, 09-06-2026');
+      expect(payload['annex_c_place_date'], 'Zurich, 09-06-2026');
+      expect(payload['annexCPlaceDate'], 'Zurich, 09-06-2026');
+    });
+
+    test('emits selected Leu representative function for templates', () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1),
+        signatureData: ContractSignatureData(
+          leuRepresentativeName: 'Lars Rutten',
+          leuRepresentativeFunction: 'DCEO',
+          leuRepresentativeSignatureAsset: '',
+          contractSignaturePng: Uint8List.fromList([1]),
+          annexASignaturePng: Uint8List.fromList([2]),
+          annexCSignaturePng: Uint8List.fromList([3]),
+        ),
+      );
+
+      final signatureData = payload['signatureData'] as Map<String, dynamic>;
+
+      expect(payload['leuRepresentativeName'], 'Lars Rutten');
+      expect(payload['leuRepresentativeFunction'], 'DCEO');
+      expect(payload['leu_representative_function'], 'DCEO');
+      expect(
+        payload['leu_representative_name_function'],
+        'Leu Numismatik AG / Lars Rutten, DCEO',
+      );
+      expect(signatureData['leuRepresentativeFunction'], 'DCEO');
     });
 
     test('emits desired payment method and country-specific address lines',
@@ -281,7 +348,7 @@ void main() {
       expect(attachments.single, containsPair('kind', 'CommercialRegister'));
     });
 
-    test('excludes validation report files from COC render attachments',
+    test('excludes validation report files from COA render attachments',
         () async {
       final tempDir = await Directory.systemTemp.createTemp('penta_payload_');
       addTearDown(() async {

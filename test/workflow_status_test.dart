@@ -10,18 +10,18 @@ void main() {
       final contracts = [
         ContractRecord.empty('100', auctionId: 1).copyWith(
           id: 'local-a',
-          pdfName: 'COC-26-1.pdf',
+          pdfName: 'COA-26-1.pdf',
         ),
         ContractRecord.empty('101', auctionId: 2).copyWith(
           id: 'local-b',
-          pdfName: 'COC-26-1.pdf',
+          pdfName: 'COA-26-1.pdf',
         ),
       ];
 
       final conflicts = WorkflowStatus.findContractConflicts(contracts);
 
       expect(conflicts, hasLength(1));
-      expect(conflicts.single.contractNumber, 'COC-26-1');
+      expect(conflicts.single.contractNumber, 'COA-26-1');
       expect(conflicts.single.contracts, hasLength(2));
     });
 
@@ -65,12 +65,12 @@ void main() {
       final consignor = Consignor.empty();
       final contract =
           ContractRecord.empty(consignor.id, auctionId: 1).copyWith(
-        pdfName: 'COC-26-2.pdf',
+        pdfName: 'COA-26-2.pdf',
         syncStatus: RecordSyncStatus.pendingSync,
         uploads: [
           ContractUpload(
             localId: 'product-1',
-            fileName: 'COC-26-2-Product-1.png',
+            fileName: 'COA-26-2-Product-1.png',
             fileType: UploadType.product,
           ),
         ],
@@ -91,11 +91,11 @@ void main() {
       final consignor = Consignor.empty();
       final contract =
           ContractRecord.empty(consignor.id, auctionId: 1).copyWith(
-        pdfName: 'COC-26-3.pdf',
+        pdfName: 'COA-26-3.pdf',
         uploads: [
           ContractUpload(
             localId: 'product-1',
-            fileName: 'COC-26-3-Product-1.png',
+            fileName: 'COA-26-3-Product-1.png',
             fileType: UploadType.product,
           ),
         ],

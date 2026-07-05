@@ -324,7 +324,7 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
                                 prefixIcon: Icon(Icons.search_rounded),
                                 labelText: 'Search consignors',
                                 hintText:
-                                    'Try an ID, COC number, email, IBAN ending, or representative',
+                                    'Try an ID, COA number, email, IBAN ending, or representative',
                               ),
                             ),
                           ),
@@ -627,7 +627,7 @@ class _ConsignorListSummary {
 
   static String _contractNumber(ContractRecord contract) {
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     final candidates = <String>[
       contract.pdfName,
       contract.id,

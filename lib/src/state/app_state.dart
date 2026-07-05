@@ -844,7 +844,7 @@ class AppState extends ChangeNotifier {
         _setSyncProgress(
           workCurrent,
           workTotal,
-          'No COC contracts found in Abacus.',
+          'No COA contracts found in Abacus.',
         );
       } else {
         _setSyncProgress(
@@ -1192,7 +1192,7 @@ class AppState extends ChangeNotifier {
 
   String? _contractNumberForMerge(ContractRecord contract) {
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     final candidates = <String>[
       contract.pdfName,
       contract.id,

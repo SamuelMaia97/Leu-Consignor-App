@@ -230,7 +230,7 @@ class _SyncHealthScreenState extends State<SyncHealthScreen> {
                         ),
                         StatusBadge(
                           label:
-                              '${preview.knownContractCount} known COC contract${preview.knownContractCount == 1 ? '' : 's'}',
+                              '${preview.knownContractCount} known COA contract${preview.knownContractCount == 1 ? '' : 's'}',
                           tone: StatusBadgeTone.info,
                           icon: Icons.find_in_page_outlined,
                         ),

@@ -241,7 +241,7 @@ class AbacusFileSyncMetadata {
 
   static String _baseContractNumber(String value) {
     final trimmed = value.trim();
-    if (trimmed.toUpperCase().startsWith('PROV-COC-')) {
+    if (trimmed.toUpperCase().startsWith('PROV-COA-')) {
       return trimmed.substring(5);
     }
     return trimmed;

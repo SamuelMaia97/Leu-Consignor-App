@@ -380,7 +380,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
 
     final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
     final next = _nextContractSequenceForYear(year);
-    return 'COC-$year-$next';
+    return 'COA-$year-$next';
   }
 
   String? _existingContractNumber(ContractRecord record) {
@@ -390,7 +390,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
       ...record.uploads.map((upload) => upload.fileName),
     ];
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     for (final candidate in candidates) {
       final match = pattern.firstMatch(candidate);
       if (match != null) return match.group(0)!.toUpperCase();
@@ -399,7 +399,7 @@ class _ContractEditorScreenState extends State<ContractEditorScreen> {
   }
 
   int _nextContractSequenceForYear(String year) {
-    final pattern = RegExp('\\bCOC-$year-(\\d+)\\b', caseSensitive: false);
+    final pattern = RegExp('\\bCOA-$year-(\\d+)\\b', caseSensitive: false);
     var maxSequence = 0;
     for (final contract in context.read<AppState>().contracts) {
       final candidates = <String>[

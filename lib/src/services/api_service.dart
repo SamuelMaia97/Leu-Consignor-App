@@ -1318,7 +1318,7 @@ class ApiService {
 
     if (record.systemReferenceContract > 0) {
       final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
-      return 'COC-$year-${record.systemReferenceContract}';
+      return 'COA-$year-${record.systemReferenceContract}';
     }
 
     return record.id;
@@ -1326,7 +1326,7 @@ class ApiService {
 
   String? _extractContractNumber(Iterable<String> candidates) {
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     for (final candidate in candidates) {
       final match = pattern.firstMatch(candidate);
       if (match != null) return match.group(0)!.toUpperCase();
@@ -1396,7 +1396,7 @@ class ApiService {
 
   String _baseContractNumber(String value) {
     final trimmed = value.trim();
-    if (trimmed.toUpperCase().startsWith('PROV-COC-')) {
+    if (trimmed.toUpperCase().startsWith('PROV-COA-')) {
       return trimmed.substring(5);
     }
     return trimmed;
@@ -1445,8 +1445,8 @@ class ApiService {
 
     final preferred = uploads.where((upload) {
       return upload.isGeneratedContractPdf ||
-          upload.fileName.toUpperCase().contains('COC-') ||
-          upload.path.toUpperCase().contains('COC-');
+          upload.fileName.toUpperCase().contains('COA-') ||
+          upload.path.toUpperCase().contains('COA-');
     }).toList(growable: false);
 
     final candidates = <ContractUpload>[
@@ -1486,7 +1486,7 @@ class ApiService {
   }
 
   String _ensurePdfFileName(String value) {
-    final trimmed = value.trim().isEmpty ? 'COC.pdf' : value.trim();
+    final trimmed = value.trim().isEmpty ? 'COA.pdf' : value.trim();
     return trimmed.toLowerCase().endsWith('.pdf') ? trimmed : '$trimmed.pdf';
   }
 

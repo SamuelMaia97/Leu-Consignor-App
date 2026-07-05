@@ -32,28 +32,28 @@ void main() {
           request.response.write(jsonEncode([
             {
               'consignorId': 121097,
-              'contractId': 'COC-26-142037',
-              'auctionDisplayName': 'COC-26-142037',
+              'contractId': 'COA-26-142037',
+              'auctionDisplayName': 'COA-26-142037',
               'lastModifiedUtc': '2026-07-02T14:29:21+02:00',
               'list': [
                 {
                   'localId': 'abacus-contract-doc-1',
                   'fileType': 2,
-                  'fileName': 'COC-26-142037.pdf',
+                  'fileName': 'COA-26-142037.pdf',
                   'lastModifiedUtc': '2026-07-02T14:29:21+02:00',
                 },
               ],
             },
             {
               'consignorId': 121098,
-              'contractId': 'PROV-COC-26-142037',
-              'auctionDisplayName': 'PROV-COC-26-142037',
+              'contractId': 'PROV-COA-26-142037',
+              'auctionDisplayName': 'PROV-COA-26-142037',
               'lastModifiedUtc': '2026-07-02T14:19:20+02:00',
               'list': [
                 {
                   'localId': 'abacus-contract-doc-2',
                   'fileType': 2,
-                  'fileName': 'PROV-COC-26-142037.pdf',
+                  'fileName': 'PROV-COA-26-142037.pdf',
                   'lastModifiedUtc': '2026-07-02T14:19:20+02:00',
                 },
               ],
@@ -95,15 +95,15 @@ void main() {
       final state = AppState();
       addTearDown(state.dispose);
 
-      final cocContracts = state.contractsForConsignor('121097');
-      expect(cocContracts, hasLength(1));
-      expect(cocContracts.single.id, 'COC-26-142037');
-      expect(cocContracts.single.pdfName, 'COC-26-142037.pdf');
+      final coaContracts = state.contractsForConsignor('121097');
+      expect(coaContracts, hasLength(1));
+      expect(coaContracts.single.id, 'COA-26-142037');
+      expect(coaContracts.single.pdfName, 'COA-26-142037.pdf');
 
       final provisionalContracts = state.contractsForConsignor('121098');
       expect(provisionalContracts, hasLength(1));
-      expect(provisionalContracts.single.id, 'PROV-COC-26-142037');
-      expect(provisionalContracts.single.pdfName, 'PROV-COC-26-142037.pdf');
+      expect(provisionalContracts.single.id, 'PROV-COA-26-142037');
+      expect(provisionalContracts.single.pdfName, 'PROV-COA-26-142037.pdf');
     });
   });
 }

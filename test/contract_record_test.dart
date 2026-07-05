@@ -100,10 +100,10 @@ void main() {
 
     test('treats remote Abacus contracts without auction ids as remote', () {
       final record = ContractRecord(
-        id: 'COC-26-1',
+        id: 'COA-26-1',
         consignorId: '121097',
-        auctionDisplayName: 'COC-26-1',
-        pdfName: 'COC-26-1.pdf',
+        auctionDisplayName: 'COA-26-1',
+        pdfName: 'COA-26-1.pdf',
         remoteLastModifiedUtc: DateTime.utc(2026, 7, 2),
         syncStatus: RecordSyncStatus.synced,
       );
@@ -118,7 +118,7 @@ void main() {
         uploads: [
           ContractUpload(
             localId: 'product-1',
-            fileName: 'COC-26-1-Product-1.png',
+            fileName: 'COA-26-1-Product-1.png',
             fileType: UploadType.product,
           ),
         ],
@@ -135,7 +135,7 @@ void main() {
         uploads: [
           ContractUpload(
             localId: 'contract-pdf',
-            fileName: 'COC-26-1.pdf',
+            fileName: 'COA-26-1.pdf',
             fileType: UploadType.agreement,
           ),
         ],
