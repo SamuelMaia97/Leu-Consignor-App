@@ -196,6 +196,34 @@ void main() {
       expect(payload['owner_full_name'], 'Dieter Schmidt');
     });
 
+    test('falls back to bank beneficiary for blank consignor name', () async {
+      final consignor = _consignor(ConsignorType.naturalPerson)
+        ..existingCustomerLabel = 'Customer 123';
+      consignor.consignorInfo
+        ..firstName = ''
+        ..lastName = '';
+      consignor.bankingDetails.beneficiary
+        ..firstName = 'Joseph Dib'
+        ..lastName = 'STRONG';
+
+      final representative = _consignor(ConsignorType.naturalPerson)
+        ..id = '200';
+      representative.consignorInfo
+        ..firstName = 'Dieter'
+        ..lastName = 'Schmidt';
+
+      final payload = await builder.build(
+        consignor: consignor,
+        authorizedRepresentative: representative,
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['consignor_full_name'], 'Joseph Dib STRONG');
+      expect(payload['consignorFullName'], 'Joseph Dib STRONG');
+      expect(payload['annex_a_owner_full_name'], 'Joseph Dib STRONG');
+      expect(payload['owner_full_name'], 'Dieter Schmidt');
+    });
+
     test('formats visible template dates day first', () async {
       final payload = await builder.build(
         consignor: _consignor(ConsignorType.naturalPerson),
