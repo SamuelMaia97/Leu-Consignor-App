@@ -162,7 +162,9 @@ void main() {
       expect(payload['consignor_full_name'], 'Anna Muster');
       expect(payload['representative_name'], 'Marco Signer');
       expect(payload['representativeName'], 'Marco Signer');
+      expect(payload['owner_full_name'], 'Marco Signer');
       expect(payload['ownerFullName'], 'Marco Signer');
+      expect(payload['annex_a_owner_full_name'], 'Anna Muster');
       expect(payload['consignor_signature_name'], 'Marco Signer');
       expect(payload['annex_a_signature_name'], 'Marco Signer');
       expect(payload['annex_c_signature_name'], 'Marco Signer');
@@ -216,17 +218,17 @@ void main() {
       expect(payload['watermark'], {'text': 'PROVISIONAL'});
       expect(payload['pageWatermark'], {'text': 'PROVISIONAL'});
       expect(payload['place_of_signature'], 'Winterthur');
-      expect(payload['consignor_place_date'], 'Winterthur');
-      expect(payload['contract_place_date'], 'Winterthur');
-      expect(payload['contractPlaceDate'], 'Winterthur');
+      expect(payload['consignor_place_date'], '');
+      expect(payload['contract_place_date'], '');
+      expect(payload['contractPlaceDate'], '');
       expect(payload['leu_place_date'], 'Winterthur');
       expect(payload['leuPlaceDate'], 'Winterthur');
-      expect(payload['annex_a_place_date'], 'Winterthur');
-      expect(payload['annexAPlaceDate'], 'Winterthur');
-      expect(payload['annex_place_date'], 'Winterthur');
-      expect(payload['annexPlaceDate'], 'Winterthur');
-      expect(payload['annex_c_place_date'], 'Winterthur');
-      expect(payload['annexCPlaceDate'], 'Winterthur');
+      expect(payload['annex_a_place_date'], '');
+      expect(payload['annexAPlaceDate'], '');
+      expect(payload['annex_place_date'], '');
+      expect(payload['annexPlaceDate'], '');
+      expect(payload['annex_c_place_date'], '');
+      expect(payload['annexCPlaceDate'], '');
     });
 
     test('emits editable signature place and date suffix for templates',

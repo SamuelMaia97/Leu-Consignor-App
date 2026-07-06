@@ -91,6 +91,7 @@ class ContractRenderPayloadBuilder {
     final dateSuffix =
         isProvisional ? '' : ', ${_dateFormat.format(record.signedAt)}';
     final signerPlaceDate = '$placeOfSignature$dateSuffix';
+    final consignorPlaceDate = isProvisional ? '' : signerPlaceDate;
     final leuPlaceDate = 'Winterthur$dateSuffix';
     final watermarkText = isProvisional ? 'PROVISIONAL' : '';
     final pdfFileName = _resolvedPdfName(record);
@@ -136,6 +137,8 @@ class ContractRenderPayloadBuilder {
       'consignorPhone': consignor.fullPhoneNumber,
       'consignorEmail': consignor.emailAddress,
       'consignorIsOwner': consignorIsOwner,
+      'beneficialOwner':
+          authorizedRepresentative == null ? null : consignor.toJson(),
       'legalEntityName': consignorType == ConsignorType.legalEntity
           ? consignor.tradingName
           : '',
@@ -147,12 +150,8 @@ class ContractRenderPayloadBuilder {
           : authorizedRepresentativePersonName,
       'consignorFunction':
           consignorType == ConsignorType.legalEntity ? 'Vertreter' : '',
-      'ownerFullName': authorizedRepresentative == null
-          ? consignorPersonName
-          : authorizedRepresentativePersonName,
-      'owner_full_name': authorizedRepresentative == null
-          ? consignorPersonName
-          : authorizedRepresentativePersonName,
+      'ownerFullName': signerPersonName,
+      'owner_full_name': signerPersonName,
       'ownerDateOfBirth':
           _dateOrNull(authorizedRepresentative?.consignorInfo.dateOfBirth),
       'ownerNationality':
@@ -194,17 +193,17 @@ class ContractRenderPayloadBuilder {
       'placeOfSignature': placeOfSignature,
       'PlaceOfSignature': placeOfSignature,
       'place_of_signature': placeOfSignature,
-      'consignor_place_date': signerPlaceDate,
-      'contract_place_date': signerPlaceDate,
-      'contractPlaceDate': signerPlaceDate,
+      'consignor_place_date': consignorPlaceDate,
+      'contract_place_date': consignorPlaceDate,
+      'contractPlaceDate': consignorPlaceDate,
       'leu_place_date': leuPlaceDate,
       'leuPlaceDate': leuPlaceDate,
-      'annex_place_date': signerPlaceDate,
-      'annexPlaceDate': signerPlaceDate,
-      'annex_a_place_date': signerPlaceDate,
-      'annexAPlaceDate': signerPlaceDate,
-      'annex_c_place_date': signerPlaceDate,
-      'annexCPlaceDate': signerPlaceDate,
+      'annex_place_date': consignorPlaceDate,
+      'annexPlaceDate': consignorPlaceDate,
+      'annex_a_place_date': consignorPlaceDate,
+      'annexAPlaceDate': consignorPlaceDate,
+      'annex_c_place_date': consignorPlaceDate,
+      'annexCPlaceDate': consignorPlaceDate,
       'leuRepresentativeName':
           signatureData?.leuRepresentativeName ?? 'Yves Gunzenreiner',
       'leuRepresentativeCompany': 'Leu Numismatik AG',
@@ -230,6 +229,8 @@ class ContractRenderPayloadBuilder {
       'annexAConsignorSignatureBase64Png': annexASignature,
       'annex_a_signature_image': annexASignature,
       'annex_a_signature_name': signerPersonName,
+      'annex_a_owner_full_name': consignorPersonName,
+      'annexAOwnerFullName': consignorPersonName,
       'annexCConsignorSignatureBase64Png': annexCSignature,
       'annex_c_signature_image': annexCSignature,
       'annex_c_signature_name': signerPersonName,
