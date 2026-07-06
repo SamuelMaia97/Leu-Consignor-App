@@ -97,10 +97,10 @@ class ContractRenderPayloadBuilder {
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
     final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
-    final consignorPersonName = _personNameFirstLast(consignor);
+    final consignorPersonName = _contractDisplayName(consignor);
     final authorizedRepresentativePersonName = authorizedRepresentative == null
         ? ''
-        : _personNameFirstLast(authorizedRepresentative);
+        : _contractDisplayName(authorizedRepresentative);
     final signerPersonName = authorizedRepresentative == null
         ? consignorPersonName
         : authorizedRepresentativePersonName;
@@ -426,6 +426,20 @@ class ContractRenderPayloadBuilder {
       consignor.consignorInfo.firstName,
       consignor.consignorInfo.lastName,
     ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' ');
+  }
+
+  static String _contractDisplayName(Consignor consignor) {
+    if (consignor.usesTradingName && consignor.tradingName.trim().isNotEmpty) {
+      return consignor.tradingName.trim();
+    }
+
+    final personName = _personNameFirstLast(consignor);
+    if (personName.isNotEmpty) return personName;
+
+    final existingCustomerLabel = consignor.existingCustomerLabel?.trim() ?? '';
+    if (existingCustomerLabel.isNotEmpty) return existingCustomerLabel;
+
+    return consignor.tradingName.trim();
   }
 
   static String _titleText(int? title) => switch (title) {
