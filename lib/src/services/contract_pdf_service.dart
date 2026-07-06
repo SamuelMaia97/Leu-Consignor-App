@@ -347,18 +347,23 @@ class ContractPdfPayloadBuilder {
     required String leuSignatureBase64,
     required String? correspondence,
   }) {
-    final ownerOrEmpty = owner;
-    final ownerAddress = ownerOrEmpty == null
-        ? null
-        : _localizedAddress(ownerOrEmpty.consignorAddress, correspondence);
-    final legalOwnerCompany =
-        ownerIsLegal ? ownerOrEmpty?.tradingName ?? '' : '';
+    final ownerOrEmpty = owner ?? consignor;
+    final ownerAddress =
+        _localizedAddress(ownerOrEmpty.consignorAddress, correspondence);
+    final legalOwnerCompany = ownerIsLegal ? ownerOrEmpty.tradingName : '';
     final legalOwnerRepName =
-        ownerIsLegal ? _personNameFirstLast(ownerOrEmpty!.consignorInfo) : '';
+        ownerIsLegal ? _personNameFirstLast(ownerOrEmpty.consignorInfo) : '';
     final consignorPersonName = _personNameFirstLast(consignor.consignorInfo);
-    final ownerPersonName = ownerOrEmpty == null
+    final ownerPersonName = _personNameFirstLast(ownerOrEmpty.consignorInfo);
+    final authorizedPerson =
+        representedByAnotherParty ? representative : consignor;
+    final authorizedPersonInfo = authorizedPerson?.consignorInfo;
+    final authorizedPersonName = authorizedPersonInfo == null
         ? ''
-        : _personNameFirstLast(ownerOrEmpty.consignorInfo);
+        : _personNameFirstLast(authorizedPersonInfo);
+    final authorizedPersonAddress = authorizedPerson == null
+        ? null
+        : _localizedAddress(authorizedPerson.consignorAddress, correspondence);
     final consignorAddress =
         _localizedAddress(consignor.consignorAddress, correspondence);
     final legacySigner = representedByAnotherParty ? representative : consignor;
@@ -368,7 +373,6 @@ class ContractPdfPayloadBuilder {
             : _localizedAddress(
                 representative.consignorAddress, correspondence))
         : consignorAddress;
-    final consignorName = _contractDisplayName(consignor);
     final bankAddress =
         _localizedAddress(consignor.bankingDetails.bankAddress, correspondence);
     final beneficiaryAddress = _localizedAddress(
@@ -380,16 +384,15 @@ class ContractPdfPayloadBuilder {
       name: consignor.consignorInfo.nationalityName,
       correspondence: correspondence,
     );
-    final ownerNationality = ownerOrEmpty == null
-        ? ''
-        : _localizedCountryName(
-            iso3: ownerOrEmpty.consignorInfo.nationalityIso3,
-            name: ownerOrEmpty.consignorInfo.nationalityName,
-            correspondence: correspondence,
-          );
+    final ownerNationality = _localizedCountryName(
+      iso3: ownerOrEmpty.consignorInfo.nationalityIso3,
+      name: ownerOrEmpty.consignorInfo.nationalityName,
+      correspondence: correspondence,
+    );
     final leuCompanyName = 'Leu Numismatik AG';
     final dateSuffix = isProvisional ? '' : ', ${_formatDate(record.signedAt)}';
     final signerPlaceDate = '$placeOfSignature$dateSuffix';
+    final consignorPlaceDate = isProvisional ? '' : signerPlaceDate;
     final leuPlaceDate = 'Winterthur$dateSuffix';
 
     final bankAccountValue = consignor.bankingDetails.accountNumber;
@@ -428,9 +431,9 @@ class ContractPdfPayloadBuilder {
       'consignor_email': consignor.emailAddress,
       'place_of_signature': placeOfSignature,
       'placeOfSignature': placeOfSignature,
-      'consignor_place_date': signerPlaceDate,
-      'contract_place_date': signerPlaceDate,
-      'contractPlaceDate': signerPlaceDate,
+      'consignor_place_date': consignorPlaceDate,
+      'contract_place_date': consignorPlaceDate,
+      'contractPlaceDate': consignorPlaceDate,
       'consignor_signature_image': contractSignatureBase64,
       'consignorSignatureBase64Png': contractSignatureBase64,
       'consignor_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
@@ -456,10 +459,8 @@ class ContractPdfPayloadBuilder {
       'representative_company': representativeCompany,
       'representative_phone': legalRepresentativePhone,
       'representative_email': legalRepresentativeEmail,
-      'owner_full_name': ownerPersonName,
-      'ownerFullName': representedByAnotherParty
-          ? legalRepresentativeName
-          : consignorPersonName,
+      'owner_full_name': authorizedPersonName,
+      'ownerFullName': authorizedPersonName,
       'ownerDateOfBirth': legacySigner == null
           ? ''
           : _formatDate(legacySigner.consignorInfo.dateOfBirth),
@@ -478,16 +479,25 @@ class ContractPdfPayloadBuilder {
           legacySignerAddress == null ? '' : _addressLine3(legacySignerAddress),
       'ownerPhone': legacySigner?.fullPhoneNumber ?? '',
       'ownerEmail': legacySigner?.emailAddress ?? '',
-      'owner_dob': _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
-      'owner_nationality': ownerNationality,
-      'owner_address_1':
-          ownerAddress == null ? '' : _addressLine1(ownerAddress),
-      'owner_address_2':
-          ownerAddress == null ? '' : _addressLine2(ownerAddress),
-      'owner_address_3':
-          ownerAddress == null ? '' : _addressLine3(ownerAddress),
-      'owner_phone': ownerOrEmpty?.fullPhoneNumber ?? '',
-      'owner_email': ownerOrEmpty?.emailAddress ?? '',
+      'owner_dob': _formatDate(authorizedPersonInfo?.dateOfBirth),
+      'owner_nationality': authorizedPerson == null
+          ? ''
+          : _localizedCountryName(
+              iso3: authorizedPerson.consignorInfo.nationalityIso3,
+              name: authorizedPerson.consignorInfo.nationalityName,
+              correspondence: correspondence,
+            ),
+      'owner_address_1': authorizedPersonAddress == null
+          ? ''
+          : _addressLine1(authorizedPersonAddress),
+      'owner_address_2': authorizedPersonAddress == null
+          ? ''
+          : _addressLine2(authorizedPersonAddress),
+      'owner_address_3': authorizedPersonAddress == null
+          ? ''
+          : _addressLine3(authorizedPersonAddress),
+      'owner_phone': authorizedPerson?.fullPhoneNumber ?? '',
+      'owner_email': authorizedPerson?.emailAddress ?? '',
       'payment_method': consignor.paymentOption.apiName,
       'payment_method_text': consignor.paymentOption.label,
       'bank_name': consignor.bankingDetails.bankName,
@@ -518,10 +528,10 @@ class ContractPdfPayloadBuilder {
       'leuSignatureBase64Png': leuSignatureBase64,
       'annex_a_auction_name': auctionName,
       'annex_a_auction_date': _formatDate(auctionDate),
-      'annex_a_place_date': signerPlaceDate,
-      'annexAPlaceDate': signerPlaceDate,
-      'annex_place_date': signerPlaceDate,
-      'annexPlaceDate': signerPlaceDate,
+      'annex_a_place_date': consignorPlaceDate,
+      'annexAPlaceDate': consignorPlaceDate,
+      'annex_place_date': consignorPlaceDate,
+      'annexPlaceDate': consignorPlaceDate,
       'annex_a_signature_image': annexASignatureBase64,
       'annexConsignorSignatureBase64Png': annexASignatureBase64,
       'annexAConsignorSignatureBase64Png': annexASignatureBase64,
@@ -531,42 +541,32 @@ class ContractPdfPayloadBuilder {
       'annex_a_owner_full_name': ownerIsLegal ? '' : ownerPersonName,
       'annex_a_owner_dob': ownerIsLegal
           ? ''
-          : _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth),
+          : _formatDate(ownerOrEmpty.consignorInfo.dateOfBirth),
       'annex_a_owner_nationality': ownerIsLegal ? '' : ownerNationality,
-      'annex_a_owner_address_1': ownerIsLegal || ownerAddress == null
-          ? ''
-          : _addressLine1(ownerAddress),
-      'annex_a_owner_address_2': ownerIsLegal || ownerAddress == null
-          ? ''
-          : _addressLine2(ownerAddress),
-      'annex_a_owner_address_3': ownerIsLegal || ownerAddress == null
-          ? ''
-          : _addressLine3(ownerAddress),
-      'annex_a_owner_phone':
-          ownerIsLegal ? '' : ownerOrEmpty?.fullPhoneNumber ?? '',
-      'annex_a_owner_email':
-          ownerIsLegal ? '' : ownerOrEmpty?.emailAddress ?? '',
+      'annex_a_owner_address_1':
+          ownerIsLegal ? '' : _addressLine1(ownerAddress),
+      'annex_a_owner_address_2':
+          ownerIsLegal ? '' : _addressLine2(ownerAddress),
+      'annex_a_owner_address_3':
+          ownerIsLegal ? '' : _addressLine3(ownerAddress),
+      'annex_a_owner_phone': ownerIsLegal ? '' : ownerOrEmpty.fullPhoneNumber,
+      'annex_a_owner_email': ownerIsLegal ? '' : ownerOrEmpty.emailAddress,
       'annex_a_legal_company': legalOwnerCompany,
       'annex_a_legal_rep_name': legalOwnerRepName,
       'annex_a_legal_rep_dob': ownerIsLegal
-          ? _formatDate(ownerOrEmpty?.consignorInfo.dateOfBirth)
+          ? _formatDate(ownerOrEmpty.consignorInfo.dateOfBirth)
           : '',
       'annex_a_legal_rep_nationality': ownerIsLegal ? ownerNationality : '',
-      'annex_a_legal_address_1': ownerIsLegal && ownerAddress != null
-          ? _addressLine1(ownerAddress)
-          : '',
-      'annex_a_legal_address_2': ownerIsLegal && ownerAddress != null
-          ? _addressLine2(ownerAddress)
-          : '',
-      'annex_a_legal_address_3': ownerIsLegal && ownerAddress != null
-          ? _addressLine3(ownerAddress)
-          : '',
-      'annex_a_legal_phone':
-          ownerIsLegal ? ownerOrEmpty?.fullPhoneNumber ?? '' : '',
-      'annex_a_legal_email':
-          ownerIsLegal ? ownerOrEmpty?.emailAddress ?? '' : '',
-      'annex_c_place_date': signerPlaceDate,
-      'annexCPlaceDate': signerPlaceDate,
+      'annex_a_legal_address_1':
+          ownerIsLegal ? _addressLine1(ownerAddress) : '',
+      'annex_a_legal_address_2':
+          ownerIsLegal ? _addressLine2(ownerAddress) : '',
+      'annex_a_legal_address_3':
+          ownerIsLegal ? _addressLine3(ownerAddress) : '',
+      'annex_a_legal_phone': ownerIsLegal ? ownerOrEmpty.fullPhoneNumber : '',
+      'annex_a_legal_email': ownerIsLegal ? ownerOrEmpty.emailAddress : '',
+      'annex_c_place_date': consignorPlaceDate,
+      'annexCPlaceDate': consignorPlaceDate,
       'annex_c_signature_image': annexCSignatureBase64,
       'annexCConsignorSignatureBase64Png': annexCSignatureBase64,
       'annex_c_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',

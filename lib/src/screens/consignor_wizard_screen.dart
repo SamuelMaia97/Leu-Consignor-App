@@ -5411,8 +5411,16 @@ class _FullReviewStep extends StatelessWidget {
             children: [
               OutlinedButton.icon(
                 onPressed: saving ? null : onGeneratePdf,
-                icon: const Icon(Icons.picture_as_pdf_outlined),
-                label: const Text('Generate Provisional PDF'),
+                icon: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.picture_as_pdf_outlined),
+                label: Text(
+                  saving ? 'Generating...' : 'Generate Provisional PDF',
+                ),
               ),
               OutlinedButton.icon(
                 onPressed: onOpenPdf,
@@ -5928,8 +5936,16 @@ class _SignatureStep extends StatelessWidget {
                 OutlinedButton.icon(
                   onPressed:
                       saving || !draft.signatureReady ? null : onGeneratePdf,
-                  icon: const Icon(Icons.picture_as_pdf_outlined),
-                  label: const Text('Generate signed PDF'),
+                  icon: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.picture_as_pdf_outlined),
+                  label: Text(
+                    saving ? 'Generating...' : 'Generate signed PDF',
+                  ),
                 ),
                 OutlinedButton.icon(
                   onPressed: onOpenPdf,
