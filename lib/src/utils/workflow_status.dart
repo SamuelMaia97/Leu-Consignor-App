@@ -378,7 +378,7 @@ class WorkflowStatus {
 
   static String? extractContractNumber(ContractRecord contract) {
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     final candidates = <String>[
       contract.pdfName,
       contract.id,

@@ -371,14 +371,14 @@ void main() {
             'lastModifiedUtc': '2026-07-02T07:00:00Z',
             'contracts': [
               {
-                'contractId': 'COC-26-1',
-                'auctionDisplayName': 'COC-26-1',
+                'contractId': 'COA-26-1',
+                'auctionDisplayName': 'COA-26-1',
                 'lastModifiedUtc': '2026-07-02T08:00:00Z',
                 'list': [
                   {
                     'localId': 'abacus-doc-1',
                     'fileType': 2,
-                    'fileName': 'COC-26-1.pdf',
+                    'fileName': 'COA-26-1.pdf',
                     'lastModifiedUtc': '2026-07-02T08:00:00Z',
                   },
                 ],
@@ -401,25 +401,25 @@ void main() {
       expect(result.skippedConsignorIds, contains(100000));
       expect(result.failedMessages, isEmpty);
       expect(result.contracts, hasLength(1));
-      expect(result.contracts.single.id, 'COC-26-1');
+      expect(result.contracts.single.id, 'COA-26-1');
       expect(result.contracts.single.auctionId, isNull);
       expect(result.contracts.single.synced, isTrue);
     });
 
-    test('global contract sync imports Abacus COC metadata', () async {
+    test('global contract sync imports Abacus COA metadata', () async {
       handler = (request) async {
         if (request.uri.path == '/api/consignors-app/contracts/get-all') {
           await writeJson(request, [
             {
               'consignorId': 121097,
-              'contractId': 'COC-26-1',
-              'auctionDisplayName': 'COC-26-1',
+              'contractId': 'COA-26-1',
+              'auctionDisplayName': 'COA-26-1',
               'lastModifiedUtc': '2026-07-02T08:00:00Z',
               'list': [
                 {
                   'localId': 'abacus-doc-1',
                   'fileType': 2,
-                  'fileName': 'COC-26-1.pdf',
+                  'fileName': 'COA-26-1.pdf',
                   'lastModifiedUtc': '2026-07-02T08:00:00Z',
                 },
               ],
@@ -436,9 +436,9 @@ void main() {
 
       expect(result.analyzedDocumentCount, 1);
       expect(result.contracts, hasLength(1));
-      expect(result.contracts.single.id, 'COC-26-1');
+      expect(result.contracts.single.id, 'COA-26-1');
       expect(result.contracts.single.consignorId, '121097');
-      expect(result.contracts.single.pdfName, 'COC-26-1.pdf');
+      expect(result.contracts.single.pdfName, 'COA-26-1.pdf');
       expect(result.contracts.single.synced, isTrue);
       expect(
         requests,
@@ -452,15 +452,15 @@ void main() {
         if (request.uri.path ==
             '/api/consignors-app/consignors/121097/contracts/7/sync') {
           await writeJson(request, {
-            'contractId': 'COC-26-1',
-            'auctionDisplayName': 'COC-26-1',
+            'contractId': 'COA-26-1',
+            'auctionDisplayName': 'COA-26-1',
             'lastModifiedUtc': '2026-07-02T08:00:00Z',
             'list': [
               {
                 'localId': 'abacus-doc-1',
                 'fileId': 10,
                 'fileType': 2,
-                'fileName': 'COC-26-1.pdf',
+                'fileName': 'COA-26-1.pdf',
                 'lastModifiedUtc': '2026-07-02T08:00:00Z',
               },
             ],
@@ -483,7 +483,7 @@ void main() {
             localId: 'abacus-doc-1',
             fileId: 10,
             fileType: UploadType.agreement,
-            fileName: 'COC-26-1.pdf',
+            fileName: 'COA-26-1.pdf',
             localLastModifiedUtc: timestamp,
             serverLastModifiedUtc: timestamp,
           ),

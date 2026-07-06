@@ -1764,7 +1764,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     ];
 
     return candidates.any((candidate) =>
-        RegExp(r'\bPROV-COC-\d{2}-\d+\b', caseSensitive: false)
+        RegExp(r'\bPROV-COA-\d{2}-\d+\b', caseSensitive: false)
             .hasMatch(candidate));
   }
 
@@ -1778,7 +1778,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
     final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
     final next = _nextContractSequenceForYear(year);
-    return 'COC-$year-$next';
+    return 'COA-$year-$next';
   }
 
   String? _existingContractNumber(ContractRecord record) {
@@ -1788,7 +1788,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       if (_activeContractId != null) _activeContractId!,
     ];
     final pattern =
-        RegExp(r'\b(?:PROV-)?COC-\d{2}-\d+\b', caseSensitive: false);
+        RegExp(r'\b(?:PROV-)?COA-\d{2}-\d+\b', caseSensitive: false);
     for (final candidate in candidates) {
       final match = pattern.firstMatch(candidate);
       if (match != null) return match.group(0)!.toUpperCase();
@@ -1798,14 +1798,14 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   String _baseContractNumber(String value) {
     final trimmed = value.trim();
-    if (trimmed.toUpperCase().startsWith('PROV-COC-')) {
+    if (trimmed.toUpperCase().startsWith('PROV-COA-')) {
       return trimmed.substring(5);
     }
     return trimmed;
   }
 
   int _nextContractSequenceForYear(String year) {
-    final pattern = RegExp('\\bCOC-$year-(\\d+)\\b', caseSensitive: false);
+    final pattern = RegExp('\\bCOA-$year-(\\d+)\\b', caseSensitive: false);
     var maxSequence = 0;
     for (final contract in context.read<AppState>().contracts) {
       final candidates = <String>[
@@ -1929,6 +1929,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     return ContractSignatureData(
       leuRepresentativeName: signer.displayName,
       leuRepresentativeSignatureAsset: signer.assetPath,
+      leuRepresentativeFunction: signer.function,
       contractSignaturePng: contractSignature,
       annexASignaturePng: annexASignature,
       annexCSignaturePng: annexCSignature,
@@ -2748,16 +2749,23 @@ enum _LeuSigner {
   larsRutten(
     displayName: 'Lars Rutten',
     assetPath: 'assets/signatures/signature_lars_rutten.jpg',
+    function: 'DCEO',
   ),
   yvesGunzenreiner(
     displayName: 'Yves Gunzenreiner',
     assetPath: 'assets/signatures/signature_yves_gunzenreiner.png',
+    function: 'CEO',
   );
 
-  const _LeuSigner({required this.displayName, required this.assetPath});
+  const _LeuSigner({
+    required this.displayName,
+    required this.assetPath,
+    required this.function,
+  });
 
   final String displayName;
   final String assetPath;
+  final String function;
 }
 
 class _WizardDraft {
@@ -2923,7 +2931,7 @@ class _WizardDraft {
   List<ContractUpload> get registrationFiles => uploads
       .where((e) => e.fileType == UploadType.agreement && !e.isDeleted)
       .toList(growable: false);
-  List<ContractUpload> get cocAttachmentFiles => uploads
+  List<ContractUpload> get coaAttachmentFiles => uploads
       .where((e) => !e.isDeleted && !e.isValidationReport)
       .toList(growable: false);
 
@@ -5296,7 +5304,7 @@ class _FullReviewStep extends StatelessWidget {
     final consignmentCountry = draft.consignmentCountryName.trim();
     final placeOfSignature =
         _WizardDraft._signaturePlace(draft.placeOfSignature);
-    final visibleAttachments = draft.cocAttachmentFiles;
+    final visibleAttachments = draft.coaAttachmentFiles;
     final readinessIssues = _draftReadinessIssues(
       draft: draft,
       representative: representative,
@@ -5439,7 +5447,7 @@ class _FullReviewStep extends StatelessWidget {
         if (provisionalContractSubmitted) ...[
           const SizedBox(height: 6),
           Text(
-            'The provisional contract has already been submitted. Continue to signatures to create the final COC.',
+            'The provisional contract has already been submitted. Continue to signatures to create the final COA.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],

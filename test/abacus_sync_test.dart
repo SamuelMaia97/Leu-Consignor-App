@@ -14,7 +14,7 @@ void main() {
           fileType: UploadType.agreement,
         ),
         consignorSubjectId: 120149,
-        contractNumber: 'COC-26-1',
+        contractNumber: 'COA-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.contractSigned,
       );
@@ -22,8 +22,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'ConsignmentContract');
-      expect(json['label'], 'COC-26-1');
-      expect(json['documentName'], 'COC-26-1.pdf');
+      expect(json['label'], 'COA-26-1');
+      expect(json['documentName'], 'COA-26-1.pdf');
       expect(json['verifyReceipt'], isTrue);
       expect((json['storage'] as Map)['lookupText'], 'Vertrag Einlieferung');
     });
@@ -36,7 +36,7 @@ void main() {
           fileType: UploadType.passport,
         ),
         consignorSubjectId: 120149,
-        contractNumber: 'COC-26-1',
+        contractNumber: 'COA-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -59,7 +59,7 @@ void main() {
           kind: 'RepresentativeId',
         ),
         consignorSubjectId: 120149,
-        contractNumber: 'COC-26-1',
+        contractNumber: 'COA-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -81,7 +81,7 @@ void main() {
           kind: 'RepresentativeIdValidationReport',
         ),
         consignorSubjectId: 120149,
-        contractNumber: 'COC-26-1',
+        contractNumber: 'COA-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -105,7 +105,7 @@ void main() {
           fileType: UploadType.product,
         ),
         consignorSubjectId: 120149,
-        contractNumber: 'COC-26-1',
+        contractNumber: 'COA-26-1',
         eventUtc: DateTime.utc(2026, 6, 9),
         trigger: AbacusContractSyncEvent.manualSync,
       );
@@ -113,8 +113,8 @@ void main() {
       final json = metadata!.toJson();
 
       expect(json['documentKind'], 'CoinImage');
-      expect(json['label'], 'COC-26-1-Product-1');
-      expect(json['documentName'], 'COC-26-1-Product-1.png');
+      expect(json['label'], 'COA-26-1-Product-1');
+      expect(json['documentName'], 'COA-26-1-Product-1.png');
       expect(json['contentType'], 'image/png');
       expect((json['storage'] as Map)['abbreviation'], 'EINL');
     });

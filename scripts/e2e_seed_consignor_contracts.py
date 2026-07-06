@@ -396,7 +396,7 @@ def attachment(path: Path, file_type: int, kind: str, local_id: str, auction_id:
 
 
 def contract_base_number(contract_number: str) -> str:
-    return contract_number[5:] if contract_number.upper().startswith("PROV-COC-") else contract_number
+    return contract_number[5:] if contract_number.upper().startswith("PROV-COA-") else contract_number
 
 
 def abacus_sync(
@@ -787,7 +787,7 @@ def build_uploads(
 
 def max_contract_suffix(groups: Any) -> int:
     max_seen = 0
-    pattern = re.compile(r"\b(?:PROV-)?COC-" + re.escape(YEAR_CODE) + r"-(\d+)\b", re.IGNORECASE)
+    pattern = re.compile(r"\b(?:PROV-)?COA-" + re.escape(YEAR_CODE) + r"-(\d+)\b", re.IGNORECASE)
     text = json.dumps(groups)
     for match in pattern.finditer(text):
         max_seen = max(max_seen, int(match.group(1)))
@@ -1048,7 +1048,7 @@ def main() -> int:
     if args.start_number > 0:
         next_number = args.start_number
     else:
-        print("Analyzing existing COC contract numbers...")
+        print("Analyzing existing COA contract numbers...")
         try:
             existing = client.get_json("/api/consignors-app/contracts/get-all")
             next_number = max_contract_suffix(existing) + 1
@@ -1057,7 +1057,7 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"Could not analyze existing contracts; using timestamp fallback. Reason: {exc}")
             next_number = int(datetime.now().strftime("%m%d%H"))
-    print(f"First generated contract number will be COC-{YEAR_CODE}-{next_number}.")
+    print(f"First generated contract number will be COA-{YEAR_CODE}-{next_number}.")
 
     expected_contracts: set[str] = set()
     pdf_checks: list[dict[str, Any]] = []
@@ -1070,9 +1070,9 @@ def main() -> int:
         sequence = from_sequence + offset
         suffix = next_number + offset
         contract_number = (
-            f"PROV-COC-{YEAR_CODE}-{suffix}"
+            f"PROV-COA-{YEAR_CODE}-{suffix}"
             if scenario.provisional
-            else f"COC-{YEAR_CODE}-{suffix}"
+            else f"COA-{YEAR_CODE}-{suffix}"
         )
         expected_contracts.add(contract_number)
         scenario_key = f"{language.upper()}_{scenario.index:02d}_{scenario.slug}_{contract_number}"

@@ -95,10 +95,14 @@ class ContractRenderPayloadBuilder {
     final watermarkText = isProvisional ? 'PROVISIONAL' : '';
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
-    final consignorPersonName = _personNameLastFirst(consignor);
+    final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
+    final consignorPersonName = _personNameFirstLast(consignor);
     final authorizedRepresentativePersonName = authorizedRepresentative == null
         ? ''
-        : _personNameLastFirst(authorizedRepresentative);
+        : _personNameFirstLast(authorizedRepresentative);
+    final signerPersonName = authorizedRepresentative == null
+        ? consignorPersonName
+        : authorizedRepresentativePersonName;
 
     final bankAccountValue = consignor.bankingDetails.accountNumber;
     final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
@@ -119,6 +123,11 @@ class ContractRenderPayloadBuilder {
       'pdfTitle': pdfTitle,
       'documentTitle': pdfTitle,
       'consignorFullName': consignorPersonName,
+      'consignor_full_name': consignorPersonName,
+      'consignorFirstName': consignor.consignorInfo.firstName.trim(),
+      'consignorLastName': consignor.consignorInfo.lastName.trim(),
+      'consignor_first_name': consignor.consignorInfo.firstName.trim(),
+      'consignor_last_name': consignor.consignorInfo.lastName.trim(),
       'consignorDateOfBirth': _dateOrNull(consignor.consignorInfo.dateOfBirth),
       'consignorNationality': consignor.consignorInfo.nationalityName,
       'consignorAddress1': _addressLine1(consignor.consignorAddress),
@@ -133,9 +142,15 @@ class ContractRenderPayloadBuilder {
       'representativeName': authorizedRepresentative == null
           ? consignorPersonName
           : authorizedRepresentativePersonName,
+      'representative_name': authorizedRepresentative == null
+          ? consignorPersonName
+          : authorizedRepresentativePersonName,
       'consignorFunction':
           consignorType == ConsignorType.legalEntity ? 'Vertreter' : '',
       'ownerFullName': authorizedRepresentative == null
+          ? consignorPersonName
+          : authorizedRepresentativePersonName,
+      'owner_full_name': authorizedRepresentative == null
           ? consignorPersonName
           : authorizedRepresentativePersonName,
       'ownerDateOfBirth':
@@ -179,29 +194,45 @@ class ContractRenderPayloadBuilder {
       'placeOfSignature': placeOfSignature,
       'PlaceOfSignature': placeOfSignature,
       'place_of_signature': placeOfSignature,
-      'contract_place_date': dateSuffix,
+      'consignor_place_date': signerPlaceDate,
+      'contract_place_date': signerPlaceDate,
       'contractPlaceDate': signerPlaceDate,
       'leu_place_date': leuPlaceDate,
       'leuPlaceDate': leuPlaceDate,
-      'annex_place_date': dateSuffix,
+      'annex_place_date': signerPlaceDate,
       'annexPlaceDate': signerPlaceDate,
-      'annex_a_place_date': dateSuffix,
+      'annex_a_place_date': signerPlaceDate,
       'annexAPlaceDate': signerPlaceDate,
-      'annex_c_place_date': dateSuffix,
+      'annex_c_place_date': signerPlaceDate,
       'annexCPlaceDate': signerPlaceDate,
       'leuRepresentativeName':
           signatureData?.leuRepresentativeName ?? 'Yves Gunzenreiner',
       'leuRepresentativeCompany': 'Leu Numismatik AG',
-      'leuRepresentativeFunction': 'CEO',
+      'leuRepresentativeFunction': leuRepresentativeFunction,
+      'leu_representative_function': leuRepresentativeFunction,
+      'leu_representative_name_function': [
+        'Leu Numismatik AG',
+        [
+          signatureData?.leuRepresentativeName ?? 'Yves Gunzenreiner',
+          leuRepresentativeFunction,
+        ].where((part) => part.trim().isNotEmpty).join(', '),
+      ].where((part) => part.trim().isNotEmpty).join(' / '),
       'representative_company':
           authorizedRepresentative?.usesTradingName == true
               ? authorizedRepresentative!.tradingName
               : '',
       'consignorSignatureBase64Png': contractSignature,
+      'consignor_signature_image': contractSignature,
+      'consignor_signature_name': signerPersonName,
       'leuSignatureBase64Png': leuSignature,
+      'leu_signature_image': leuSignature,
       'annexConsignorSignatureBase64Png': annexASignature,
       'annexAConsignorSignatureBase64Png': annexASignature,
+      'annex_a_signature_image': annexASignature,
+      'annex_a_signature_name': signerPersonName,
       'annexCConsignorSignatureBase64Png': annexCSignature,
+      'annex_c_signature_image': annexCSignature,
+      'annex_c_signature_name': signerPersonName,
       'hasNaturalPersonIdAttachment':
           hasOrdererIdAttachment && consignorType != ConsignorType.legalEntity,
       'hasCommercialRegisterAttachment': hasCommercialRegisterAttachment,
@@ -383,11 +414,16 @@ class ContractRenderPayloadBuilder {
   static String _encodeBytes(Uint8List? bytes) =>
       bytes == null || bytes.isEmpty ? '' : base64Encode(bytes);
 
-  static String _personNameLastFirst(Consignor consignor) {
+  static String _leuRepresentativeFunction(ContractSignatureData? value) {
+    final function = value?.leuRepresentativeFunction.trim();
+    return function == null || function.isEmpty ? 'CEO' : function;
+  }
+
+  static String _personNameFirstLast(Consignor consignor) {
     return [
       _titleText(consignor.consignorInfo.title),
-      consignor.consignorInfo.lastName,
       consignor.consignorInfo.firstName,
+      consignor.consignorInfo.lastName,
     ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' ');
   }
 
