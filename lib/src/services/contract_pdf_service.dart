@@ -352,15 +352,14 @@ class ContractPdfPayloadBuilder {
         _localizedAddress(ownerOrEmpty.consignorAddress, correspondence);
     final legalOwnerCompany = ownerIsLegal ? ownerOrEmpty.tradingName : '';
     final legalOwnerRepName =
-        ownerIsLegal ? _personNameFirstLast(ownerOrEmpty.consignorInfo) : '';
-    final consignorPersonName = _personNameFirstLast(consignor.consignorInfo);
-    final ownerPersonName = _personNameFirstLast(ownerOrEmpty.consignorInfo);
+        ownerIsLegal ? _personDisplayName(ownerOrEmpty) : '';
+    final consignorPersonName = _contractDisplayName(consignor);
+    final ownerPersonName = _personDisplayName(ownerOrEmpty);
     final authorizedPerson =
         representedByAnotherParty ? representative : consignor;
     final authorizedPersonInfo = authorizedPerson?.consignorInfo;
-    final authorizedPersonName = authorizedPersonInfo == null
-        ? ''
-        : _personNameFirstLast(authorizedPersonInfo);
+    final authorizedPersonName =
+        authorizedPerson == null ? '' : _contractDisplayName(authorizedPerson);
     final authorizedPersonAddress = authorizedPerson == null
         ? null
         : _localizedAddress(authorizedPerson.consignorAddress, correspondence);
@@ -784,7 +783,43 @@ class ContractPdfPayloadBuilder {
     if (consignor.usesTradingName && consignor.tradingName.trim().isNotEmpty) {
       return consignor.tradingName.trim();
     }
-    return _personNameFirstLast(consignor.consignorInfo);
+    return _personDisplayName(consignor);
+  }
+
+  static String _personDisplayName(Consignor consignor) {
+    final personName = _personNameFirstLast(consignor.consignorInfo);
+    if (personName.isNotEmpty) return personName;
+
+    final existingCustomerLabel =
+        _nameFromExistingCustomerLabel(consignor.existingCustomerLabel);
+    if (existingCustomerLabel.isNotEmpty) return existingCustomerLabel;
+
+    final beneficiaryName =
+        consignor.bankingDetails.beneficiary.fullName.trim();
+    if (beneficiaryName.isNotEmpty) return beneficiaryName;
+
+    return consignor.tradingName.trim();
+  }
+
+  static String _nameFromExistingCustomerLabel(String? value) {
+    var text = value?.trim() ?? '';
+    if (text.isEmpty) return '';
+
+    text = text.replaceFirst(RegExp(r'\s*\([^)]*\)\s*$'), '').trim();
+    if (RegExp(r'^customer\s+\d+$', caseSensitive: false).hasMatch(text)) {
+      return '';
+    }
+
+    final commaIndex = text.indexOf(',');
+    if (commaIndex > 0) {
+      final lastName = text.substring(0, commaIndex).trim();
+      final firstName = text.substring(commaIndex + 1).trim();
+      if (firstName.isNotEmpty && lastName.isNotEmpty) {
+        return '$firstName $lastName';
+      }
+    }
+
+    return text;
   }
 
   static String _personNameFirstLast(Person person) {

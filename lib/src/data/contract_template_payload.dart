@@ -97,10 +97,10 @@ class ContractRenderPayloadBuilder {
     final pdfFileName = _resolvedPdfName(record);
     final pdfTitle = _pdfTitle(pdfFileName);
     final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
-    final consignorPersonName = _personNameFirstLast(consignor);
+    final consignorPersonName = _contractDisplayName(consignor);
     final authorizedRepresentativePersonName = authorizedRepresentative == null
         ? ''
-        : _personNameFirstLast(authorizedRepresentative);
+        : _contractDisplayName(authorizedRepresentative);
     final signerPersonName = authorizedRepresentative == null
         ? consignorPersonName
         : authorizedRepresentativePersonName;
@@ -426,6 +426,46 @@ class ContractRenderPayloadBuilder {
       consignor.consignorInfo.firstName,
       consignor.consignorInfo.lastName,
     ].map((part) => part.trim()).where((part) => part.isNotEmpty).join(' ');
+  }
+
+  static String _contractDisplayName(Consignor consignor) {
+    if (consignor.usesTradingName && consignor.tradingName.trim().isNotEmpty) {
+      return consignor.tradingName.trim();
+    }
+
+    final personName = _personNameFirstLast(consignor);
+    if (personName.isNotEmpty) return personName;
+
+    final existingCustomerLabel =
+        _nameFromExistingCustomerLabel(consignor.existingCustomerLabel);
+    if (existingCustomerLabel.isNotEmpty) return existingCustomerLabel;
+
+    final beneficiaryName =
+        consignor.bankingDetails.beneficiary.fullName.trim();
+    if (beneficiaryName.isNotEmpty) return beneficiaryName;
+
+    return consignor.tradingName.trim();
+  }
+
+  static String _nameFromExistingCustomerLabel(String? value) {
+    var text = value?.trim() ?? '';
+    if (text.isEmpty) return '';
+
+    text = text.replaceFirst(RegExp(r'\s*\([^)]*\)\s*$'), '').trim();
+    if (RegExp(r'^customer\s+\d+$', caseSensitive: false).hasMatch(text)) {
+      return '';
+    }
+
+    final commaIndex = text.indexOf(',');
+    if (commaIndex > 0) {
+      final lastName = text.substring(0, commaIndex).trim();
+      final firstName = text.substring(commaIndex + 1).trim();
+      if (firstName.isNotEmpty && lastName.isNotEmpty) {
+        return '$firstName $lastName';
+      }
+    }
+
+    return text;
   }
 
   static String _titleText(int? title) => switch (title) {
