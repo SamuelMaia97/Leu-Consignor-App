@@ -188,7 +188,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
 
   String _stepLabelFor(_WizardStep step) {
     return switch (step) {
-      _WizardStep.existingCustomer => 'Customer',
+      _WizardStep.existingCustomer =>
+        _isContractOnly ? 'Consignor' : 'Customer',
       _WizardStep.consignorType => 'Type',
       _WizardStep.details => 'Details',
       _WizardStep.contractDecision => 'Contract',
@@ -3745,13 +3746,6 @@ class _ExistingCustomerStep extends StatelessWidget {
 
     return ListView(
       children: [
-        Text(
-          contractOnly
-              ? 'Select an existing consignor'
-              : 'Existing or new consignor?',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 16),
         if (hasSelectedCustomer) ...[
           SectionCard(
             title: contractOnly ? 'Selected consignor' : 'Selected customer',
@@ -3760,7 +3754,8 @@ class _ExistingCustomerStep extends StatelessWidget {
               leading: const Icon(Icons.person_outline_rounded),
               title: Text(
                 selectedLabel.isEmpty
-                    ? 'Customer ${selectedCustomerId ?? ''}'.trim()
+                    ? '${contractOnly ? 'Consignor' : 'Customer'} ${selectedCustomerId ?? ''}'
+                        .trim()
                     : selectedLabel,
               ),
               subtitle: selectedCustomerId == null
@@ -3778,7 +3773,9 @@ class _ExistingCustomerStep extends StatelessWidget {
           const SizedBox(height: 12),
           TextField(
             decoration: InputDecoration(
-              labelText: 'Search customer',
+              labelText: contractOnly
+                  ? 'Search existing consignor'
+                  : 'Search existing customer',
               prefixIcon: const Icon(Icons.search_rounded),
               suffixIcon: searching
                   ? const Padding(
@@ -3813,7 +3810,7 @@ class _ExistingCustomerStep extends StatelessWidget {
         if (!contractOnly) ...[
           const SizedBox(height: 18),
           _OptionCard(
-            title: 'New consignor',
+            title: 'New customer / consignor',
             icon: Icons.person_add_alt_1_outlined,
             onTap: onNewConsignor,
           ),
@@ -5443,7 +5440,7 @@ class _FullReviewStep extends StatelessWidget {
                   ? null
                   : () => unawaited(onSaveProvisional()),
               icon: const Icon(Icons.cloud_upload_outlined),
-              label: const Text('Save Provisional Consignor Contract'),
+              label: const Text('Save Provisional Consignment Agreement'),
             ),
             ElevatedButton.icon(
               onPressed: saving ? null : onContinue,
@@ -5972,7 +5969,9 @@ class _SignatureStep extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.save_rounded),
-                label: Text(saving ? 'Saving…' : 'Save'),
+                label: Text(
+                  saving ? 'Saving…' : 'Save Final Consignment Agreement',
+                ),
               ),
             ],
           ),
