@@ -703,6 +703,15 @@ class AppState extends ChangeNotifier {
         );
       }
 
+      final numberedContract = _ensureContractNumberBeforeAbacusSync(
+        contractToSync,
+        syncEvent,
+      );
+      if (!identical(numberedContract, contractToSync)) {
+        contractToSync = numberedContract;
+        await _contractRepo.put(contractToSync);
+      }
+
       final synced = await api.syncContractRecord(
         backendConsignorId,
         contractToSync,
@@ -1203,6 +1212,66 @@ class AppState extends ChangeNotifier {
       if (match != null) return match.group(0)!.toUpperCase();
     }
     return null;
+  }
+
+  ContractRecord _ensureContractNumberBeforeAbacusSync(
+    ContractRecord contract,
+    AbacusContractSyncEvent syncEvent,
+  ) {
+    if (syncEvent == AbacusContractSyncEvent.manualSync ||
+        _contractNumberForMerge(contract) != null) {
+      return contract;
+    }
+
+    final baseNumber = _nextCoaBaseContractNumber();
+    final pdfName = syncEvent == AbacusContractSyncEvent.contractGenerated
+        ? 'PROV-$baseNumber.pdf'
+        : '$baseNumber.pdf';
+    var renamedAgreement = false;
+    final uploads = contract.uploads.map((upload) {
+      final agreementName =
+          upload.fileName.trim().isNotEmpty ? upload.fileName : upload.path;
+      if (renamedAgreement ||
+          upload.isDeleted ||
+          upload.fileType != UploadType.agreement ||
+          !agreementName.toLowerCase().endsWith('.pdf')) {
+        return upload;
+      }
+
+      renamedAgreement = true;
+      return upload.copyWith(fileName: pdfName);
+    }).toList(growable: false);
+
+    return contract.copyWith(
+      pdfName: pdfName,
+      uploads: uploads,
+      lastModifiedUtc: DateTime.now().toUtc(),
+    );
+  }
+
+  String _nextCoaBaseContractNumber() {
+    final year = (DateTime.now().year % 100).toString().padLeft(2, '0');
+    final pattern = RegExp('\\bCOA-$year-(\\d+)\\b', caseSensitive: false);
+    var maxSequence = 0;
+
+    for (final contract in _contractRepo.getAll()) {
+      final candidates = <String>[
+        contract.pdfName,
+        contract.id,
+        ...contract.uploads.map((upload) => upload.fileName),
+      ];
+
+      for (final candidate in candidates) {
+        final match = pattern.firstMatch(candidate);
+        if (match == null) continue;
+        final sequence = int.tryParse(match.group(1) ?? '');
+        if (sequence != null && sequence > maxSequence) {
+          maxSequence = sequence;
+        }
+      }
+    }
+
+    return 'COA-$year-${maxSequence + 1}';
   }
 
   Future<void> _reassignContractsToConsignorId(
