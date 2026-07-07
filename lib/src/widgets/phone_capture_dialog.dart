@@ -201,6 +201,24 @@ class _CaptureSessionViewState extends State<_CaptureSessionView> {
                       color: Theme.of(context).colorScheme.primary,
                     ),
                   ),
+                  if (session.endpoints.length > 1) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Available local links',
+                      style: textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    for (final endpoint in session.endpoints.take(4))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: SelectableText(
+                          '${endpoint.label}: ${endpoint.url}',
+                          style: textTheme.bodySmall,
+                        ),
+                      ),
+                  ],
                 ],
               ),
             ),
