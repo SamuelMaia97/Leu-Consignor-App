@@ -36,9 +36,38 @@ class PhoneCaptureUpload {
   final int sizeBytes;
 }
 
+class PhoneCaptureAddressCandidate {
+  const PhoneCaptureAddressCandidate({
+    required this.interfaceName,
+    required this.address,
+  });
+
+  final String interfaceName;
+  final String address;
+}
+
+class PhoneCaptureEndpoint {
+  const PhoneCaptureEndpoint({
+    required this.interfaceName,
+    required this.address,
+    required this.url,
+  });
+
+  final String interfaceName;
+  final String address;
+  final String url;
+
+  String get label {
+    final normalizedName = interfaceName.trim();
+    if (normalizedName.isEmpty) return address;
+    return '$normalizedName ($address)';
+  }
+}
+
 class PhoneCaptureSession {
   PhoneCaptureSession({
     required this.url,
+    required this.endpoints,
     required this.targets,
     required this.uploads,
     required HttpServer server,
@@ -49,6 +78,7 @@ class PhoneCaptureSession {
         _disposeSession = disposeSession;
 
   final String url;
+  final List<PhoneCaptureEndpoint> endpoints;
   final List<PhoneCaptureTarget> targets;
   final ValueNotifier<List<PhoneCaptureUpload>> uploads;
   final HttpServer _server;
@@ -82,10 +112,11 @@ class PhoneCaptureService {
       throw Exception('No phone capture targets were configured.');
     }
 
-    final hostAddress = await _localNetworkAddress();
-    if (hostAddress == null) {
+    final hostCandidates = await _localNetworkAddressCandidates();
+    final rankedHostCandidates = _rankAddressCandidates(hostCandidates);
+    if (rankedHostCandidates.isEmpty) {
       throw Exception(
-        'No local network address was found. Connect the Surface to Wi-Fi and try again.',
+        'No local network address was found. Connect this device to Wi-Fi or a local network and try again.',
       );
     }
 
@@ -260,8 +291,17 @@ class PhoneCaptureService {
       targets: normalizedTargets,
       requestedTargetId: initialTargetId,
     );
-    final url =
-        'http://$hostAddress:${server.port}/capture?token=${Uri.encodeQueryComponent(token)}&target=${Uri.encodeQueryComponent(selected.id)}';
+    final endpoints = rankedHostCandidates
+        .map(
+          (candidate) => PhoneCaptureEndpoint(
+            interfaceName: candidate.interfaceName,
+            address: candidate.address,
+            url:
+                'http://${candidate.address}:${server.port}/capture?token=${Uri.encodeQueryComponent(token)}&target=${Uri.encodeQueryComponent(selected.id)}',
+          ),
+        )
+        .toList(growable: false);
+    final url = endpoints.first.url;
 
     Future<void> disposeSession({required bool deleteFiles}) async {
       if (disposed) return;
@@ -275,6 +315,7 @@ class PhoneCaptureService {
 
     return PhoneCaptureSession(
       url: url,
+      endpoints: endpoints,
       targets: normalizedTargets,
       uploads: uploads,
       server: server,
@@ -693,40 +734,135 @@ class PhoneCaptureService {
     return base64UrlEncode(bytes).replaceAll('=', '');
   }
 
-  static Future<String?> _localNetworkAddress() async {
+  static Future<List<PhoneCaptureAddressCandidate>>
+      _localNetworkAddressCandidates() async {
     final interfaces = await NetworkInterface.list(
       includeLoopback: false,
       type: InternetAddressType.IPv4,
     );
-    final addresses = interfaces
-        .expand((interface) => interface.addresses)
-        .where((address) => !address.isLoopback)
-        .map((address) => address.address)
-        .where((address) => !_isLinkLocal(address))
-        .toList(growable: false);
 
-    if (addresses.isEmpty) {
-      return null;
+    return interfaces
+        .expand(
+          (interface) => interface.addresses.map(
+            (address) => PhoneCaptureAddressCandidate(
+              interfaceName: interface.name,
+              address: address.address,
+            ),
+          ),
+        )
+        .where((candidate) => !_isUnusableIpv4(candidate.address))
+        .toList(growable: false);
+  }
+
+  @visibleForTesting
+  static List<PhoneCaptureAddressCandidate> rankAddressCandidatesForTesting(
+    List<PhoneCaptureAddressCandidate> candidates,
+  ) {
+    return _rankAddressCandidates(candidates);
+  }
+
+  static List<PhoneCaptureAddressCandidate> _rankAddressCandidates(
+    List<PhoneCaptureAddressCandidate> candidates,
+  ) {
+    final uniqueByAddress = <String, PhoneCaptureAddressCandidate>{};
+    for (final candidate in candidates) {
+      final address = candidate.address.trim();
+      if (_isUnusableIpv4(address)) continue;
+      uniqueByAddress.putIfAbsent(
+        address,
+        () => PhoneCaptureAddressCandidate(
+          interfaceName: candidate.interfaceName.trim(),
+          address: address,
+        ),
+      );
     }
 
-    final privateAddress = addresses.cast<String?>().firstWhere(
-          (address) => address != null && _isPrivateIpv4(address),
-          orElse: () => null,
-        );
+    final ranked = uniqueByAddress.values.toList(growable: false);
+    ranked.sort((left, right) {
+      final scoreComparison =
+          _addressScore(right).compareTo(_addressScore(left));
+      if (scoreComparison != 0) return scoreComparison;
+      return left.address.compareTo(right.address);
+    });
+    return ranked;
+  }
 
-    return privateAddress ?? addresses.first;
+  static int _addressScore(PhoneCaptureAddressCandidate candidate) {
+    final interfaceName = candidate.interfaceName.toLowerCase();
+    final address = candidate.address;
+    var score = 0;
+
+    if (_isPrivateIpv4(address)) {
+      score += 40;
+    } else {
+      score -= 20;
+    }
+
+    if (address.startsWith('172.20.10.')) {
+      score += 70;
+    } else if (address.startsWith('192.168.')) {
+      score += 45;
+    } else if (_is172PrivateIpv4(address)) {
+      score += 35;
+    } else if (address.startsWith('10.')) {
+      score += 20;
+    }
+
+    if (_looksLikeWirelessInterface(interfaceName)) {
+      score += 80;
+    }
+    if (interfaceName.contains('ethernet')) {
+      score += 10;
+    }
+    if (_looksLikeVirtualOrVpnInterface(interfaceName)) {
+      score -= 140;
+    }
+
+    return score;
+  }
+
+  static bool _looksLikeWirelessInterface(String interfaceName) {
+    return interfaceName.contains('wi-fi') ||
+        interfaceName.contains('wifi') ||
+        interfaceName.contains('wlan') ||
+        interfaceName.contains('wireless') ||
+        interfaceName.contains('hotspot') ||
+        interfaceName.contains('mobile');
+  }
+
+  static bool _looksLikeVirtualOrVpnInterface(String interfaceName) {
+    return interfaceName.contains('vpn') ||
+        interfaceName.contains('fortinet') ||
+        interfaceName.contains('virtual') ||
+        interfaceName.contains('vethernet') ||
+        interfaceName.contains('hyper-v') ||
+        interfaceName.contains('wsl') ||
+        interfaceName.contains('docker') ||
+        interfaceName.contains('vmware') ||
+        interfaceName.contains('virtualbox') ||
+        interfaceName.contains('tailscale') ||
+        interfaceName.contains('bluetooth');
   }
 
   static bool _isPrivateIpv4(String address) {
     if (address.startsWith('10.')) return true;
     if (address.startsWith('192.168.')) return true;
+    return _is172PrivateIpv4(address);
+  }
+
+  static bool _is172PrivateIpv4(String address) {
     final match = RegExp(r'^172\.(\d+)\.').firstMatch(address);
     if (match == null) return false;
     final second = int.tryParse(match.group(1) ?? '');
     return second != null && second >= 16 && second <= 31;
   }
 
-  static bool _isLinkLocal(String address) => address.startsWith('169.254.');
+  static bool _isUnusableIpv4(String address) {
+    return address.isEmpty ||
+        address == '0.0.0.0' ||
+        address.startsWith('127.') ||
+        address.startsWith('169.254.');
+  }
 
   static String _extensionForUpload({
     required String fileName,
