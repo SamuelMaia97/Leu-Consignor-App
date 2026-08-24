@@ -66,7 +66,7 @@ void main() {
         consignorType: ConsignorType.soleProprietor,
         representativeType: ConsignorType.legalEntity,
         scenario: 'SoleProprietorThroughLegalRepresentative',
-        expectedVisible: {2, 3, 4, 7, 12, 13, 14, 15, 16, 19, 21, 23},
+        expectedVisible: {2, 3, 4, 7, 8, 12, 13, 14, 15, 16, 20, 21, 23},
       ),
     ];
 
@@ -168,6 +168,61 @@ void main() {
       expect(payload['consignor_signature_name'], 'Marco Signer');
       expect(payload['annex_a_signature_name'], 'Marco Signer');
       expect(payload['annex_c_signature_name'], 'Marco Signer');
+    });
+
+    test('keeps a legal representative person and company in separate fields',
+        () async {
+      final representative = _consignor(ConsignorType.legalEntity)
+        ..tradingName = 'Representative AG';
+      representative.consignorInfo
+        ..firstName = 'Marco'
+        ..lastName = 'Signer';
+
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.legalEntity),
+        authorizedRepresentative: representative,
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['representative_name'], 'Marco Signer');
+      expect(payload['representative_company'], 'Representative AG');
+      expect(payload['consignor_signature_name'], 'Marco Signer');
+    });
+
+    test('treats a represented sole proprietor as a natural Annex A owner',
+        () async {
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.soleProprietor),
+        authorizedRepresentative: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      expect(payload['annex_a_owner_full_name'], 'Anna Muster');
+      expect(payload['annex_a_legal_company'], isEmpty);
+    });
+
+    test('localizes authorized-representative signature prefixes', () async {
+      final englishPayload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        authorizedRepresentative: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+      final germanConsignor = _consignor(ConsignorType.naturalPerson)
+        ..correspondence = 'de';
+      final germanPayload = await builder.build(
+        consignor: germanConsignor,
+        authorizedRepresentative: _consignor(ConsignorType.naturalPerson),
+        record: ContractRecord.empty('100', auctionId: 1),
+      );
+
+      for (final key in const [
+        'consignor_signature_prefix',
+        'annex_a_signature_prefix',
+        'annex_c_signature_prefix',
+      ]) {
+        expect(englishPayload[key], 'for and on behalf of ');
+        expect(germanPayload[key], 'i.A. ');
+      }
     });
 
     test('falls back to existing customer label for blank consignor name',
@@ -449,13 +504,44 @@ void main() {
 
     test('shows both commercial register blocks for legal through legal',
         () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('two_registers_test_');
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final consignorRegister = File('${tempDir.path}/consignor-register.pdf');
+      final representativeRegister =
+          File('${tempDir.path}/representative-register.pdf');
+      await consignorRegister.writeAsBytes([1, 2, 3], flush: true);
+      await representativeRegister.writeAsBytes([4, 5, 6], flush: true);
+
       final payload = await builder.build(
         consignor: _consignor(ConsignorType.legalEntity),
         authorizedRepresentative: _consignor(ConsignorType.legalEntity)
           ..tradingName = 'Representative AG',
-        record: ContractRecord.empty('100', auctionId: 1),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          uploads: [
+            ContractUpload(
+              localId: 'consignor-register',
+              fileName: 'consignor-register.pdf',
+              fileType: UploadType.agreement,
+              kind: 'CommercialRegister',
+              path: consignorRegister.path,
+            ),
+            ContractUpload(
+              localId: 'representative-register',
+              fileName: 'representative-register.pdf',
+              fileType: UploadType.agreement,
+              kind: 'LegalRepresentativeRegister',
+              path: representativeRegister.path,
+            ),
+          ],
+        ),
       );
 
+      final attachments = payload['attachments'] as List<dynamic>;
       expect(payload['representative_company'], 'Representative AG');
       expect(payload['block_attach_commercial_register'], isTrue);
       expect(payload['block_attach_register_legal'], isTrue);
@@ -466,6 +552,47 @@ void main() {
       expect(
         payload['templateFlags'],
         containsPair('blockAttachRegisterLegal', true),
+      );
+      expect(
+        attachments.map((attachment) => attachment['kind']),
+        containsAll(['CommercialRegister', 'LegalRepresentativeRegister']),
+      );
+    });
+
+    test('maps a legacy register to a sole legal representative block',
+        () async {
+      final tempDir =
+          await Directory.systemTemp.createTemp('representative_register_');
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final register = File('${tempDir.path}/representative-register.pdf');
+      await register.writeAsBytes([1, 2, 3], flush: true);
+
+      final payload = await builder.build(
+        consignor: _consignor(ConsignorType.naturalPerson),
+        authorizedRepresentative: _consignor(ConsignorType.legalEntity),
+        record: ContractRecord.empty('100', auctionId: 1).copyWith(
+          uploads: [
+            ContractUpload(
+              localId: 'legacy-register',
+              fileName: 'representative-register.pdf',
+              fileType: UploadType.agreement,
+              kind: 'CommercialRegister',
+              path: register.path,
+            ),
+          ],
+        ),
+      );
+
+      final attachments = payload['attachments'] as List<dynamic>;
+      expect(payload['block_attach_commercial_register'], isFalse);
+      expect(payload['block_attach_register_legal'], isTrue);
+      expect(
+        attachments.single,
+        containsPair('kind', 'LegalRepresentativeRegister'),
       );
     });
 

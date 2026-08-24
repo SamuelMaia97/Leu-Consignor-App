@@ -53,7 +53,14 @@ class ContractRenderPayloadBuilder {
     Consignor? authorizedRepresentative,
     ContractSignatureData? signatureData,
   }) async {
-    final attachmentPayloads = await _buildAttachments(record);
+    final consignorIsOwner = authorizedRepresentative == null;
+    final consignorType = consignor.consignorType;
+    final representativeType = authorizedRepresentative?.consignorType;
+    final attachmentPayloads = await _buildAttachments(
+      record,
+      consignorType,
+      representativeType,
+    );
     final hasOrdererIdAttachment = record.uploads.any(
       (upload) =>
           !upload.isDeleted &&
@@ -70,16 +77,14 @@ class ContractRenderPayloadBuilder {
           !upload.isValidationReport &&
           upload.kind == 'RepresentativeId',
     );
-    final consignorIsOwner = authorizedRepresentative == null;
-    final consignorType = consignor.consignorType;
     final includeAnnexA =
         !consignorIsOwner || consignorType == ConsignorType.legalEntity;
-    final hasCommercialRegisterAttachment =
-        record.registrationFiles.isNotEmpty &&
-            consignorType != ConsignorType.naturalPerson;
-    final hasLegalEntityRegisterAttachment =
-        record.registrationFiles.isNotEmpty &&
-            consignorType == ConsignorType.legalEntity;
+    final hasCommercialRegisterAttachment = attachmentPayloads.any(
+      (attachment) => _isConsignorRegisterKind(attachment.kind),
+    );
+    final hasLegalEntityRegisterAttachment = attachmentPayloads.any(
+      (attachment) => _isRepresentativeRegisterKind(attachment.kind),
+    );
     final leuSignature = await _readAssetAsBase64(
         signatureData?.leuRepresentativeSignatureAsset);
     final contractSignature = _encodeBytes(signatureData?.contractSignaturePng);
@@ -260,7 +265,10 @@ class ContractRenderPayloadBuilder {
   }
 
   Future<List<ContractAttachmentPayload>> _buildAttachments(
-      ContractRecord record) async {
+    ContractRecord record,
+    ConsignorType consignorType,
+    ConsignorType? representativeType,
+  ) async {
     final attachments =
         AttachmentUtils.mergeUnique(const [], record.attachments);
     final payloads = <ContractAttachmentPayload>[];
@@ -286,7 +294,13 @@ class ContractRenderPayloadBuilder {
       final fileName = _fileName(attachment.path);
       payloads.add(
         ContractAttachmentPayload(
-          kind: _attachmentKind(attachment.type, fileName, attachment.kind),
+          kind: _attachmentKind(
+            attachment.type,
+            fileName,
+            attachment.kind,
+            consignorType,
+            representativeType,
+          ),
           fileName: fileName,
           contentType: _contentType(fileName),
           base64Content: base64Encode(bytes),
@@ -297,8 +311,20 @@ class ContractRenderPayloadBuilder {
     return payloads;
   }
 
-  String _attachmentKind(UploadType type, String fileName, String kind) {
+  String _attachmentKind(
+    UploadType type,
+    String fileName,
+    String kind,
+    ConsignorType consignorType,
+    ConsignorType? representativeType,
+  ) {
     if (kind.trim().isNotEmpty) {
+      if (type == UploadType.agreement &&
+          consignorType == ConsignorType.naturalPerson &&
+          representativeType == ConsignorType.legalEntity &&
+          _isConsignorRegisterKind(kind)) {
+        return 'LegalRepresentativeRegister';
+      }
       return kind.trim();
     }
 
@@ -307,7 +333,10 @@ class ContractRenderPayloadBuilder {
       return 'IdDocument';
     }
     if (type == UploadType.agreement) {
-      return 'CommercialRegister';
+      return consignorType == ConsignorType.naturalPerson &&
+              representativeType == ConsignorType.legalEntity
+          ? 'LegalRepresentativeRegister'
+          : 'CommercialRegister';
     }
     if (lower.endsWith('.pdf')) {
       return 'UploadedPdf';
@@ -316,6 +345,27 @@ class ContractRenderPayloadBuilder {
       return 'UploadedImage';
     }
     return 'Other';
+  }
+
+  bool _isConsignorRegisterKind(String value) {
+    final normalized = _normalizedAttachmentKind(value);
+    return normalized == 'commercialregister' ||
+        normalized == 'commercialregisterexcerpt' ||
+        normalized == 'companyregister' ||
+        normalized == 'handelsregister';
+  }
+
+  bool _isRepresentativeRegisterKind(String value) {
+    final normalized = _normalizedAttachmentKind(value);
+    return normalized == 'representativeregister' ||
+        normalized == 'authorizedrepresentativeregister' ||
+        normalized == 'legalrepresentativeregister' ||
+        normalized == 'legalentityrepresentativeregister' ||
+        normalized == 'registerlegal';
+  }
+
+  String _normalizedAttachmentKind(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
   bool _isGeneratedContractAttachment(ContractAttachment attachment) {
