@@ -113,6 +113,11 @@ class ContractPdfPayloadBuilder {
         : base64Encode(signatureData.annexCSignaturePng);
     final isProvisional = signatureData == null;
     final watermarkText = isProvisional ? 'PROVISIONAL' : '';
+    final scenario = _ContractRenderScenario.from(
+      consignor: consignor,
+      authorizedRepresentative: authorizedRepresentative,
+    );
+    final paragraphVisibility = _paragraphVisibilityFor(scenario);
 
     final attachments = <Map<String, dynamic>>[];
     for (final upload in record.uploads) {
@@ -129,7 +134,7 @@ class ContractPdfPayloadBuilder {
         'fileId': upload.fileId ?? 0,
         'auctionId': upload.auctionId ?? record.auctionId,
         'fileType': upload.fileType.apiValue,
-        'kind': _uploadKind(upload, fileName),
+        'kind': _uploadKind(upload, fileName, scenario),
         'fileName': fileName,
         'fileData': fileData,
         'isDeleted': upload.isDeleted,
@@ -156,11 +161,6 @@ class ContractPdfPayloadBuilder {
     );
 
     final auctionName = _auctionName(record, consignor.correspondence);
-    final scenario = _ContractRenderScenario.from(
-      consignor: consignor,
-      authorizedRepresentative: authorizedRepresentative,
-    );
-    final paragraphVisibility = _paragraphVisibilityFor(scenario);
     final paragraphVisibilityPayload = {
       for (final entry in paragraphVisibility.entries) entry.key: entry.value,
     };
@@ -170,6 +170,13 @@ class ContractPdfPayloadBuilder {
     };
     final consignorIsOwner =
         authorizedRepresentative == null && consignor.consignorInfo.owner;
+    final hasConsignorRegisterFiles = attachments.any(
+      (attachment) => _isConsignorRegisterKind(attachment['kind'] as String?),
+    );
+    final hasRepresentativeRegisterFiles = attachments.any(
+      (attachment) =>
+          _isRepresentativeRegisterKind(attachment['kind'] as String?),
+    );
     final effectiveAuctionDate = auctionDate ?? record.signedAt;
     final resolvedCommissionPercent = commissionPercent.trim().isNotEmpty
         ? commissionPercent.trim()
@@ -198,14 +205,14 @@ class ContractPdfPayloadBuilder {
         ? representative!.tradingName
         : '';
     final legalRepresentativeName = representative == null
-        ? _contractDisplayName(consignor)
-        : _contractDisplayName(representative);
+        ? _personDisplayName(consignor)
+        : _personDisplayName(representative);
     final legalRepresentativePhone =
         representative?.fullPhoneNumber ?? consignor.fullPhoneNumber;
     final legalRepresentativeEmail =
         representative?.emailAddress ?? consignor.emailAddress;
     final owner = representative == null ? null : consignor;
-    final ownerIsLegal = owner?.usesTradingName ?? false;
+    final ownerIsLegal = owner?.consignorType == ConsignorType.legalEntity;
     final leuRepresentativeName = signatureData?.leuRepresentativeName ?? '';
     final leuRepresentativeFunction = _leuRepresentativeFunction(signatureData);
     final placeOfSignature = _signaturePlace(record.placeOfSignature);
@@ -242,6 +249,8 @@ class ContractPdfPayloadBuilder {
       annexCSignatureBase64: annexCSignatureBase64,
       leuSignatureBase64: leuSignatureBase64,
       correspondence: consignor.correspondence,
+      hasConsignorRegisterFiles: hasConsignorRegisterFiles,
+      hasRepresentativeRegisterFiles: hasRepresentativeRegisterFiles,
     );
     final templateFlags = _templateFlags(
       scenario: scenario,
@@ -249,6 +258,8 @@ class ContractPdfPayloadBuilder {
       ownerIsLegal: ownerIsLegal,
       hasOrdererIdFiles: hasOrdererIdFiles,
       hasRepresentativeIdFiles: hasRepresentativeIdFiles,
+      hasConsignorRegisterFiles: hasConsignorRegisterFiles,
+      hasRepresentativeRegisterFiles: hasRepresentativeRegisterFiles,
       paragraphVisibility: paragraphVisibility,
     );
 
@@ -346,6 +357,8 @@ class ContractPdfPayloadBuilder {
     required String annexCSignatureBase64,
     required String leuSignatureBase64,
     required String? correspondence,
+    required bool hasConsignorRegisterFiles,
+    required bool hasRepresentativeRegisterFiles,
   }) {
     final ownerOrEmpty = owner ?? consignor;
     final ownerAddress =
@@ -353,13 +366,13 @@ class ContractPdfPayloadBuilder {
     final legalOwnerCompany = ownerIsLegal ? ownerOrEmpty.tradingName : '';
     final legalOwnerRepName =
         ownerIsLegal ? _personDisplayName(ownerOrEmpty) : '';
-    final consignorPersonName = _contractDisplayName(consignor);
+    final consignorPersonName = _personDisplayName(consignor);
     final ownerPersonName = _personDisplayName(ownerOrEmpty);
     final authorizedPerson =
         representedByAnotherParty ? representative : consignor;
     final authorizedPersonInfo = authorizedPerson?.consignorInfo;
     final authorizedPersonName =
-        authorizedPerson == null ? '' : _contractDisplayName(authorizedPerson);
+        authorizedPerson == null ? '' : _personDisplayName(authorizedPerson);
     final authorizedPersonAddress = authorizedPerson == null
         ? null
         : _localizedAddress(authorizedPerson.consignorAddress, correspondence);
@@ -393,6 +406,11 @@ class ContractPdfPayloadBuilder {
     final signerPlaceDate = '$placeOfSignature$dateSuffix';
     final consignorPlaceDate = isProvisional ? '' : signerPlaceDate;
     final leuPlaceDate = 'Winterthur$dateSuffix';
+    final representativeSignaturePrefix = representedByAnotherParty
+        ? (correspondence?.trim().toLowerCase() == 'en'
+            ? 'for and on behalf of '
+            : 'i.A. ')
+        : '';
 
     final bankAccountValue = consignor.bankingDetails.accountNumber;
     final ibanValue = consignor.bankingDetails.isIban ? bankAccountValue : '';
@@ -435,7 +453,7 @@ class ContractPdfPayloadBuilder {
       'contractPlaceDate': consignorPlaceDate,
       'consignor_signature_image': contractSignatureBase64,
       'consignorSignatureBase64Png': contractSignatureBase64,
-      'consignor_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
+      'consignor_signature_prefix': representativeSignaturePrefix,
       'consignor_signature_name': signerName,
       'consignor_signer_name_function': signerName,
       'legal_entity_name': scenario.consignorType == ConsignorType.legalEntity
@@ -534,7 +552,7 @@ class ContractPdfPayloadBuilder {
       'annex_a_signature_image': annexASignatureBase64,
       'annexConsignorSignatureBase64Png': annexASignatureBase64,
       'annexAConsignorSignatureBase64Png': annexASignatureBase64,
-      'annex_a_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
+      'annex_a_signature_prefix': representativeSignaturePrefix,
       'annex_a_signature_name': signerName,
       'annex_a_signer_name': signerName,
       'annex_a_owner_full_name': ownerIsLegal ? '' : ownerPersonName,
@@ -568,7 +586,7 @@ class ContractPdfPayloadBuilder {
       'annexCPlaceDate': consignorPlaceDate,
       'annex_c_signature_image': annexCSignatureBase64,
       'annexCConsignorSignatureBase64Png': annexCSignatureBase64,
-      'annex_c_signature_prefix': representedByAnotherParty ? 'i.A. ' : '',
+      'annex_c_signature_prefix': representativeSignaturePrefix,
       'annex_c_signature_name': signerName,
       'annex_c_signer_name': signerName,
       'attachment_id_natural_images': '',
@@ -592,12 +610,12 @@ class ContractPdfPayloadBuilder {
           _checkbox(consignor.paymentOption == PaymentOption.pending),
       'check_attach_id_natural':
           _checkbox(paragraphVisibility['Paragraf13'] ?? false),
-      'check_attach_commercial_register':
-          _checkbox(paragraphVisibility['Paragraf14'] ?? false),
+      'check_attach_commercial_register': _checkbox(hasConsignorRegisterFiles &&
+          (paragraphVisibility['Paragraf14'] ?? false)),
       'check_attach_id_representative':
           _checkbox(paragraphVisibility['Paragraf15'] ?? false),
-      'check_attach_register_legal':
-          _checkbox(paragraphVisibility['Paragraf16'] ?? false),
+      'check_attach_register_legal': _checkbox(hasRepresentativeRegisterFiles &&
+          (paragraphVisibility['Paragraf16'] ?? false)),
       'check_attach_annex_a': _checkbox(true),
       'check_attach_annex_b': _checkbox(record.productFiles.isNotEmpty),
       'check_attach_annex_c': _checkbox(true),
@@ -642,6 +660,8 @@ class ContractPdfPayloadBuilder {
     required bool ownerIsLegal,
     required bool hasOrdererIdFiles,
     required bool hasRepresentativeIdFiles,
+    required bool hasConsignorRegisterFiles,
+    required bool hasRepresentativeRegisterFiles,
     required Map<String, bool> paragraphVisibility,
   }) {
     final requiresRepresentativeId = paragraphVisibility['Paragraf15'] ?? false;
@@ -653,10 +673,12 @@ class ContractPdfPayloadBuilder {
     return {
       'blockAttachIdNatural':
           hasOrdererIdFiles && (paragraphVisibility['Paragraf13'] ?? false),
-      'blockAttachCommercialRegister': requiresConsignorRegister,
+      'blockAttachCommercialRegister':
+          hasConsignorRegisterFiles && requiresConsignorRegister,
       'blockAttachIdRepresentative':
           hasRepresentativeIdFiles && requiresRepresentativeId,
-      'blockAttachRegisterLegal': requiresRepresentativeRegister,
+      'blockAttachRegisterLegal':
+          hasRepresentativeRegisterFiles && requiresRepresentativeRegister,
       'blockAnnexASelfOwnerStatement':
           paragraphVisibility['Paragraf17'] ?? false,
       'blockAnnexANaturalOwnerDetails': !consignorIsOwner && !ownerIsLegal,
@@ -684,7 +706,7 @@ class ContractPdfPayloadBuilder {
       'Paragraf5': [false, false, false, true, true, false, false, false],
       'Paragraf6': [false, false, false, true, true, false, false, false],
       'Paragraf7': [false, true, true, true, true, false, true, true],
-      'Paragraf8': [false, false, true, false, true, false, false, false],
+      'Paragraf8': [false, false, true, false, true, false, false, true],
       'Paragraf9': [true, false, false, false, false, false, false, false],
       'Paragraf10': [false, true, false, false, false, false, true, false],
       'Paragraf11': [false, false, true, true, false, true, false, false],
@@ -695,8 +717,8 @@ class ContractPdfPayloadBuilder {
       'Paragraf16': [false, false, true, false, true, false, false, true],
       'Paragraf17': [true, false, false, false, false, true, false, false],
       'Paragraf18': [false, true, false, false, false, false, true, false],
-      'Paragraf19': [false, false, false, false, true, false, false, true],
-      'Paragraf20': [false, false, true, false, false, false, false, false],
+      'Paragraf19': [false, false, false, false, true, false, false, false],
+      'Paragraf20': [false, false, true, false, false, false, false, true],
       'Paragraf21': [false, false, false, true, true, true, true, true],
       'Paragraf22': [true, false, false, false, false, true, false, false],
       'Paragraf23': [false, true, true, true, true, false, true, true],
@@ -883,11 +905,26 @@ class ContractPdfPayloadBuilder {
     return normalized.substring(slash + 1);
   }
 
-  String? _uploadKind(ContractUpload upload, String fileName) {
+  String? _uploadKind(
+    ContractUpload upload,
+    String fileName,
+    _ContractRenderScenario scenario,
+  ) {
     final explicit = upload.kind.trim();
-    if (explicit.isNotEmpty) return explicit;
+    if (explicit.isNotEmpty) {
+      if (upload.fileType == UploadType.agreement &&
+          scenario.consignorType == ConsignorType.naturalPerson &&
+          scenario.representativeType == ConsignorType.legalEntity &&
+          _isConsignorRegisterKind(explicit)) {
+        return 'LegalRepresentativeRegister';
+      }
+      return explicit;
+    }
     if (upload.fileType == UploadType.agreement) {
-      return 'CommercialRegister';
+      return scenario.consignorType == ConsignorType.naturalPerson &&
+              scenario.representativeType == ConsignorType.legalEntity
+          ? 'LegalRepresentativeRegister'
+          : 'CommercialRegister';
     }
     if (upload.fileType == UploadType.passport) {
       return 'IdDocument';
@@ -899,6 +936,30 @@ class ContractPdfPayloadBuilder {
       return 'UploadedPdf';
     }
     return null;
+  }
+
+  bool _isConsignorRegisterKind(String? value) {
+    final normalized = _normalizedAttachmentKind(value);
+    return normalized == 'commercialregister' ||
+        normalized == 'commercialregisterexcerpt' ||
+        normalized == 'companyregister' ||
+        normalized == 'handelsregister';
+  }
+
+  bool _isRepresentativeRegisterKind(String? value) {
+    final normalized = _normalizedAttachmentKind(value);
+    return normalized == 'representativeregister' ||
+        normalized == 'authorizedrepresentativeregister' ||
+        normalized == 'legalrepresentativeregister' ||
+        normalized == 'legalentityrepresentativeregister' ||
+        normalized == 'registerlegal';
+  }
+
+  String _normalizedAttachmentKind(String? value) {
+    return (value ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
 
   bool _isImageFileName(String fileName) {

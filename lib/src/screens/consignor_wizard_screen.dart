@@ -48,6 +48,8 @@ const _representativeIdKind = 'RepresentativeId';
 const _ordererIdValidationReportKind = 'NaturalPersonIdValidationReport';
 const _representativeIdValidationReportKind =
     'RepresentativeIdValidationReport';
+const _commercialRegisterKind = 'CommercialRegister';
+const _legalRepresentativeRegisterKind = 'LegalRepresentativeRegister';
 const _phoneTargetConsignorId = 'consignor-identification';
 const _phoneTargetRepresentativeId = 'representative-identification';
 const _phoneTargetProductPictures = 'product-pictures';
@@ -57,6 +59,14 @@ const _representativeIdentificationLabel =
 const _productPicturesLabel = 'Product pictures';
 const _pentaOutputRootPath = r'C:\CoinContracts';
 const _pentaScanTimeout = Duration(minutes: 2);
+
+bool _isLegalRepresentativeRegisterKind(String value) {
+  final normalized = value.trim().toLowerCase();
+  return normalized == _legalRepresentativeRegisterKind.toLowerCase() ||
+      normalized == 'representativeregister' ||
+      normalized == 'authorizedrepresentativeregister' ||
+      normalized == 'registerlegal';
+}
 
 class ConsignorWizardScreen extends StatefulWidget {
   const ConsignorWizardScreen({
@@ -158,10 +168,34 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   _WizardStep get _currentStep => _steps[_step];
 
   bool get _requiresCommercialRegisterFiles {
+    return _requiresConsignorRegisterFiles ||
+        _requiresLegalRepresentativeRegisterFiles;
+  }
+
+  bool get _requiresConsignorRegisterFiles {
     return _draft.consignorType == ConsignorType.legalEntity ||
-        _draft.consignorType == ConsignorType.soleProprietor ||
-        (!_draft.coinsOwnedByConsignor &&
-            _representativeDraft.consignorType == ConsignorType.legalEntity);
+        _draft.consignorType == ConsignorType.soleProprietor;
+  }
+
+  bool get _requiresLegalRepresentativeRegisterFiles {
+    return !_draft.coinsOwnedByConsignor &&
+        _representativeDraft.consignorType == ConsignorType.legalEntity;
+  }
+
+  List<ContractUpload> get _consignorRegisterFiles {
+    if (!_requiresConsignorRegisterFiles) return const [];
+    return _draft.registrationFiles
+        .where((file) => !_isLegalRepresentativeRegisterKind(file.kind))
+        .toList(growable: false);
+  }
+
+  List<ContractUpload> get _legalRepresentativeRegisterFiles {
+    return _draft.registrationFiles
+        .where((file) =>
+            _isLegalRepresentativeRegisterKind(file.kind) ||
+            (!_requiresConsignorRegisterFiles &&
+                _requiresLegalRepresentativeRegisterFiles))
+        .toList(growable: false);
   }
 
   bool get _requiresRepresentativeDetails {
@@ -2635,10 +2669,20 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
           onBack: _back,
           onNext: _next,
         ),
-      _WizardStep.registrationFiles => _FileStep(
-          title: 'Commercial register',
-          files: _draft.registrationFiles,
-          onAdd: () => _addFiles(UploadType.agreement),
+      _WizardStep.registrationFiles => _RegistrationFilesStep(
+          showConsignorRegister: _requiresConsignorRegisterFiles,
+          showLegalRepresentativeRegister:
+              _requiresLegalRepresentativeRegisterFiles,
+          consignorFiles: _consignorRegisterFiles,
+          legalRepresentativeFiles: _legalRepresentativeRegisterFiles,
+          onAddConsignor: () => _addFiles(
+            UploadType.agreement,
+            kind: _commercialRegisterKind,
+          ),
+          onAddLegalRepresentative: () => _addFiles(
+            UploadType.agreement,
+            kind: _legalRepresentativeRegisterKind,
+          ),
           onOpen: _fileService.open,
           onRemove: _removeFile,
           onBack: _back,
@@ -4732,20 +4776,26 @@ class _AuctionStep extends StatelessWidget {
   }
 }
 
-class _FileStep extends StatelessWidget {
-  const _FileStep({
-    required this.title,
-    required this.files,
-    required this.onAdd,
+class _RegistrationFilesStep extends StatelessWidget {
+  const _RegistrationFilesStep({
+    required this.showConsignorRegister,
+    required this.showLegalRepresentativeRegister,
+    required this.consignorFiles,
+    required this.legalRepresentativeFiles,
+    required this.onAddConsignor,
+    required this.onAddLegalRepresentative,
     required this.onOpen,
     required this.onRemove,
     required this.onBack,
     required this.onNext,
   });
 
-  final String title;
-  final List<ContractUpload> files;
-  final VoidCallback onAdd;
+  final bool showConsignorRegister;
+  final bool showLegalRepresentativeRegister;
+  final List<ContractUpload> consignorFiles;
+  final List<ContractUpload> legalRepresentativeFiles;
+  final VoidCallback onAddConsignor;
+  final VoidCallback onAddLegalRepresentative;
   final ValueChanged<String> onOpen;
   final ValueChanged<ContractUpload> onRemove;
   final VoidCallback onBack;
@@ -4755,41 +4805,77 @@ class _FileStep extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall),
+        Text('Commercial register',
+            style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 16),
-        SectionCard(
-          title: 'Files',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: onAdd,
-                    icon: const Icon(Icons.upload_file_outlined),
-                    label: const Text('Add file'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (files.isEmpty)
-                const Text('No files selected yet.')
-              else
-                ...files.map(
-                  (file) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _FileTile(
-                        upload: file, onOpen: onOpen, onRemove: onRemove),
-                  ),
-                ),
-            ],
+        if (showConsignorRegister)
+          _RegisterFileSection(
+            title: 'Commercial-register extract of the Consignor',
+            files: consignorFiles,
+            onAdd: onAddConsignor,
+            onOpen: onOpen,
+            onRemove: onRemove,
           ),
-        ),
+        if (showConsignorRegister && showLegalRepresentativeRegister)
+          const SizedBox(height: 12),
+        if (showLegalRepresentativeRegister)
+          _RegisterFileSection(
+            title:
+                'Commercial-register extract of the authorized legal entity or partnership',
+            files: legalRepresentativeFiles,
+            onAdd: onAddLegalRepresentative,
+            onOpen: onOpen,
+            onRemove: onRemove,
+          ),
         const SizedBox(height: 20),
         _WizardButtons(onBack: onBack, onNext: onNext),
       ],
+    );
+  }
+}
+
+class _RegisterFileSection extends StatelessWidget {
+  const _RegisterFileSection({
+    required this.title,
+    required this.files,
+    required this.onAdd,
+    required this.onOpen,
+    required this.onRemove,
+  });
+
+  final String title;
+  final List<ContractUpload> files;
+  final VoidCallback onAdd;
+  final ValueChanged<String> onOpen;
+  final ValueChanged<ContractUpload> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: title,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          OutlinedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.upload_file_outlined),
+            label: const Text('Add file'),
+          ),
+          const SizedBox(height: 12),
+          if (files.isEmpty)
+            const Text('No file selected yet.')
+          else
+            for (final file in files)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _FileTile(
+                  upload: file,
+                  onOpen: onOpen,
+                  onRemove: onRemove,
+                ),
+              ),
+        ],
+      ),
     );
   }
 }

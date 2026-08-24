@@ -105,6 +105,17 @@ void main() {
       expect(restored.isLegalEntity, isFalse);
     });
 
+    test('partnership aliases parse as legal entities', () {
+      expect(
+        ConsignorTypeX.fromAny('Partnership'),
+        ConsignorType.legalEntity,
+      );
+      expect(
+        ConsignorTypeX.fromAny('Personengesellschaft'),
+        ConsignorType.legalEntity,
+      );
+    });
+
     test('markSynced sets syncStatus and updates lastSyncedUtc', () {
       final consignor = Consignor.empty();
 

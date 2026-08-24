@@ -31,6 +31,8 @@ extension ConsignorTypeX on ConsignorType {
       case 'legal_entity':
       case 'legal entity':
       case 'company':
+      case 'partnership':
+      case 'personengesellschaft':
       case 'juristische person':
       case 'jur. person':
         return ConsignorType.legalEntity;
