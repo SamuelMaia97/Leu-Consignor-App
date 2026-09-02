@@ -643,6 +643,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   Future<void> _selectExisting(CustomerLookupResult result) async {
     setState(() {
       _draft.applyPrefill(result.prefill);
+      _draft.localConsignorId = null;
+      _draft.systemReferenceConsignor = 0;
+      _draft.systemReferenceCustomer = 0;
       _draft.usesExistingCustomer = true;
       _draft.existingCustomerId = result.customerId;
       _draft.existingCustomerLabel = result.displayLabel;
@@ -903,6 +906,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _representativeSearchGeneration++;
     setState(() {
       _representativeDraft.applyPrefill(result.prefill);
+      _representativeDraft.localConsignorId = null;
+      _representativeDraft.systemReferenceConsignor = 0;
+      _representativeDraft.systemReferenceCustomer = 0;
       _representativeDraft.usesExistingCustomer = true;
       _representativeDraft.existingCustomerId = result.customerId;
       _representativeDraft.existingCustomerLabel = result.displayLabel;
@@ -1111,8 +1117,8 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   ) async {
     try {
       final synced = await state.syncConsignor(consignorId);
-      if (!mounted || synced == null) return;
-      setState(() => _draft.localConsignorId = synced.id);
+      if (!mounted || synced == null || !synced.synced) return;
+      setState(() => _draft.applySyncedReferences(synced));
     } catch (_) {
       // The local profile is already saved; regular sync can retry later.
     }
@@ -1916,7 +1922,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     _draft.localConsignorId = saved.id;
     if (state.hasValidToken) {
       saved = await state.syncConsignor(saved.id) ?? saved;
-      _draft.localConsignorId = saved.id;
+      if (saved.synced) {
+        _draft.applySyncedReferences(saved);
+      } else {
+        _draft.localConsignorId = saved.id;
+      }
     }
     return saved;
   }
@@ -2214,7 +2224,11 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       authorizedRepresentative: authorizedRepresentative,
     );
     saved = synced ?? state.consignorById(saved.id) ?? saved;
-    _draft.localConsignorId = saved.id;
+    if (saved.synced) {
+      _draft.applySyncedReferences(saved);
+    } else {
+      _draft.localConsignorId = saved.id;
+    }
 
     if (saved.syncStatus == RecordSyncStatus.syncFailed) {
       final message = saved.syncErrorMessage?.trim().isNotEmpty == true
@@ -3392,6 +3406,14 @@ class _WizardDraft {
     formRevision++;
   }
 
+  void applySyncedReferences(Consignor synced) {
+    localConsignorId = synced.id;
+    systemReferenceConsignor = synced.systemReferenceConsignor;
+    systemReferenceCustomer = synced.systemReferenceCustomer;
+    abacusSubjectId = synced.abacusSubjectId;
+    existingCustomerId = synced.existingCustomerId;
+  }
+
   void addFiles(List<String> paths, UploadType type, {String kind = ''}) {
     final now = DateTime.now().toUtc();
     final normalizedKind = kind.trim();
@@ -4245,6 +4267,7 @@ class _ConsignorDetailsForm extends StatelessWidget {
                   '$_keyPrefix-field-date-of-birth-${draft.dateOfBirth?.toIso8601String() ?? 'empty'}',
                 ),
                 label: 'Date of birth *',
+                dialogTitle: 'Select date of birth',
                 value: draft.dateOfBirth,
                 validator: (value) =>
                     value == null ? 'Date of birth is required' : null,
@@ -4967,7 +4990,7 @@ class _PicturesStep extends StatelessWidget {
               : null,
         ),
         const SizedBox(height: 12),
-        _PassportValidityField(
+        PassportValidityField(
           label: 'Consignor Passport Valid Until',
           value: ordererPassportValidUntil,
           validationPassed: ordererPassportValidationPassed,
@@ -4989,7 +5012,7 @@ class _PicturesStep extends StatelessWidget {
                 : null,
           ),
           const SizedBox(height: 12),
-          _PassportValidityField(
+          PassportValidityField(
             label: 'Representative Passport Valid Until',
             value: representativePassportValidUntil,
             validationPassed: representativePassportValidationPassed,
@@ -5013,8 +5036,9 @@ class _PicturesStep extends StatelessWidget {
   }
 }
 
-class _PassportValidityField extends StatelessWidget {
-  const _PassportValidityField({
+class PassportValidityField extends StatelessWidget {
+  const PassportValidityField({
+    super.key,
     required this.label,
     required this.value,
     required this.validationPassed,
@@ -5061,7 +5085,9 @@ class _PassportValidityField extends StatelessWidget {
       children: [
         Expanded(
           child: _DatePickerFormField(
+            key: ValueKey((label, value?.year, value?.month, value?.day)),
             label: label,
+            dialogTitle: 'Select passport expiry date',
             value: value,
             initialDate: value ?? todayDate.add(const Duration(days: 365 * 5)),
             firstDate: DateTime(1990, 1, 1),
@@ -7066,6 +7092,7 @@ class _DatePickerFormField extends FormField<DateTime> {
   _DatePickerFormField({
     super.key,
     required String label,
+    required String dialogTitle,
     required DateTime? value,
     required ValueChanged<DateTime?> onChanged,
     DateTime? initialDate,
@@ -7082,6 +7109,7 @@ class _DatePickerFormField extends FormField<DateTime> {
                 final picked = await showDialog<DateTime>(
                   context: field.context,
                   builder: (context) => _MonthYearDayPickerDialog(
+                    title: dialogTitle,
                     initialDate:
                         selected ?? initialDate ?? DateTime(1990, 1, 1),
                     firstDate: firstDate ?? DateTime(1900, 1, 1),
@@ -7142,11 +7170,13 @@ String? _optionalPercentage(String? value, String fieldLabel) {
 
 class _MonthYearDayPickerDialog extends StatefulWidget {
   const _MonthYearDayPickerDialog({
+    required this.title,
     required this.initialDate,
     required this.firstDate,
     required this.lastDate,
   });
 
+  final String title;
   final DateTime initialDate;
   final DateTime firstDate;
   final DateTime lastDate;
@@ -7269,7 +7299,7 @@ class _MonthYearDayPickerDialogState extends State<_MonthYearDayPickerDialog> {
     final days = _availableDays;
 
     return AlertDialog(
-      title: const Text('Select date of birth'),
+      title: Text(widget.title),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
         child: Column(

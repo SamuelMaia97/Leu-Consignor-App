@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leu_consignor_app/src/models/abacus_sync.dart';
 import 'package:leu_consignor_app/src/models/app_settings.dart';
+import 'package:leu_consignor_app/src/models/consignor.dart';
 import 'package:leu_consignor_app/src/models/contract_record.dart';
 import 'package:leu_consignor_app/src/services/api_service.dart';
 
@@ -236,6 +237,111 @@ void main() {
       expect(prefill.bankingDetails.bankName, 'Abacus Maintained Bank');
       expect(prefill.bankingDetails.bankCountryIso3, 'CHE');
       expect(prefill.bankingDetails.bankCountryName, 'Switzerland');
+    });
+
+    test('recreates a missing consignor once using its existing customer',
+        () async {
+      Map<String, dynamic>? createPayload;
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/update/2342') {
+          await request.drain<void>();
+          request.response.statusCode = HttpStatus.badRequest;
+          await writeJson(request, {'Error': 'Consignor not found.'});
+          return;
+        }
+
+        if (request.uri.path == '/api/consignors-app/consignors/bulk-create') {
+          final body = jsonDecode(await utf8.decoder.bind(request).join());
+          final rows = body as List<dynamic>;
+          createPayload = (rows.single as Map).cast<String, dynamic>();
+          await writeJson(request, [
+            {
+              'SystemReferenceConsignor': 2401,
+              'SystemReferenceCustomer': 12001,
+              'AbacusSubjectId': 11217,
+              'CustomerAction': 'Existing',
+              'ConsignorAction': 'Created',
+            },
+          ]);
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final consignor = Consignor.empty()
+        ..id = 'local-1'
+        ..systemReferenceConsignor = 2342
+        ..systemReferenceCustomer = 11217
+        ..abacusSubjectId = null
+        ..existingCustomerId = 11217;
+
+      final result = await buildApi().pushConsignors([consignor]);
+      final reference = result.references['local-1']!;
+
+      expect(
+        requests,
+        equals([
+          'PUT /api/consignors-app/consignors/update/2342',
+          'POST /api/consignors-app/consignors/bulk-create',
+        ]),
+      );
+      expect(createPayload, isNotNull);
+      expect(createPayload!['id'], 'local-1');
+      expect(createPayload!['systemReferenceConsignor'], 0);
+      expect(createPayload!['systemReferenceCustomer'], 0);
+      expect(createPayload!['abacusSubjectId'], isNull);
+      expect(createPayload!['existingCustomerId'], 11217);
+      expect(consignor.systemReferenceConsignor, 2342);
+      expect(consignor.systemReferenceCustomer, 11217);
+      expect(result.pushedCount, 1);
+      expect(reference.systemReferenceConsignor, 2401);
+      expect(reference.systemReferenceCustomer, 12001);
+      expect(reference.abacusSubjectId, 11217);
+      expect(reference.linkedExistingCustomer, isTrue);
+    });
+
+    test('does not recreate a consignor for unrelated update failures',
+        () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/update/77') {
+          await request.drain<void>();
+          request.response.statusCode = HttpStatus.badRequest;
+          await writeJson(request, {'Error': 'Bank details invalid.'});
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.internalServerError;
+        await request.response.close();
+      };
+
+      final consignor = Consignor.empty()
+        ..id = 'local-1'
+        ..systemReferenceConsignor = 77
+        ..systemReferenceCustomer = 115015;
+
+      await expectLater(
+        buildApi().pushConsignors([consignor]),
+        throwsA(
+          isA<Exception>()
+              .having(
+                (error) => error.toString(),
+                'message',
+                contains('HTTP 400'),
+              )
+              .having(
+                (error) => error.toString(),
+                'message',
+                contains('Bank details invalid.'),
+              ),
+        ),
+      );
+
+      expect(
+        requests,
+        equals(['PUT /api/consignors-app/consignors/update/77']),
+      );
     });
 
     test('imports summary-only rows and reports missing fields', () async {

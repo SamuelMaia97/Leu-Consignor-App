@@ -24,7 +24,9 @@ void main() {
 
       expect(result.customerId, 115015);
       expect(result.prefill.existingCustomerId, 115015);
-      expect(result.prefill.systemReferenceCustomer, 115015);
+      expect(result.prefill.systemReferenceConsignor, 0);
+      expect(result.prefill.systemReferenceCustomer, 0);
+      expect(result.prefill.abacusSubjectId, 115015);
       expect(result.prefill.consignorType, ConsignorType.legalEntity);
       expect(result.prefill.tradingName, 'Leu Numismatik AG');
       expect(result.prefill.consignorInfo.firstName, 'Samuel');

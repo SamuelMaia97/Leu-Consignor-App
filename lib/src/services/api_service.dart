@@ -210,16 +210,18 @@ class ApiService {
       preview.customerId,
       json['passportUploads'] ?? json['PassportUploads'],
     );
-    final hydratedPrefill =
-        await _customerDetailPrefill(preview.customerId, fallbackJson: json);
+    final hydratedPrefill = await _customerDetailPrefill(preview.customerId);
     if (hydratedPrefill == null) {
       return CustomerLookupResult.fromJson(json, passportUploads: uploads);
     }
 
-    hydratedPrefill.existingCustomerId ??= preview.customerId;
-    if (hydratedPrefill.systemReferenceCustomer <= 0) {
-      hydratedPrefill.systemReferenceCustomer = preview.customerId;
-    }
+    // The selected customer ID is authoritative. Detail payloads can also
+    // expose report/consignor identifiers, but those are not valid update
+    // identities for a new consignor linked through customer lookup.
+    hydratedPrefill.systemReferenceConsignor = 0;
+    hydratedPrefill.systemReferenceCustomer = 0;
+    hydratedPrefill.existingCustomerId = preview.customerId;
+    hydratedPrefill.abacusSubjectId = preview.customerId;
     if ((hydratedPrefill.existingCustomerLabel ?? '').trim().isEmpty) {
       hydratedPrefill.existingCustomerLabel = preview.displayLabel;
     }
@@ -233,24 +235,14 @@ class ApiService {
     );
   }
 
-  Future<Consignor?> _customerDetailPrefill(
-    int customerId, {
-    required Map<String, dynamic> fallbackJson,
-  }) async {
+  Future<Consignor?> _customerDetailPrefill(int customerId) async {
     if (customerId <= 0) return null;
 
-    final candidates = _reportDetailCandidateIds(fallbackJson);
-    if (!candidates.contains(customerId)) {
-      candidates.add(customerId);
-    }
-
-    for (final id in candidates) {
-      try {
-        final detail = await _fetchConsignorDetailUnchecked(id);
-        if (detail.consignor != null) return detail.consignor;
-      } on DioException catch (e) {
-        if (_mustRethrowDetailError(e)) rethrow;
-      }
+    try {
+      final detail = await _fetchConsignorDetailUnchecked(customerId);
+      return detail.consignor;
+    } on DioException catch (e) {
+      if (_mustRethrowDetailError(e)) rethrow;
     }
 
     return null;
@@ -682,14 +674,33 @@ class ApiService {
           );
         }
 
-        final response = await _dio.put(
-          _path(settings.consignorsUpdateOne)
-              .replaceAll('{id}', '$consignorId'),
-          data: _consignorPayload(
-            consignor,
-            authorizedRepresentative: authorizedRepresentatives[consignor.id],
-          ),
-        );
+        late final Response<dynamic> response;
+        try {
+          response = await _dio.put(
+            _path(settings.consignorsUpdateOne)
+                .replaceAll('{id}', '$consignorId'),
+            data: _consignorPayload(
+              consignor,
+              authorizedRepresentative: authorizedRepresentatives[consignor.id],
+            ),
+          );
+        } on DioException catch (error) {
+          final existingCustomerIdentity = _existingCustomerIdentity(consignor);
+          if (!_isMissingConsignorUpdate(error) ||
+              existingCustomerIdentity == null) {
+            rethrow;
+          }
+
+          // Customer lookup can expose a stale consignor row. Only the
+          // backend's explicit not-found result permits this one link/create.
+          toCreate.add(
+            _existingCustomerCreateCandidate(
+              consignor,
+              existingCustomerIdentity,
+            ),
+          );
+          continue;
+        }
 
         final payload = response.data is Map
             ? (response.data as Map).cast<String, dynamic>()
@@ -1291,6 +1302,48 @@ class ApiService {
       ).toJson();
     }
     return payload;
+  }
+
+  bool _isMissingConsignorUpdate(DioException error) {
+    if (error.response?.statusCode != HttpStatus.badRequest) return false;
+
+    final body = error.response?.data;
+    if (body is! Map) return false;
+
+    final message = (body['error'] ?? body['Error'])?.toString().trim();
+    if (message == null) return false;
+
+    final normalized = message.toLowerCase();
+    return normalized == 'consignor not found' ||
+        normalized == 'consignor not found.';
+  }
+
+  int? _existingCustomerIdentity(Consignor consignor) {
+    final existingCustomerId = consignor.existingCustomerId;
+    if (existingCustomerId != null && existingCustomerId > 0) {
+      return existingCustomerId;
+    }
+
+    final abacusSubjectId = consignor.abacusSubjectId;
+    if (abacusSubjectId != null && abacusSubjectId > 0) {
+      return abacusSubjectId;
+    }
+
+    // Kept only for records saved before ExistingCustomerId/AbacusSubjectId
+    // became the explicit identity used by the create/link endpoint.
+    return consignor.systemReferenceCustomer > 0
+        ? consignor.systemReferenceCustomer
+        : null;
+  }
+
+  Consignor _existingCustomerCreateCandidate(
+    Consignor consignor,
+    int customerId,
+  ) {
+    return Consignor.fromJson(consignor.toJson())
+      ..systemReferenceConsignor = 0
+      ..systemReferenceCustomer = 0
+      ..existingCustomerId = customerId;
   }
 
   Map<String, dynamic> _contractSyncPayload(AbacusContractSyncEvent event) => {
