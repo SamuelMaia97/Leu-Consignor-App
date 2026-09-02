@@ -30,10 +30,13 @@ class CustomerLookupResult {
     final prefill = Consignor.fromJson(mergedPrefillJson);
 
     if (customerId > 0) {
-      prefill.existingCustomerId ??= customerId;
-      if (prefill.systemReferenceCustomer <= 0) {
-        prefill.systemReferenceCustomer = customerId;
-      }
+      // Customer lookup data is used to create a new consignor linked to an
+      // existing Abacus customer. A consignor ID included in lookup metadata
+      // must not make that new draft look like an already-synced consignor.
+      prefill.systemReferenceConsignor = 0;
+      prefill.systemReferenceCustomer = 0;
+      prefill.existingCustomerId = customerId;
+      prefill.abacusSubjectId = customerId;
     }
     if ((prefill.existingCustomerLabel ?? '').trim().isEmpty &&
         displayLabel.trim().isNotEmpty) {
