@@ -51,13 +51,20 @@ void main() {
       expect(consignor.lastModifiedUtc, isNot(before));
     });
 
-    test('passport valid-until date writes and reads Abacus UserField16', () {
+    test('writes API date fields without coupling the app to Abacus fields',
+        () {
       final consignor = Consignor.empty()
-        ..passportValidUntil = DateTime.utc(2030, 12, 31);
+        ..passportValidUntil = DateTime.utc(2030, 12, 31)
+        ..consignmentRate = '9.25'
+        ..consignorInfo.dateOfBirth = DateTime.utc(1989, 12, 31);
 
       final json = consignor.toJson();
+      final person = json['consignorInfo'] as Map<String, dynamic>;
+      expect(person['dateOfBirth'], '1989-12-31');
+      expect(json['passportDate'], '2030-12-31');
       expect(json['passportValidUntil'], '2030-12-31');
-      expect(json['UserField16'], '2030-12-31');
+      expect(json['consignmentRate'], '9.25');
+      expect(json, isNot(contains('UserField16')));
 
       final restored = Consignor.fromJson({
         'id': '1',
@@ -72,6 +79,38 @@ void main() {
       expect(
         restoredDateOnly.passportValidUntil,
         DateTime.utc(2030, 12, 31),
+      );
+    });
+
+    test('normalizes a decimal consignment rate to invariant notation', () {
+      final consignor = Consignor.empty()..consignmentRate = ' 9,25% ';
+
+      final json = consignor.toJson();
+      final restored = Consignor.fromJson({
+        'id': '1',
+        'ConsignmentRate': '9.250',
+      });
+
+      expect(json['consignmentRate'], '9.25');
+      expect(restored.consignmentRate, '9.250');
+    });
+
+    test('date-only parsing preserves the source calendar day across offsets',
+        () {
+      final consignor = Consignor.fromJson({
+        'id': '1',
+        'passportDate': '2030-12-31T23:30:00-11:00',
+        'consignorInfo': {
+          'dateOfBirth': '1989-12-31T23:30:00-11:00',
+        },
+      });
+
+      expect(consignor.passportValidUntil, DateTime.utc(2030, 12, 31));
+      expect(consignor.consignorInfo.dateOfBirth, DateTime.utc(1989, 12, 31));
+      expect(
+        (consignor.toJson()['consignorInfo']
+            as Map<String, dynamic>)['dateOfBirth'],
+        '1989-12-31',
       );
     });
 

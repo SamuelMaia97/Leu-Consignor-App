@@ -2212,7 +2212,9 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     final authorizedRepresentative = _requiresRepresentativeDetails
         ? _representativeDraft.toConsignor()
         : null;
-    var saved = await state.saveConsignor(_draft.toConsignor());
+    var saved = await state.saveConsignor(
+      _draft.toConsignor(includeContractRate: true),
+    );
     _draft.localConsignorId = saved.id;
 
     if (!state.hasValidToken) {
@@ -3403,6 +3405,10 @@ class _WizardDraft {
     discount = prefill.discount;
     consignmentFeeFloorAuction = prefill.consignmentFeeFloorAuction;
     consignmentFeeWebAuction = prefill.consignmentFeeWebAuction;
+    final storedConsignmentRate = prefill.consignmentRate?.trim();
+    if (storedConsignmentRate != null && storedConsignmentRate.isNotEmpty) {
+      commissionRate = storedConsignmentRate;
+    }
     formRevision++;
   }
 
@@ -3517,7 +3523,7 @@ class _WizardDraft {
     return RegExp(r'^[A-Z]{2}[0-9A-Z]{13,32}$').hasMatch(compact);
   }
 
-  Consignor toConsignor() {
+  Consignor toConsignor({bool includeContractRate = false}) {
     final consignor = Consignor.empty();
     final persistedId = localConsignorId?.trim();
     if (persistedId != null && persistedId.isNotEmpty) {
@@ -3610,10 +3616,19 @@ class _WizardDraft {
     consignor.worldCoinsSubscribed = worldCoinsSubscribed;
     consignor.creditLimit = 500000;
     consignor.discount = discount;
+    if (includeContractRate) {
+      consignor.consignmentRate = _normalizeConsignmentRate(commissionRate);
+    }
     consignor.consignmentFeeFloorAuction = consignmentFeeFloorAuction;
     consignor.consignmentFeeWebAuction = consignmentFeeWebAuction;
     consignor.ensureGeneratedCredentials();
     return consignor;
+  }
+
+  static String? _normalizeConsignmentRate(String value) {
+    final normalized =
+        value.trim().replaceAll('%', '').replaceAll(',', '.').trim();
+    return normalized.isEmpty ? null : normalized;
   }
 }
 
