@@ -119,7 +119,7 @@ class Person {
         'firstName': firstName.trim(),
         'lastName': lastName.trim(),
         'owner': owner,
-        'dateOfBirth': dateOfBirth?.toUtc().toIso8601String(),
+        'dateOfBirth': _formatDateOnly(dateOfBirth),
         'nationality':
             nationalityIso3.trim().isEmpty && nationalityName.trim().isEmpty
                 ? null
@@ -150,7 +150,58 @@ class Person {
 
   static DateTime? _parseDate(Object? value) {
     if (value == null) return null;
-    return DateTime.tryParse(value.toString());
+    if (value is DateTime) {
+      return DateTime.utc(value.year, value.month, value.day);
+    }
+
+    final text = value.toString().trim();
+    if (text.isEmpty) return null;
+
+    // Customer dates are calendar dates. Preserve the date written by the
+    // source instead of allowing an offset conversion to move it a day.
+    final isoDate =
+        RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])').firstMatch(text);
+    if (isoDate != null) {
+      return _validUtcDate(
+        int.tryParse(isoDate.group(1)!),
+        int.tryParse(isoDate.group(2)!),
+        int.tryParse(isoDate.group(3)!),
+      );
+    }
+
+    final european =
+        RegExp(r'^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$').firstMatch(text);
+    if (european != null) {
+      return _validUtcDate(
+        int.tryParse(european.group(3)!),
+        int.tryParse(european.group(2)!),
+        int.tryParse(european.group(1)!),
+      );
+    }
+
+    final parsed = DateTime.tryParse(text);
+    return parsed == null
+        ? null
+        : DateTime.utc(parsed.year, parsed.month, parsed.day);
+  }
+
+  static DateTime? _validUtcDate(int? year, int? month, int? day) {
+    if (year == null || month == null || day == null) {
+      return null;
+    }
+    final date = DateTime.utc(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) {
+      return null;
+    }
+    return date;
+  }
+
+  static String? _formatDateOnly(DateTime? value) {
+    if (value == null) return null;
+    final year = value.year.toString().padLeft(4, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '$year-$month-$day';
   }
 
   static String _countryIso(Object? value) {

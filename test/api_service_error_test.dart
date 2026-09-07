@@ -302,6 +302,49 @@ void main() {
       expect(reference.linkedExistingCustomer, isTrue);
     });
 
+    test('sends customer dates and the invariant single consignment rate',
+        () async {
+      Map<String, dynamic>? payload;
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/bulk-create') {
+          final body = jsonDecode(await utf8.decoder.bind(request).join());
+          payload =
+              ((body as List<dynamic>).single as Map).cast<String, dynamic>();
+          await writeJson(request, [
+            {
+              'SystemReferenceConsignor': 2402,
+              'SystemReferenceCustomer': 12002,
+              'AbacusSubjectId': 12002,
+              'CustomerAction': 'Created',
+              'ConsignorAction': 'Created',
+            },
+          ]);
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final consignor = Consignor.empty()
+        ..id = 'local-date-rate'
+        ..passportValidUntil = DateTime.utc(2031, 4, 5)
+        ..consignmentRate = '9.25';
+      consignor.consignorInfo.dateOfBirth = DateTime.utc(1988, 2, 3);
+
+      await buildApi().pushConsignors([consignor]);
+
+      expect(payload, isNotNull);
+      expect(
+        (payload!['consignorInfo'] as Map)['dateOfBirth'],
+        '1988-02-03',
+      );
+      expect(payload!['passportDate'], '2031-04-05');
+      expect(payload!['passportValidUntil'], '2031-04-05');
+      expect(payload!['consignmentRate'], '9.25');
+      expect(payload, isNot(contains('UserField16')));
+    });
+
     test('does not recreate a consignor for unrelated update failures',
         () async {
       handler = (request) async {

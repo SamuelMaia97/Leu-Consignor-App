@@ -37,6 +37,7 @@ class Consignor {
     this.correspondence,
     this.creditLimit = 0,
     this.discount,
+    this.consignmentRate,
     this.consignmentFeeFloorAuction,
     this.consignmentFeeWebAuction,
     this.eori = '',
@@ -82,6 +83,7 @@ class Consignor {
   String? correspondence;
   double creditLimit;
   double? discount;
+  String? consignmentRate;
   double? consignmentFeeFloorAuction;
   double? consignmentFeeWebAuction;
   String eori;
@@ -137,6 +139,7 @@ class Consignor {
       correspondence: 'en',
       creditLimit: 0,
       discount: null,
+      consignmentRate: null,
       consignmentFeeFloorAuction: null,
       consignmentFeeWebAuction: null,
       eori: '',
@@ -359,6 +362,9 @@ class Consignor {
       ),
       creditLimit: _toDouble(json['creditLimit'] ?? json['CreditLimit']) ?? 0,
       discount: _toDouble(json['discount'] ?? json['Discount']),
+      consignmentRate: _normalizeRate(
+        json['consignmentRate'] ?? json['ConsignmentRate'],
+      ),
       consignmentFeeFloorAuction: _toDouble(
         json['consignmentFeeFloorAuction'] ??
             json['ConsignmentFeeFloorAuction'] ??
@@ -420,8 +426,8 @@ class Consignor {
         'bankingDetails': bankingDetails.toJson(),
         'bankingDetailsDto': bankingDetails.toJson(),
         'paymentOption': paymentOption.apiName,
+        'passportDate': _formatDateOnly(passportValidUntil),
         'passportValidUntil': _formatDateOnly(passportValidUntil),
-        'UserField16': _formatDateOnly(passportValidUntil),
         'checkedByLeu': checkedByLeu,
         'ancientCoinsSubscribed': ancientCoinsSubscribed,
         'worldCoinsSubscribed': worldCoinsSubscribed,
@@ -429,6 +435,7 @@ class Consignor {
         'correspondence': _normalizeCorrespondence(correspondence),
         'creditLimit': creditLimit,
         'discount': discount,
+        'consignmentRate': _normalizeRate(consignmentRate),
         'consignmentFeeFloorAuction': consignmentFeeFloorAuction,
         'consignmentFeeWebAuction': consignmentFeeWebAuction,
         'eori': eori.trim().isEmpty ? null : eori.trim(),
@@ -521,6 +528,13 @@ class Consignor {
     return double.tryParse(value.toString());
   }
 
+  static String? _normalizeRate(Object? value) {
+    final text = value?.toString().trim();
+    if (text == null || text.isEmpty) return null;
+    final normalized = text.replaceAll('%', '').replaceAll(',', '.').trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
   static bool? _toBool(Object? value) {
     if (value is bool) return value;
     final text = value?.toString().toLowerCase().trim();
@@ -530,32 +544,48 @@ class Consignor {
   }
 
   static DateTime? _parseDate(Object? value) {
+    if (value is DateTime) {
+      return DateTime.utc(value.year, value.month, value.day);
+    }
     final text = value?.toString().trim();
     if (text == null || text.isEmpty) return null;
 
     final isoDateOnly =
-        RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$').firstMatch(text);
+        RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])').firstMatch(text);
     if (isoDateOnly != null) {
       final year = int.tryParse(isoDateOnly.group(1)!);
       final month = int.tryParse(isoDateOnly.group(2)!);
       final day = int.tryParse(isoDateOnly.group(3)!);
-      if (day == null || month == null || year == null) return null;
-      return DateTime.utc(year, month, day);
+      if (day == null || month == null || year == null) {
+        return null;
+      }
+      return _validUtcDate(year, month, day);
     }
-
-    final parsed = DateTime.tryParse(text);
-    if (parsed != null) return parsed;
 
     final european =
         RegExp(r'^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$').firstMatch(text);
-    if (european == null) return null;
+    if (european != null) {
+      final day = int.tryParse(european.group(1)!);
+      final month = int.tryParse(european.group(2)!);
+      final year = int.tryParse(european.group(3)!);
+      if (day == null || month == null || year == null) {
+        return null;
+      }
+      return _validUtcDate(year, month, day);
+    }
 
-    final day = int.tryParse(european.group(1)!);
-    final month = int.tryParse(european.group(2)!);
-    final year = int.tryParse(european.group(3)!);
-    if (day == null || month == null || year == null) return null;
+    final parsed = DateTime.tryParse(text);
+    return parsed == null
+        ? null
+        : DateTime.utc(parsed.year, parsed.month, parsed.day);
+  }
 
-    return DateTime.utc(year, month, day);
+  static DateTime? _validUtcDate(int year, int month, int day) {
+    final date = DateTime.utc(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) {
+      return null;
+    }
+    return date;
   }
 
   static String? _formatDateOnly(DateTime? value) {
