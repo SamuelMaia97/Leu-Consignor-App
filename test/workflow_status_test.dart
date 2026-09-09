@@ -62,7 +62,8 @@ void main() {
     });
 
     test('builds local sync preview counts for pending contracts', () {
-      final consignor = Consignor.empty();
+      final consignor = Consignor.empty()
+        ..syncStatus = RecordSyncStatus.pendingSync;
       final contract =
           ContractRecord.empty(consignor.id, auctionId: 1).copyWith(
         pdfName: 'COA-26-2.pdf',
@@ -85,6 +86,31 @@ void main() {
       expect(preview.pendingContractCount, 1);
       expect(preview.pendingUploadCount, 1);
       expect(preview.knownContractCount, 1);
+    });
+
+    test('keeps consignor drafts and their pending contracts out of sync', () {
+      final consignor = Consignor.empty();
+      final contract =
+          ContractRecord.empty(consignor.id, auctionId: 1).copyWith(
+        pdfName: 'COA-26-4.pdf',
+        syncStatus: RecordSyncStatus.pendingSync,
+        uploads: [
+          ContractUpload(
+            localId: 'product-1',
+            fileName: 'COA-26-4-Product-1.png',
+            fileType: UploadType.product,
+          ),
+        ],
+      );
+
+      final preview = WorkflowStatus.buildSyncPreview(
+        consignors: [consignor],
+        contracts: [contract],
+      );
+
+      expect(preview.changedConsignorCount, 0);
+      expect(preview.pendingContractCount, 0);
+      expect(preview.pendingUploadCount, 0);
     });
 
     test('ignores local draft contracts in sync preview upload counts', () {

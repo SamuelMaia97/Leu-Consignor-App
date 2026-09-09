@@ -118,7 +118,7 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
     }
   }
 
-  Future<void> _syncDraft(Consignor item) async {
+  Future<void> _syncConsignor(Consignor item) async {
     final updated = await context.read<AppState>().syncConsignor(item.id);
 
     if (!mounted) return;
@@ -127,7 +127,7 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
         ? 'Consignor synced successfully.'
         : (updated?.syncErrorMessage ??
             context.read<AppState>().lastMessage ??
-            'Draft sync finished.');
+            'Consignor sync finished.');
 
     ScaffoldMessenger.of(
       context,
@@ -429,7 +429,9 @@ class _ConsignorListScreenState extends State<ConsignorListScreen> {
                       child: _ConsignorRow(
                         item: item,
                         isSyncing: state.isSyncingConsignor(item.id),
-                        onSync: item.needsSync ? () => _syncDraft(item) : null,
+                        onSync: item.shouldUploadDuringWorkspaceSync
+                            ? () => _syncConsignor(item)
+                            : null,
                         localAction: _localDraftActionFor(item),
                         onDeleteDraft: () => _deleteLocalDraft(item),
                         onViewError:

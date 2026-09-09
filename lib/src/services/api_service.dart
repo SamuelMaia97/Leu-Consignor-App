@@ -116,6 +116,7 @@ class ApiService {
   Future<List<CustomerLookupResult>> searchExistingCustomers(
     String query, {
     int take = 15,
+    bool consignorsOnly = false,
   }) async {
     _ensureConfigured();
 
@@ -129,6 +130,7 @@ class ApiService {
         queryParameters: {
           'q': query.trim(),
           'take': take,
+          if (consignorsOnly) 'consignorsOnly': true,
         },
       );
 
@@ -269,15 +271,19 @@ class ApiService {
     return uploads;
   }
 
-  /// Fetches the list of consignors that have changed on the server since
-  /// [sinceUtc]. Only records with LastModifiedUtc **strictly after** [sinceUtc]
-  /// are returned by the backend.
+  /// Fetches the Abacus consignor report and hydrates the rows selected by
+  /// [shouldFetchConsignor].
   ///
-  /// Pass `null` for a full refresh (first-time sync). Otherwise pass the
-  /// highest [remoteLastModifiedUtc] stored locally so only changed records are
-  /// downloaded, turning “Fetching 1 of 1300” into “Fetching 1 of 10”.
+  /// [summariesOnly] asks the backend for the full, lightweight set of report
+  /// identities and timestamps. That allows the app to compare every record
+  /// with its own baseline without hydrating every consignor. [sinceUtc]
+  /// remains available for older callers and servers that support incremental
+  /// report filtering.
   Future<RemoteSnapshot> fetchRemoteSnapshot({
     DateTime? sinceUtc,
+    bool summariesOnly = false,
+    bool forceRefresh = false,
+    bool Function(RemoteConsignorVersion version)? shouldFetchConsignor,
     void Function(int current, int total, String message)? onProgress,
   }) async {
     _ensureConfigured();
@@ -291,16 +297,20 @@ class ApiService {
             : 'Checking Abacus for changed consignors...',
       );
 
-      // Pass sinceUtc as a query param so the backend filters changed records only.
-      final queryParameters = sinceUtc != null
-          ? <String, dynamic>{
-              'sinceUtc': sinceUtc.toUtc().toIso8601String(),
-            }
-          : null;
+      final queryParameters = <String, dynamic>{};
+      if (sinceUtc != null) {
+        queryParameters['sinceUtc'] = sinceUtc.toUtc().toIso8601String();
+      }
+      if (summariesOnly) {
+        queryParameters['summariesOnly'] = true;
+      }
+      if (forceRefresh) {
+        queryParameters['forceRefresh'] = true;
+      }
 
       final response = await _dio.get(
         _path(settings.consignorsGetAll),
-        queryParameters: queryParameters,
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
       );
       final data = response.data;
 
@@ -311,20 +321,58 @@ class ApiService {
       final summaries =
           data.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
 
+      final reportVersions = summaries
+          .map(
+            (item) => RemoteConsignorVersion(
+              subjectId: _reportConsignorId(item),
+              lastModifiedUtc: _reportLastModifiedUtc(item),
+            ),
+          )
+          .toList(growable: false);
+      final missingReportFields = <RemoteReportFieldIssue>[];
+      if (summariesOnly) {
+        for (var index = 0; index < summaries.length; index++) {
+          final issue = _summaryReportFieldIssue(
+            row: summaries[index],
+            version: reportVersions[index],
+            index: index,
+            total: summaries.length,
+          );
+          if (issue != null) missingReportFields.add(issue);
+        }
+      }
+
+      final selectedRows = <({Map<String, dynamic> row, int reportIndex})>[];
+      for (var index = 0; index < summaries.length; index++) {
+        if (shouldFetchConsignor == null ||
+            shouldFetchConsignor(reportVersions[index])) {
+          selectedRows.add((row: summaries[index], reportIndex: index));
+        }
+      }
+
       final consignors = <Consignor>[];
       final contracts = <ContractRecord>[];
-      final missingReportFields = <RemoteReportFieldIssue>[];
-      final total = summaries.length;
+      final total = selectedRows.length;
 
-      if (total == 0) {
+      if (summaries.isEmpty) {
         onProgress?.call(0, 0, 'No changed consignors to fetch.');
         return const RemoteSnapshot();
       }
 
+      if (total == 0) {
+        onProgress?.call(0, 0, 'All Abacus consignors are up to date.');
+        return RemoteSnapshot(
+          missingReportFields: missingReportFields,
+          reportVersions: reportVersions,
+          reportRowCount: summaries.length,
+        );
+      }
+
       onProgress?.call(0, total, 'Processing consignors 0 of $total...');
 
-      for (var index = 0; index < summaries.length; index++) {
-        final item = summaries[index];
+      for (var index = 0; index < selectedRows.length; index++) {
+        final selected = selectedRows[index];
+        final item = selected.row;
 
         onProgress?.call(
           index,
@@ -332,18 +380,23 @@ class ApiService {
           'Processing consignor ${index + 1} of $total...',
         );
 
-        final fieldIssue = _reportFieldIssue(
-          row: item,
-          index: index,
-          total: total,
-        );
-        if (fieldIssue != null) {
-          missingReportFields.add(fieldIssue);
+        if (!summariesOnly) {
+          final fieldIssue = _reportFieldIssue(
+            row: item,
+            index: selected.reportIndex,
+            total: summaries.length,
+          );
+          if (fieldIssue != null) {
+            missingReportFields.add(fieldIssue);
+          }
         }
 
         final details = await _detailFromBestAvailableSource(
           json: item,
           fallbackConsignorId: _reportConsignorId(item),
+          allowReportFallback:
+              !summariesOnly || _hasHydratableConsignorFields(item),
+          preferAbacus: summariesOnly,
         );
 
         if (details.consignor != null) {
@@ -363,7 +416,8 @@ class ApiService {
         consignors: consignors,
         contracts: contracts,
         missingReportFields: missingReportFields,
-        reportRowCount: total,
+        reportVersions: reportVersions,
+        reportRowCount: summaries.length,
       );
     } on DioException catch (e) {
       throw Exception(_friendlyDioError(e));
@@ -373,10 +427,14 @@ class ApiService {
   Future<RemoteConsignorDetail> fetchConsignorDetail(
     int consignorId, {
     String? idSource,
+    bool preferAbacus = false,
   }) async {
     _ensureConfigured();
     try {
-      return await _fetchConsignorDetailUnchecked(consignorId);
+      return await _fetchConsignorDetailUnchecked(
+        consignorId,
+        preferAbacus: preferAbacus,
+      );
     } on DioException catch (e) {
       final source = idSource == null ? '' : ' from $idSource';
       throw Exception(
@@ -389,9 +447,18 @@ class ApiService {
   Future<RemoteConsignorDetail> _detailFromBestAvailableSource({
     required Map<String, dynamic> json,
     required int? fallbackConsignorId,
+    bool allowReportFallback = true,
+    bool preferAbacus = false,
   }) async {
-    final detail = await _fetchDetailForReportRow(json);
+    final detail = await _fetchDetailForReportRow(
+      json,
+      preferAbacus: preferAbacus,
+    );
     if (detail != null) return detail;
+
+    if (!allowReportFallback) {
+      return const RemoteConsignorDetail();
+    }
 
     return _remoteDetailFromReportJson(
       json: json,
@@ -400,11 +467,15 @@ class ApiService {
   }
 
   Future<RemoteConsignorDetail?> _fetchDetailForReportRow(
-    Map<String, dynamic> row,
-  ) async {
+    Map<String, dynamic> row, {
+    bool preferAbacus = false,
+  }) async {
     for (final id in _reportDetailCandidateIds(row)) {
       try {
-        final detail = await _fetchConsignorDetailUnchecked(id);
+        final detail = await _fetchConsignorDetailUnchecked(
+          id,
+          preferAbacus: preferAbacus,
+        );
         if (detail.consignor != null || detail.contracts.isNotEmpty) {
           return detail;
         }
@@ -581,10 +652,13 @@ class ApiService {
   }
 
   Future<RemoteConsignorDetail> _fetchConsignorDetailUnchecked(
-    int consignorId,
-  ) async {
+    int consignorId, {
+    bool preferAbacus = false,
+  }) async {
     final response = await _dio.get(
       _path(settings.consignorsGetOne).replaceAll('{id}', '$consignorId'),
+      queryParameters:
+          preferAbacus ? const <String, dynamic>{'preferAbacus': true} : null,
     );
 
     if (response.data is! Map) {
@@ -1660,6 +1734,56 @@ class ApiService {
         _toInt(row['id'] ?? row['Id']);
   }
 
+  DateTime? _reportLastModifiedUtc(Map<String, dynamic> row) {
+    final value = row['lastModifiedUtc'] ??
+        row['LastModifiedUtc'] ??
+        row['remoteLastModifiedUtc'] ??
+        row['RemoteLastModifiedUtc'];
+    return DateTime.tryParse(value?.toString() ?? '')?.toUtc();
+  }
+
+  RemoteReportFieldIssue? _summaryReportFieldIssue({
+    required Map<String, dynamic> row,
+    required RemoteConsignorVersion version,
+    required int index,
+    required int total,
+  }) {
+    final missing = <String>[];
+    if (version.subjectId == null || version.subjectId! <= 0) {
+      missing.add('Consignor subject/id');
+    }
+    if (version.lastModifiedUtc == null) {
+      missing.add('Last modified timestamp');
+    }
+    if (missing.isEmpty) return null;
+
+    return RemoteReportFieldIssue(
+      summaryIndex: index,
+      total: total,
+      consignorId: version.subjectId?.toString(),
+      missingFields: missing,
+      availableFields: row.keys.map((key) => key.toString()).toList()..sort(),
+    );
+  }
+
+  bool _hasHydratableConsignorFields(Map<String, dynamic> row) {
+    const fields = <String>{
+      'tradingName',
+      'TradingName',
+      'consignorInfo',
+      'ConsignorInfo',
+      'emailAddress',
+      'EmailAddress',
+      'phoneNumber',
+      'PhoneNumber',
+      'consignorAddress',
+      'ConsignorAddress',
+      'bankingDetails',
+      'BankingDetails',
+    };
+    return row.keys.any(fields.contains);
+  }
+
   RemoteReportFieldIssue? _reportFieldIssue({
     required Map<String, dynamic> row,
     required int index,
@@ -1936,13 +2060,25 @@ class RemoteSnapshot {
     this.consignors = const [],
     this.contracts = const [],
     this.missingReportFields = const [],
+    this.reportVersions = const [],
     this.reportRowCount = 0,
   });
 
   final List<Consignor> consignors;
   final List<ContractRecord> contracts;
   final List<RemoteReportFieldIssue> missingReportFields;
+  final List<RemoteConsignorVersion> reportVersions;
   final int reportRowCount;
+}
+
+class RemoteConsignorVersion {
+  const RemoteConsignorVersion({
+    required this.subjectId,
+    required this.lastModifiedUtc,
+  });
+
+  final int? subjectId;
+  final DateTime? lastModifiedUtc;
 }
 
 class RemoteContractFetchResult {
