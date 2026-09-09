@@ -20,6 +20,7 @@ import '../repositories/settings_repository.dart';
 import '../repositories/wizard_draft_repository.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/consignor_sync_policy.dart';
 
 class AppState extends ChangeNotifier {
   final _consignorRepo = ConsignorRepository();
@@ -475,12 +476,12 @@ class AppState extends ChangeNotifier {
     if (syncingAllDrafts) return 0;
 
     final dirtyIds = consignors
-        .where((e) => e.needsSync)
+        .where((e) => e.shouldUploadDuringWorkspaceSync)
         .map((e) => e.id)
         .toList(growable: false);
 
     if (dirtyIds.isEmpty) {
-      lastMessage = 'No local consignors need syncing.';
+      lastMessage = 'No pending consignors need syncing. Drafts stay local.';
       notifyListeners();
       return 0;
     }
@@ -515,9 +516,17 @@ class AppState extends ChangeNotifier {
   }) async {
     final initial = consignorById(id);
     if (initial == null) return null;
-    if (!force && !initial.needsSync && authorizedRepresentative == null) {
+    if (initial.syncStatus == RecordSyncStatus.draft) {
+      lastMessage = 'Draft consignors stay local and are ignored by sync.';
+      notifyListeners();
       return initial;
     }
+    if (!force &&
+        !initial.shouldUploadDuringWorkspaceSync &&
+        authorizedRepresentative == null) {
+      return initial;
+    }
+    final submittedLastModifiedUtc = initial.lastModifiedUtc.toUtc();
     final existingSync = _syncingConsignorFutures[id];
     if (existingSync != null) {
       return await existingSync ?? consignorById(id) ?? initial;
@@ -539,12 +548,24 @@ class AppState extends ChangeNotifier {
       );
       final reference = pushResult.references[id];
       final syncedFromServer = pushResult.syncedConsignors[id];
+      final currentBeforeApply = consignorById(id);
+
+      if (!_canApplyConsignorSyncResult(
+        currentBeforeApply,
+        submittedLastModifiedUtc,
+      )) {
+        lastMessage = currentBeforeApply == null
+            ? 'The consignor was removed while sync was running.'
+            : 'The consignor changed while sync was running. Your latest app version was kept for the next sync.';
+        syncCompleter.complete(currentBeforeApply);
+        return currentBeforeApply;
+      }
 
       if (reference == null) {
-        initial.markSyncFailed(
+        currentBeforeApply!.markSyncFailed(
           'No sync confirmation was returned for this consignor.',
         );
-        await _consignorRepo.put(initial);
+        await _consignorRepo.put(currentBeforeApply);
         await _refreshLocalCollections();
         lastMessage = 'Consignor sync failed.';
         final result = consignorById(id);
@@ -558,7 +579,7 @@ class AppState extends ChangeNotifier {
               : previousId)
           .toString();
 
-      final updated = syncedFromServer ?? initial;
+      final updated = syncedFromServer ?? currentBeforeApply!;
       updated.systemReferenceConsignor = reference.systemReferenceConsignor;
       updated.systemReferenceCustomer = reference.systemReferenceCustomer;
       updated.abacusSubjectId =
@@ -594,19 +615,27 @@ class AppState extends ChangeNotifier {
       syncCompleter.complete(result);
       return result;
     } catch (e) {
-      final current = consignorById(id) ?? initial;
-      current.markSyncFailed('Sync failed: $e');
-      await _consignorRepo.put(current);
+      final current = consignorById(id);
+      final canMarkFailed = _canApplyConsignorSyncResult(
+        current,
+        submittedLastModifiedUtc,
+      );
+      if (canMarkFailed) {
+        current!.markSyncFailed('Sync failed: $e');
+        await _consignorRepo.put(current);
+      }
       await addActivity(
         ActivityEventType.syncFailed,
         'Consignor sync failed',
         description: e.toString(),
-        relatedConsignorId: current.id,
+        relatedConsignorId: current?.id ?? id,
         notify: false,
       );
       await _refreshLocalCollections();
-      lastMessage = 'Consignor sync failed: $e';
-      final result = consignorById(current.id);
+      lastMessage = canMarkFailed
+          ? 'Consignor sync failed: $e'
+          : 'The sync request failed, but your newer local version was preserved: $e';
+      final result = consignorById(current?.id ?? id);
       syncCompleter.complete(result);
       return result;
     } finally {
@@ -636,6 +665,12 @@ class AppState extends ChangeNotifier {
       lastMessage = 'Draft contracts stay local and are ignored by sync.';
       return contractToSync;
     }
+    final parentConsignor = consignorById(contractToSync.consignorId);
+    if (parentConsignor?.syncStatus == RecordSyncStatus.draft) {
+      lastMessage =
+          'This contract stays local because its consignor is still a draft.';
+      return contractToSync;
+    }
     if (!contractToSync.hasLocalChanges &&
         syncEvent == AbacusContractSyncEvent.manualSync) {
       return contractToSync;
@@ -662,7 +697,7 @@ class AppState extends ChangeNotifier {
           int.tryParse(effectiveConsignorId);
 
       final requiresConsignorSync = localConsignor != null &&
-          (localConsignor.needsSync ||
+          (localConsignor.shouldUploadDuringWorkspaceSync ||
               backendConsignorId == null ||
               backendConsignorId <= 0);
 
@@ -686,7 +721,8 @@ class AppState extends ChangeNotifier {
               contractToSync.copyWith(consignorId: effectiveConsignorId);
         }
 
-        if (localConsignor == null || localConsignor.needsSync) {
+        if (localConsignor == null ||
+            localConsignor.shouldUploadDuringWorkspaceSync) {
           final message =
               localConsignor?.syncErrorMessage?.trim().isNotEmpty == true
                   ? localConsignor!.syncErrorMessage!
@@ -792,13 +828,30 @@ class AppState extends ChangeNotifier {
     try {
       final api = ApiService(settings, token);
 
-      // Compute the highest LastModifiedUtc we already have locally so the
-      // backend can return only the records that changed since then.
-      // On the very first sync sinceUtc is null and we download everything.
-      final sinceUtc = _computeSinceUtc();
+      final localConsignorsAtStart = _consignorRepo.getAll();
+      final plannedPushLocalIds = <String>{};
 
       final remoteSnapshot = await api.fetchRemoteSnapshot(
-        sinceUtc: sinceUtc,
+        summariesOnly: true,
+        forceRefresh: true,
+        shouldFetchConsignor: (version) {
+          final subjectId = version.subjectId;
+          if (subjectId == null || subjectId <= 0) return false;
+
+          final local = _findLocalConsignorForReportSubject(
+            localConsignorsAtStart,
+            subjectId,
+          );
+          final action = ConsignorSyncPolicy.decide(
+            local: local,
+            remoteExists: true,
+            remoteLastModifiedUtc: version.lastModifiedUtc,
+          );
+          if (action == ConsignorSyncAction.pushLocal && local != null) {
+            plannedPushLocalIds.add(local.id);
+          }
+          return action == ConsignorSyncAction.pullRemote;
+        },
         onProgress: (current, total, message) {
           _setSyncProgress(current, total, message);
         },
@@ -872,8 +925,15 @@ class AppState extends ChangeNotifier {
         'Checking local consignors…',
       );
 
-      final dirtyConsignors =
-          consignors.where((e) => e.needsSync).toList(growable: false);
+      final dirtyConsignors = consignors.where((consignor) {
+        if (consignor.syncStatus == RecordSyncStatus.draft) return false;
+        return consignor.shouldUploadDuringWorkspaceSync ||
+            plannedPushLocalIds.contains(consignor.id);
+      }).toList(growable: false);
+      final submittedConsignorVersions = <String, DateTime>{
+        for (final consignor in dirtyConsignors)
+          consignor.id: consignor.lastModifiedUtc.toUtc(),
+      };
 
       workTotal += dirtyConsignors.length;
 
@@ -887,12 +947,24 @@ class AppState extends ChangeNotifier {
         );
 
         final pushResult = await api.pushConsignors(dirtyConsignors);
-        uploadedConsignors = pushResult.pushedCount;
-
         for (var i = 0; i < dirtyConsignors.length; i++) {
           final consignor = dirtyConsignors[i];
           final reference = pushResult.references[consignor.id];
           final synced = pushResult.syncedConsignors[consignor.id];
+          final current = consignorById(consignor.id);
+
+          if (!_canApplyConsignorSyncResult(
+            current,
+            submittedConsignorVersions[consignor.id]!,
+          )) {
+            workCurrent++;
+            _setSyncProgress(
+              workCurrent,
+              workTotal,
+              'Syncing ${i + 1} of ${dirtyConsignors.length}…',
+            );
+            continue;
+          }
 
           if (reference != null) {
             final previousId = consignor.id;
@@ -901,7 +973,7 @@ class AppState extends ChangeNotifier {
                     : previousId)
                 .toString();
 
-            final updated = synced ?? consignor;
+            final updated = synced ?? current!;
             updated.systemReferenceConsignor =
                 reference.systemReferenceConsignor;
             updated.systemReferenceCustomer = reference.systemReferenceCustomer;
@@ -915,11 +987,12 @@ class AppState extends ChangeNotifier {
             if (previousId != nextId) {
               await _reassignContractsToConsignorId(previousId, nextId);
             }
+            uploadedConsignors++;
           } else {
-            consignor.markSyncFailed(
+            current!.markSyncFailed(
               'No sync confirmation was returned for this consignor.',
             );
-            await _consignorRepo.put(consignor);
+            await _consignorRepo.put(current);
           }
 
           workCurrent++;
@@ -940,9 +1013,11 @@ class AppState extends ChangeNotifier {
         'Checking local contracts…',
       );
 
-      final dirtyContracts = contracts
-          .where((e) => e.shouldUploadDuringWorkspaceSync)
-          .toList(growable: false);
+      final dirtyContracts = contracts.where((e) {
+        if (!e.shouldUploadDuringWorkspaceSync) return false;
+        return consignorById(e.consignorId)?.syncStatus !=
+            RecordSyncStatus.draft;
+      }).toList(growable: false);
 
       workTotal += dirtyContracts.length;
 
@@ -1002,7 +1077,7 @@ class AppState extends ChangeNotifier {
           : ' Skipped $skippedContractConsignors contract owner${skippedContractConsignors == 1 ? '' : 's'} not present in Abacus and $failedContractConsignors failed contract owner${failedContractConsignors == 1 ? '' : 's'}.';
 
       lastMessage =
-          'Sync completed. Checked ${remoteSnapshot.reportRowCount} changed Abacus report row${remoteSnapshot.reportRowCount == 1 ? '' : 's'}, '
+          'Sync completed. Checked ${remoteSnapshot.reportRowCount} Abacus report row${remoteSnapshot.reportRowCount == 1 ? '' : 's'}, '
           'merged ${remoteSnapshot.consignors.length} consignor snapshot${remoteSnapshot.consignors.length == 1 ? '' : 's'}, '
           'analyzed $analyzedContractDocuments Abacus contract document${analyzedContractDocuments == 1 ? '' : 's'}, '
           'fetched $fetchedRemoteContracts Abacus contract${fetchedRemoteContracts == 1 ? '' : 's'}, '
@@ -1038,22 +1113,6 @@ class AppState extends ChangeNotifier {
       syncingNow = false;
       notifyListeners();
     }
-  }
-
-  /// Returns the highest [Consignor.remoteLastModifiedUtc] across all locally
-  /// stored consignors. This is passed to the backend as the [sinceUtc] cutoff
-  /// so only records changed after that timestamp are returned.
-  ///
-  /// Returns `null` when there are no locally synced consignors yet (first sync).
-  DateTime? _computeSinceUtc() {
-    DateTime? maxUtc;
-    for (final consignor in consignors) {
-      final ts = consignor.remoteLastModifiedUtc;
-      if (ts != null && (maxUtc == null || ts.isAfter(maxUtc))) {
-        maxUtc = ts;
-      }
-    }
-    return maxUtc;
   }
 
   void _setSyncProgress(int current, int total, String message) {
@@ -1142,17 +1201,26 @@ class AppState extends ChangeNotifier {
   Future<void> _mergeRemoteConsignors(List<Consignor> remoteConsignors) async {
     if (remoteConsignors.isEmpty) return;
 
-    final localById = {
-      for (final item in _consignorRepo.getAll()) item.id: item,
-    };
+    final localConsignors = _consignorRepo.getAll();
     final toPersist = <Consignor>[];
 
     for (final remote in remoteConsignors) {
-      final local = localById[remote.id];
-      if (local != null && local.needsSync) {
+      final local = _findMatchingLocalConsignor(localConsignors, remote);
+      final action = ConsignorSyncPolicy.decide(
+        local: local,
+        remoteExists: true,
+        remoteLastModifiedUtc: remote.lastModifiedUtc,
+      );
+      if (action != ConsignorSyncAction.pullRemote) {
         continue;
       }
 
+      if (local != null) {
+        ConsignorSyncPolicy.preserveLocalIdentity(
+          remote: remote,
+          local: local,
+        );
+      }
       remote.markRemoteSnapshot();
       toPersist.add(remote);
     }
@@ -1175,10 +1243,34 @@ class AppState extends ChangeNotifier {
     };
     final toPersist = <ContractRecord>[];
 
-    for (final remote in remoteContracts) {
+    final localConsignors = _consignorRepo.getAll();
+
+    for (final originalRemote in remoteContracts) {
+      var remote = originalRemote;
+      final remoteSubjectId = int.tryParse(remote.consignorId);
+      if (remoteSubjectId != null) {
+        final localConsignor = _findLocalConsignorForReportSubject(
+          localConsignors,
+          remoteSubjectId,
+        );
+        if (localConsignor != null && localConsignor.id != remote.consignorId) {
+          remote = remote.copyWith(consignorId: localConsignor.id);
+        }
+      }
+
       final local = localById[remote.id] ??
           localByContractNumber[_contractMergeKey(remote)];
-      if (local != null && local.hasLocalChanges) {
+      Consignor? parentConsignor;
+      for (final item in localConsignors) {
+        if (item.id == remote.consignorId) {
+          parentConsignor = item;
+          break;
+        }
+      }
+      if (parentConsignor?.syncStatus == RecordSyncStatus.draft ||
+          (local != null &&
+              (local.syncStatus == RecordSyncStatus.draft ||
+                  local.hasLocalChanges))) {
         continue;
       }
 
@@ -1189,6 +1281,30 @@ class AppState extends ChangeNotifier {
     if (toPersist.isNotEmpty) {
       await _contractRepo.putAll(toPersist);
     }
+  }
+
+  Consignor? _findLocalConsignorForReportSubject(
+    Iterable<Consignor> localConsignors,
+    int subjectId,
+  ) {
+    for (final local in localConsignors) {
+      if (ConsignorSyncPolicy.matchesReportSubject(local, subjectId)) {
+        return local;
+      }
+    }
+    return null;
+  }
+
+  Consignor? _findMatchingLocalConsignor(
+    Iterable<Consignor> localConsignors,
+    Consignor remote,
+  ) {
+    for (final local in localConsignors) {
+      if (ConsignorSyncPolicy.refersToSameRecord(local, remote)) {
+        return local;
+      }
+    }
+    return null;
   }
 
   String _contractMergeKey(ContractRecord contract) {
@@ -1295,7 +1411,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> _markDirtyRecordsSyncFailed(String message) async {
     final currentConsignors = _consignorRepo.getAll();
-    for (final consignor in currentConsignors.where((e) => e.needsSync)) {
+    for (final consignor
+        in currentConsignors.where((e) => e.shouldUploadDuringWorkspaceSync)) {
       consignor.markSyncFailed(message);
       await _consignorRepo.put(consignor);
     }
@@ -1303,9 +1420,25 @@ class AppState extends ChangeNotifier {
     final currentContracts = _contractRepo.getAll();
     for (final contract
         in currentContracts.where((e) => e.shouldUploadDuringWorkspaceSync)) {
+      if (currentConsignors.any((consignor) =>
+          consignor.id == contract.consignorId &&
+          consignor.syncStatus == RecordSyncStatus.draft)) {
+        continue;
+      }
       contract.markSyncFailed(message);
       await _contractRepo.put(contract);
     }
+  }
+
+  bool _canApplyConsignorSyncResult(
+    Consignor? current,
+    DateTime submittedLastModifiedUtc,
+  ) {
+    return current != null &&
+        current.syncStatus != RecordSyncStatus.draft &&
+        current.lastModifiedUtc
+            .toUtc()
+            .isAtSameMomentAs(submittedLastModifiedUtc);
   }
 
   String _contractKey(String consignorId, int auctionId) =>

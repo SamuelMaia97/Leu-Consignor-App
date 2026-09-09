@@ -227,8 +227,8 @@ The app uses the configured API base URL plus the endpoint paths below. Several 
 
 | Method | Default path | Used for | Query/body notes |
 | --- | --- | --- | --- |
-| `GET` | `/api/consignors-app/consignors/get-all` | Validate connection and fetch remote consignor summaries. | Optional query parameter: `sinceUtc=<UTC ISO timestamp>` for incremental sync. |
-| `GET` | `/api/consignors-app/consignors/get/{id}` | Fetch one consignor with contract groups/files. | `{id}` is the backend consignor ID. |
+| `GET` | `/api/consignors-app/consignors/get-all` | Validate connection and fetch remote consignor data or a version index. | `summariesOnly=true` returns all supplier IDs/timestamps for per-record reconciliation; `forceRefresh=true` bypasses the report cache. The legacy `sinceUtc=<UTC ISO timestamp>` filter remains supported. |
+| `GET` | `/api/consignors-app/consignors/get/{id}` | Fetch one consignor with contract groups/files. | `{id}` is the Abacus subject ID. Workspace pulls add `preferAbacus=true` so newer report data is not replaced by older SQL fallbacks. |
 | `PUT` | `/api/consignors-app/consignors/update/{id}` | Update an existing backend consignor. | Body is `Consignor.toJson()`, optionally with `abacusRepresentativeLink`. |
 | `POST` | `/api/consignors-app/consignors/bulk-create` | Create one or more new consignors. | Body is an array of `Consignor.toJson()` objects, optionally with `abacusRepresentativeLink`. |
 | `GET` | `/api/consignors-app/files/get-all` | Configured legacy/all-files endpoint. | Present in settings; not heavily used by current sync flow. |
@@ -236,7 +236,7 @@ The app uses the configured API base URL plus the endpoint paths below. Several 
 | `PUT` | `/api/consignors-app/files/update/{id}` | Configured file update endpoint. | Present in settings; current upload updates use the hard-coded upload endpoint below. |
 | `POST` | `/api/consignors-app/files/bulk-create` | Configured bulk file create endpoint. | Present in settings; current contract creation uses the hard-coded contract endpoint below. |
 | `GET` | `/api/consignors-app/origins/prefixes` | Fetch phone/country prefixes from the backend. | Falls back to bundled phone prefixes if needed. |
-| `GET` | `/api/consignors-app/customers/search` | Search existing customers for lookup/prefill. | Query parameters: `q=<search text>`, `take=<max results>`. |
+| `GET` | `/api/consignors-app/customers/search` | Search existing customers for lookup/prefill. | Query parameters: `q=<search text>`, `take=<max results>`, and optional `consignorsOnly=true` to return suppliers/consignors only. |
 
 ### Hard-coded endpoints currently used by the app
 
@@ -258,6 +258,24 @@ The repository also contains `ContractTemplateApiClient`, which posts to:
 | `POST` | `/api/consignor-contracts/render-pdf` | Alternative/template-based contract PDF rendering client. |
 
 The currently wired contract PDF flow in `ContractPdfService` uses `/api/consignors-app/contracts/render-pdf` through `ApiService`.
+
+### Consignor reconciliation
+
+Workspace sync compares each Abacus report timestamp with that consignor's
+stored `remoteLastModifiedUtc` baseline:
+
+- Draft consignors stay local and are neither pulled nor pushed.
+- A remote-only change is downloaded into the app.
+- An app-only change is uploaded to Abacus.
+- If both sides changed since the baseline, the app version wins and is uploaded.
+- Equal versions are left unchanged.
+
+The report version index is refreshed when sync starts. Full consignor details
+are requested only for new or remote-newer records, and matching uses the
+Abacus subject ID so it does not depend on local and remote numeric IDs being
+the same. App uploads are acknowledged only after all required Abacus writes
+succeed immediately; failed App uploads stay pending instead of leaving an
+older queued payload that could overwrite a later App version.
 
 ### Expected payload concepts
 

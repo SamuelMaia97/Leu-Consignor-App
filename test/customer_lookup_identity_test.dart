@@ -108,5 +108,54 @@ void main() {
         await server.close(force: true);
       }
     });
+
+    test('sends consignor-only scope only when requested', () async {
+      final searchRequests = <Uri>[];
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+
+      server.listen((request) async {
+        if (request.uri.path == '/api/consignors-app/customers/search') {
+          searchRequests.add(request.uri);
+          request.response.headers.contentType = ContentType.json;
+          request.response.write('[]');
+        } else {
+          request.response.statusCode = HttpStatus.notFound;
+        }
+        await request.response.close();
+      });
+
+      try {
+        final api = ApiService(
+          AppSettings(apiBaseUrl: 'http://127.0.0.1:${server.port}'),
+          'test-token',
+        );
+
+        await api.searchExistingCustomers('Anna', take: 7);
+        await api.searchExistingCustomers(
+          'Muller',
+          take: 9,
+          consignorsOnly: true,
+        );
+
+        expect(searchRequests, hasLength(2));
+        expect(
+          searchRequests.first.queryParameters,
+          equals({
+            'q': 'Anna',
+            'take': '7',
+          }),
+        );
+        expect(
+          searchRequests.last.queryParameters,
+          equals({
+            'q': 'Muller',
+            'take': '9',
+            'consignorsOnly': 'true',
+          }),
+        );
+      } finally {
+        await server.close(force: true);
+      }
+    });
   });
 }

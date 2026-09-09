@@ -324,17 +324,28 @@ class WorkflowStatus {
     required Iterable<Consignor> consignors,
     required Iterable<ContractRecord> contracts,
   }) {
+    final consignorList = consignors.toList(growable: false);
+    final consignorsById = {
+      for (final consignor in consignorList) consignor.id: consignor,
+    };
     final allContracts = contracts.toList(growable: false);
     final uploadCandidates = allContracts
-        .where((contract) => contract.shouldUploadDuringWorkspaceSync)
+        .where(
+          (contract) =>
+              contract.shouldUploadDuringWorkspaceSync &&
+              consignorsById[contract.consignorId]?.syncStatus !=
+                  RecordSyncStatus.draft,
+        )
         .toList(growable: false);
     final conflicts = findContractConflicts(allContracts);
     final issues = readinessIssuesForWorkspace(
-      consignors: consignors,
+      consignors: consignorList,
       contracts: uploadCandidates,
     );
     return SyncPreviewSummary(
-      changedConsignorCount: consignors.where((item) => item.needsSync).length,
+      changedConsignorCount: consignorList
+          .where((item) => item.shouldUploadDuringWorkspaceSync)
+          .length,
       pendingContractCount: uploadCandidates.length,
       pendingUploadCount: uploadCandidates
           .expand((contract) => contract.uploads)

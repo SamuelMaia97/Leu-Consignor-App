@@ -97,6 +97,124 @@ void main() {
       );
     });
 
+    test('uses the full version index but hydrates only pull candidates',
+        () async {
+      Uri? reportRequestUri;
+      Uri? detailRequestUri;
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/get-all') {
+          reportRequestUri = request.uri;
+          await writeJson(request, [
+            {
+              'consignorId': 7001,
+              'lastModifiedUtc': '2026-09-09T10:00:00Z',
+            },
+            {
+              'consignorId': 7002,
+              'lastModifiedUtc': '2026-09-09T11:00:00Z',
+            },
+          ]);
+          return;
+        }
+
+        if (request.uri.path == '/api/consignors-app/consignors/get/7002') {
+          detailRequestUri = request.uri;
+          await writeJson(request, {
+            'systemReferenceCustomer': 7002,
+            'abacusSubjectId': 7002,
+            'consignorInfo': {
+              'firstName': 'Remote',
+              'lastName': 'Change',
+            },
+            'lastModifiedUtc': '2026-09-09T11:00:00Z',
+            'contracts': [],
+          });
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final snapshot = await buildApi().fetchRemoteSnapshot(
+        summariesOnly: true,
+        forceRefresh: true,
+        shouldFetchConsignor: (version) => version.subjectId == 7002,
+      );
+
+      expect(reportRequestUri?.queryParameters['summariesOnly'], 'true');
+      expect(reportRequestUri?.queryParameters['forceRefresh'], 'true');
+      expect(detailRequestUri?.queryParameters['preferAbacus'], 'true');
+      expect(snapshot.reportVersions, hasLength(2));
+      expect(snapshot.reportRowCount, 2);
+      expect(snapshot.consignors.single.id, '7002');
+      expect(
+        requests,
+        isNot(contains('GET /api/consignors-app/consignors/get/7001')),
+      );
+      expect(
+        requests,
+        contains('GET /api/consignors-app/consignors/get/7002'),
+      );
+    });
+
+    test('reports and skips a summary row with no comparison timestamp',
+        () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/get-all') {
+          await writeJson(request, [
+            {'consignorId': 7004},
+          ]);
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final snapshot = await buildApi().fetchRemoteSnapshot(
+        summariesOnly: true,
+        shouldFetchConsignor: (version) => version.lastModifiedUtc != null,
+      );
+
+      expect(snapshot.consignors, isEmpty);
+      expect(snapshot.missingReportFields, hasLength(1));
+      expect(
+        snapshot.missingReportFields.single.missingFields,
+        contains('Last modified timestamp'),
+      );
+      expect(
+        requests,
+        isNot(contains('GET /api/consignors-app/consignors/get/7004')),
+      );
+    });
+
+    test('does not import an empty record when summary hydration fails',
+        () async {
+      handler = (request) async {
+        if (request.uri.path == '/api/consignors-app/consignors/get-all') {
+          await writeJson(request, [
+            {
+              'consignorId': 7003,
+              'lastModifiedUtc': '2026-09-09T12:00:00Z',
+            },
+          ]);
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      };
+
+      final snapshot = await buildApi().fetchRemoteSnapshot(
+        summariesOnly: true,
+        shouldFetchConsignor: (_) => true,
+      );
+
+      expect(snapshot.consignors, isEmpty);
+      expect(snapshot.reportVersions.single.subjectId, 7003);
+    });
+
     test('hydrates changed consignors from Abacus detail before bank mapping',
         () async {
       handler = (request) async {

@@ -122,6 +122,22 @@ class Consignor {
 
   bool get needsSync => syncStatus.needsSync;
 
+  /// Whether this local record is eligible to be sent to Abacus.
+  ///
+  /// Drafts deliberately stay on the device. The timestamp comparison also
+  /// covers migrated records whose status was persisted as synced even though
+  /// they were edited after the last remote snapshot.
+  bool get shouldUploadDuringWorkspaceSync {
+    if (syncStatus == RecordSyncStatus.draft) return false;
+    if (syncStatus == RecordSyncStatus.pendingSync ||
+        syncStatus == RecordSyncStatus.syncFailed) {
+      return true;
+    }
+
+    final baseline = remoteLastModifiedUtc;
+    return baseline != null && lastModifiedUtc.isAfter(baseline);
+  }
+
   String get fullPhoneNumber => PhoneNumberParser.combine(
         prefix: phonePrefix,
         localNumber: phoneNumber,

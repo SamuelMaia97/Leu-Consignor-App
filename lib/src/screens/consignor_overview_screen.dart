@@ -15,6 +15,7 @@ import '../state/app_state.dart';
 import '../utils/workflow_status.dart';
 import '../widgets/app_empty_state.dart';
 import '../widgets/app_shell.dart';
+import '../widgets/day_month_year_date_picker.dart';
 import '../widgets/passport_status_badge.dart';
 import '../widgets/page_header.dart';
 import '../widgets/ready_to_sync_checklist.dart';
@@ -306,7 +307,9 @@ class _ProfileSection extends StatelessWidget {
         ),
         _InfoRow(
           label: 'Date of birth',
-          value: _formatDate(person.dateOfBirth),
+          value: person.dateOfBirth == null
+              ? 'Missing'
+              : formatDayMonthYear(person.dateOfBirth!),
         ),
         _InfoRow(
           label: 'Nationality',
@@ -728,11 +731,6 @@ String _formatPerson(Person person) {
 }
 
 String _formatBool(bool value) => value ? 'Yes' : 'No';
-
-String _formatDate(DateTime? value) {
-  if (value == null) return 'Missing';
-  return DateFormat('yyyy-MM-dd').format(value.toLocal());
-}
 
 String _formatDateTime(DateTime? value) {
   if (value == null) return 'Missing';

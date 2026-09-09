@@ -253,7 +253,7 @@ class _ShellSyncProgress extends StatelessWidget {
         ? (state.syncProgressMessage.trim().isEmpty
             ? 'Syncing workspace…'
             : state.syncProgressMessage.trim())
-        : 'Syncing pending drafts…';
+        : 'Syncing pending consignors…';
 
     final hasKnownTotal = state.syncingNow && state.syncProgressTotal > 0;
     final progressValue = hasKnownTotal ? state.syncProgressValue : null;

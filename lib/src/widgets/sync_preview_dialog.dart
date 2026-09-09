@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/consignor.dart';
 import '../models/contract_record.dart';
+import '../models/sync_status.dart';
 import '../utils/workflow_status.dart';
 import 'ready_to_sync_checklist.dart';
 
@@ -10,16 +11,25 @@ Future<bool> showSyncPreviewDialog({
   required Iterable<Consignor> consignors,
   required Iterable<ContractRecord> contracts,
 }) async {
+  final consignorList = consignors.toList(growable: false);
   final contractList = contracts.toList(growable: false);
+  final consignorsById = {
+    for (final consignor in consignorList) consignor.id: consignor,
+  };
   final syncCandidateContracts = contractList
-      .where((contract) => contract.shouldUploadDuringWorkspaceSync)
+      .where(
+        (contract) =>
+            contract.shouldUploadDuringWorkspaceSync &&
+            consignorsById[contract.consignorId]?.syncStatus !=
+                RecordSyncStatus.draft,
+      )
       .toList(growable: false);
   final summary = WorkflowStatus.buildSyncPreview(
-    consignors: consignors,
+    consignors: consignorList,
     contracts: contractList,
   );
   final issues = WorkflowStatus.readinessIssuesForWorkspace(
-    consignors: consignors,
+    consignors: consignorList,
     contracts: syncCandidateContracts,
   );
 

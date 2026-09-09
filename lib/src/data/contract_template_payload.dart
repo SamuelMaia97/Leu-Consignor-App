@@ -433,7 +433,7 @@ class ContractRenderPayloadBuilder {
   }
 
   static String? _dateOrNull(DateTime? value) =>
-      value?.toUtc().toIso8601String();
+      value == null ? null : _dateFormat.format(value);
 
   static String _signaturePlace(String value) {
     final trimmed = value.trim();

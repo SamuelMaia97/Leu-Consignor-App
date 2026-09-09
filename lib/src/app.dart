@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -25,6 +26,8 @@ class LeuApp extends StatefulWidget {
 }
 
 class _LeuAppState extends State<LeuApp> {
+  static const _locale = Locale('en', 'GB');
+
   late final GoRouter _router = GoRouter(
     initialLocation: '/',
     errorBuilder: (_, __) => const HomeScreen(),
@@ -116,6 +119,9 @@ class _LeuAppState extends State<LeuApp> {
       return MaterialApp(
         title: 'Leu Consignor App',
         theme: theme,
+        locale: _locale,
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        supportedLocales: const [_locale],
         debugShowCheckedModeBanner: false,
         home: AppLockScreen(
           onUnlocked: (username) {
@@ -128,6 +134,9 @@ class _LeuAppState extends State<LeuApp> {
     return MaterialApp.router(
       title: 'Leu Consignor App',
       theme: theme,
+      locale: _locale,
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      supportedLocales: const [_locale],
       routerConfig: _router,
       debugShowCheckedModeBanner: false,
     );
