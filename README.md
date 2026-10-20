@@ -528,6 +528,14 @@ Check that:
 
 The app is primarily wired for desktop/mobile API access. Browser requests may fail because of CORS, certificate, DNS, or blocked request issues. Test the Windows build first.
 
+### Signed PDF generation returns HTTP 413
+
+The API or a proxy rejected the PDF render request because its body exceeded a server limit. More handwriting increases the signature PNG size even though the exported image remains 900 × 300 pixels. The render payload includes Base64 signatures under multiple template/API aliases, plus attachments, so the total request can be substantially larger than one image.
+
+Signature capture uses lossless indexed PNG compression to preserve the strokes, antialiasing, and transparency while reducing the request size. If HTTP 413 persists, use the request size in the error message to investigate the limit on `/api/consignors-app/contracts/render-pdf` at both the API host and any upstream proxy. Allow enough space for the entire JSON body, including Base64 expansion and attachments. The deployed server configuration is maintained outside this repository.
+
+In older app versions, `Response body: 67 bytes` describes the size of the server's error response, not the outgoing request or generated PDF.
+
 ### Android emulator cannot reach local API
 
 Use the emulator host alias:
