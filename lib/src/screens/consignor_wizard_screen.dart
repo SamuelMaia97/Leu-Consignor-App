@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:flutter/material.dart';
@@ -26,6 +25,7 @@ import '../services/api_service.dart';
 import '../services/contract_pdf_service.dart';
 import '../services/desko_id_analyze_service.dart';
 import '../services/file_service.dart';
+import '../services/signature_image_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_preview.dart';
@@ -109,6 +109,7 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
   final _representativeDraft = _WizardDraft(representativeMode: true);
   final _fileService = FileService();
   final _pdfService = ContractPdfService();
+  final _signatureImageService = const SignatureImageService();
   final _deskoIdAnalyzeService = DeskoIdAnalyzeService();
   final _wizardDraftRepo = WizardDraftRepository();
   final _ibanToBic = IbanToBic();
@@ -1959,13 +1960,13 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
     final signer = _draft.leuSigner;
     if (signer == null || !_draft.signatureReady) return null;
 
-    final contractSignature = await _renderSignaturePng(
+    final contractSignature = await _signatureImageService.renderPng(
       _draft.contractSignatureStrokes,
     );
-    final annexASignature = await _renderSignaturePng(
+    final annexASignature = await _signatureImageService.renderPng(
       _draft.annexASignatureStrokes,
     );
-    final annexCSignature = await _renderSignaturePng(
+    final annexCSignature = await _signatureImageService.renderPng(
       _draft.annexCSignatureStrokes,
     );
 
@@ -1983,85 +1984,6 @@ class _ConsignorWizardScreenState extends State<ConsignorWizardScreen> {
       annexASignaturePng: annexASignature,
       annexCSignaturePng: annexCSignature,
     );
-  }
-
-  Future<Uint8List?> _renderSignaturePng(List<List<Offset>> strokes) async {
-    const outputWidth = 900.0;
-    const outputHeight = 300.0;
-    final signatureBounds = _signatureBounds(strokes);
-    if (signatureBounds == null) return null;
-
-    final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder);
-    final paint = ui.Paint()
-      ..color = Colors.black
-      ..strokeWidth = 4.5
-      ..strokeCap = ui.StrokeCap.round
-      ..strokeJoin = ui.StrokeJoin.round
-      ..style = ui.PaintingStyle.stroke;
-
-    const padding = 24.0;
-    final availableWidth = outputWidth - padding * 2;
-    final availableHeight = outputHeight - padding * 2;
-    final scale = math.min(
-      availableWidth / signatureBounds.width,
-      availableHeight / signatureBounds.height,
-    );
-    final offset = ui.Offset(
-      (outputWidth - signatureBounds.width * scale) / 2 -
-          signatureBounds.left * scale,
-      (outputHeight - signatureBounds.height * scale) / 2 -
-          signatureBounds.top * scale,
-    );
-
-    for (final stroke in strokes) {
-      if (stroke.length < 2) continue;
-      final path = ui.Path()
-        ..moveTo(
-          stroke.first.dx * scale + offset.dx,
-          stroke.first.dy * scale + offset.dy,
-        );
-      for (final point in stroke.skip(1)) {
-        path.lineTo(
-          point.dx * scale + offset.dx,
-          point.dy * scale + offset.dy,
-        );
-      }
-      canvas.drawPath(path, paint);
-    }
-
-    final picture = recorder.endRecording();
-    final image =
-        await picture.toImage(outputWidth.toInt(), outputHeight.toInt());
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    picture.dispose();
-    image.dispose();
-    return byteData?.buffer.asUint8List();
-  }
-
-  ui.Rect? _signatureBounds(List<List<Offset>> strokes) {
-    double? left;
-    double? top;
-    double? right;
-    double? bottom;
-
-    for (final stroke in strokes) {
-      if (stroke.length < 2) continue;
-      for (final point in stroke) {
-        left = left == null ? point.dx : math.min(left, point.dx);
-        top = top == null ? point.dy : math.min(top, point.dy);
-        right = right == null ? point.dx : math.max(right, point.dx);
-        bottom = bottom == null ? point.dy : math.max(bottom, point.dy);
-      }
-    }
-
-    if (left == null || top == null || right == null || bottom == null) {
-      return null;
-    }
-
-    final width = math.max(right - left, 1.0);
-    final height = math.max(bottom - top, 1.0);
-    return ui.Rect.fromLTWH(left, top, width, height);
   }
 
   Future<File> _createContractPdf({required bool includeSignatures}) async {

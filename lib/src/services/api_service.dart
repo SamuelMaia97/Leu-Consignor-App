@@ -851,12 +851,16 @@ class ApiService {
 
   Future<List<int>> renderContractPdf(Map<String, dynamic> payload) async {
     _ensureConfigured();
+    final requestBody = jsonEncode(payload);
 
     try {
       final response = await _dio.post<List<int>>(
         '/api/consignors-app/contracts/render-pdf',
-        data: payload,
-        options: Options(responseType: ResponseType.bytes),
+        data: requestBody,
+        options: Options(
+          contentType: Headers.jsonContentType,
+          responseType: ResponseType.bytes,
+        ),
       );
 
       final data = response.data;
@@ -868,6 +872,15 @@ class ApiService {
 
       return data;
     } on DioException catch (e) {
+      if (e.response?.statusCode == HttpStatus.requestEntityTooLarge) {
+        final requestBytes = utf8.encode(requestBody).length;
+        throw Exception(
+          'The PDF rendering server rejected the request because it is too '
+          'large (HTTP 413; request size: $requestBytes bytes). '
+          'The API or its proxy must allow larger PDF render requests, '
+          'including signatures and attachments.',
+        );
+      }
       throw Exception(_friendlyDioError(e));
     }
   }
